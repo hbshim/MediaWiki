@@ -26,7 +26,7 @@
 class LogEventsList extends ContextSource {
 	const NO_ACTION_LINK = 1;
 	const NO_EXTRA_USER_LINKS = 2;
-	const USE_REVDEL_CHECKBOXES = 4;
+	const USE_CHECKBOXES = 4;
 
 	public $flags;
 
@@ -34,6 +34,11 @@ class LogEventsList extends ContextSource {
 	 * @var array
 	 */
 	protected $mDefaultQuery;
+
+	/**
+	 * @var bool
+	 */
+	protected $showTagEditUI;
 
 	/**
 	 * Constructor.
@@ -44,7 +49,7 @@ class LogEventsList extends ContextSource {
 	 *   a Skin object. Use of Skin is deprecated.
 	 * @param null $unused Unused; used to be an OutputPage object.
 	 * @param int $flags Can be a combination of self::NO_ACTION_LINK,
-	 *   self::NO_EXTRA_USER_LINKS or self::USE_REVDEL_CHECKBOXES.
+	 *   self::NO_EXTRA_USER_LINKS or self::USE_CHECKBOXES.
 	 */
 	public function __construct( $context, $unused = null, $flags = 0 ) {
 		if ( $context instanceof IContextSource ) {
@@ -55,6 +60,7 @@ class LogEventsList extends ContextSource {
 		}
 
 		$this->flags = $flags;
+		$this->showTagEditUI = ChangeTags::showTagEditingUI( $this->getUser() );
 	}
 
 	/**
@@ -227,7 +233,7 @@ class LogEventsList extends ContextSource {
 			array( 'class' => 'mw-autocomplete-user' )
 		);
 
-		return '<span style="white-space: nowrap">' . $label . '</span>';
+		return '<span class="mw-input-with-label">' . $label . '</span>';
 	}
 
 	/**
@@ -243,7 +249,7 @@ class LogEventsList extends ContextSource {
 			$title
 		);
 
-		return '<span style="white-space: nowrap">' . $label .	'</span>';
+		return '<span class="mw-input-with-label">' . $label .	'</span>';
 	}
 
 	/**
@@ -251,7 +257,7 @@ class LogEventsList extends ContextSource {
 	 * @return string Checkbox
 	 */
 	private function getTitlePattern( $pattern ) {
-		return '<span style="white-space: nowrap">' .
+		return '<span class="mw-input-with-label">' .
 			Xml::checkLabel( $this->msg( 'log-title-wildcard' )->text(), 'pattern', 'pattern', $pattern ) .
 			'</span>';
 	}
@@ -341,14 +347,27 @@ class LogEventsList extends ContextSource {
 	 */
 	private function getShowHideLinks( $row ) {
 		// We don't want to see the links and
-		// no one can hide items from the suppress log.
-		if ( ( $this->flags == self::NO_ACTION_LINK )
-			|| $row->log_type == 'suppress'
-		) {
+		if ( $this->flags == self::NO_ACTION_LINK ) {
 			return '';
 		}
-		$del = '';
+
 		$user = $this->getUser();
+
+		// If change tag editing is available to this user, return the checkbox
+		if ( $this->flags & self::USE_CHECKBOXES && $this->showTagEditUI ) {
+			return Xml::check(
+				'showhiderevisions',
+				false,
+				array( 'name' => 'ids[' . $row->log_id . ']' )
+			);
+		}
+
+		// no one can hide items from the suppress log.
+		if ( $row->log_type == 'suppress' ) {
+			return '';
+		}
+
+		$del = '';
 		// Don't show useless checkbox to people who cannot hide log entries
 		if ( $user->isAllowed( 'deletedhistory' ) ) {
 			$canHide = $user->isAllowed( 'deletelogentry' );
@@ -358,7 +377,7 @@ class LogEventsList extends ContextSource {
 			$canViewThisSuppressedEntry = $canViewSuppressedOnly && $entryIsSuppressed;
 			if ( $row->log_deleted || $canHide ) {
 				// Show checkboxes instead of links.
-				if ( $canHide && $this->flags & self::USE_REVDEL_CHECKBOXES && !$canViewThisSuppressedEntry ) {
+				if ( $canHide && $this->flags & self::USE_CHECKBOXES && !$canViewThisSuppressedEntry ) {
 					// If event was hidden from sysops
 					if ( !self::userCan( $row, LogPage::DELETED_RESTRICTED, $user ) ) {
 						$del = Xml::check( 'deleterevisions', false, array( 'disabled' => 'disabled' ) );
@@ -541,29 +560,9 @@ class LogEventsList extends ContextSource {
 		if ( $lim > 0 ) {
 			$pager->mLimit = $lim;
 		}
-
-		$knownEmptyResult = false;
-		// Check if we can avoid the DB query all together
-		if ( $page !== '' && !$param['useMaster'] ) {
-			$title = ( $page instanceof Title ) ? $page : Title::newFromText( $page );
-			if ( $title ) {
-				$member = $title->getNamespace() . ':' . $title->getDBkey();
-				if ( !BloomCache::get( 'main' )->check( wfWikiId(), 'TitleHasLogs', $member ) ) {
-					$knownEmptyResult = true;
-				}
-			} else {
-				$knownEmptyResult = true;
-			}
-		}
-
 		// Fetch the log rows and build the HTML if needed
-		if ( $knownEmptyResult ) {
-			$logBody = '';
-			$numRows = 0;
-		} else {
-			$logBody = $pager->getBody();
-			$numRows = $pager->getNumRows();
-		}
+		$logBody = $pager->getBody();
+		$numRows = $pager->getNumRows();
 
 		$s = '';
 
@@ -647,7 +646,7 @@ class LogEventsList extends ContextSource {
 	/**
 	 * SQL clause to skip forbidden log types for this user
 	 *
-	 * @param DatabaseBase $db
+	 * @param IDatabase $db
 	 * @param string $audience Public/user
 	 * @param User $user User to check, or null to use $wgUser
 	 * @return string|bool String on success, false on failure.

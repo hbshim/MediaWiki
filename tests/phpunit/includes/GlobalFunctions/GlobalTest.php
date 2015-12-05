@@ -306,7 +306,7 @@ class GlobalTest extends MediaWikiTestCase {
 
 		$this->setMwGlobals( array(
 			'wgDebugLogFile' => $debugLogFile,
-			# @todo FIXME: $wgDebugTimestamps should be tested
+			#  @todo FIXME: $wgDebugTimestamps should be tested
 			'wgDebugTimestamps' => false
 		) );
 
@@ -353,7 +353,7 @@ class GlobalTest extends MediaWikiTestCase {
 			'gzip;q=1.0' => true,
 			'foozip' => false,
 			'foo*zip' => false,
-			'gzip;q=abcde' => true, //is this REALLY valid?
+			'gzip;q=abcde' => true, // is this REALLY valid?
 			'gzip;q=12345678.9' => true,
 			' gzip' => true,
 		);
@@ -372,24 +372,6 @@ class GlobalTest extends MediaWikiTestCase {
 		if ( isset( $old_server_setting ) ) {
 			$_SERVER['HTTP_ACCEPT_ENCODING'] = $old_server_setting;
 		}
-	}
-
-	/**
-	 * @covers ::swap
-	 */
-	public function testSwapVarsTest() {
-		$this->hideDeprecated( 'swap' );
-
-		$var1 = 1;
-		$var2 = 2;
-
-		$this->assertEquals( $var1, 1, 'var1 is set originally' );
-		$this->assertEquals( $var2, 2, 'var1 is set originally' );
-
-		swap( $var1, $var2 );
-
-		$this->assertEquals( $var1, 2, 'var1 is swapped' );
-		$this->assertEquals( $var2, 1, 'var2 is swapped' );
 	}
 
 	/**
@@ -569,10 +551,10 @@ class GlobalTest extends MediaWikiTestCase {
 
 	public static function provideMakeUrlIndexes() {
 		return array(
+			// Testcase for T30627
 			array(
-				// just a regular :)
-				'https://bugzilla.wikimedia.org/show_bug.cgi?id=28627',
-				array( 'https://org.wikimedia.bugzilla./show_bug.cgi?id=28627' )
+				'https://example.org/test.cgi?id=12345',
+				array( 'https://org.example./test.cgi?id=12345' )
 			),
 			array(
 				// mailtos are handled special
@@ -581,7 +563,7 @@ class GlobalTest extends MediaWikiTestCase {
 				array( 'mailto:org.wikimedia@wiki.' )
 			),
 
-			// file URL cases per bug 28627...
+			// file URL cases per T30627...
 			array(
 				// three slashes: local filesystem path Unix-style
 				'file:///whatever/you/like.txt',
@@ -601,16 +583,15 @@ class GlobalTest extends MediaWikiTestCase {
 			// if you hack it just right are kinda pathological,
 			// and unreliable cross-platform or on IE which means they're
 			// unlikely to appear on intranets.
-			//
 			// Those will survive the algorithm but with results that
 			// are less consistent.
 
-			// protocol-relative URL cases per bug 29854...
+			// protocol-relative URL cases per T31854...
 			array(
-				'//bugzilla.wikimedia.org/show_bug.cgi?id=28627',
+				'//example.org/test.cgi?id=12345',
 				array(
-					'http://org.wikimedia.bugzilla./show_bug.cgi?id=28627',
-					'https://org.wikimedia.bugzilla./show_bug.cgi?id=28627'
+					'http://org.example./test.cgi?id=12345',
+					'https://org.example./test.cgi?id=12345'
 				)
 			),
 		);
@@ -684,28 +665,73 @@ class GlobalTest extends MediaWikiTestCase {
 	public function testWfMkdirParents() {
 		// Should not return true if file exists instead of directory
 		$fname = $this->getNewTempFile();
-		wfSuppressWarnings();
+		MediaWiki\suppressWarnings();
 		$ok = wfMkdirParents( $fname );
-		wfRestoreWarnings();
+		MediaWiki\restoreWarnings();
 		$this->assertFalse( $ok );
 	}
 
 	/**
-	 * @dataProvider provideWfShellMaintenanceCmdList
-	 * @covers ::wfShellMaintenanceCmd
+	 * @dataProvider provideWfShellWikiCmdList
+	 * @covers ::wfShellWikiCmd
 	 */
-	public function testWfShellMaintenanceCmd( $script, $parameters, $options,
+	public function testWfShellWikiCmd( $script, $parameters, $options,
 		$expected, $description
 	) {
 		if ( wfIsWindows() ) {
 			// Approximation that's good enough for our purposes just now
 			$expected = str_replace( "'", '"', $expected );
 		}
-		$actual = wfShellMaintenanceCmd( $script, $parameters, $options );
+		$actual = wfShellWikiCmd( $script, $parameters, $options );
 		$this->assertEquals( $expected, $actual, $description );
 	}
 
-	public static function provideWfShellMaintenanceCmdList() {
+	public function wfWikiID() {
+		$this->setMwGlobals( array(
+			'wgDBname' => 'example',
+			'wgDBprefix' => '',
+		) );
+		$this->assertEquals(
+			wfWikiID(),
+			'example'
+		);
+
+		$this->setMwGlobals( array(
+			'wgDBname' => 'example',
+			'wgDBprefix' => 'mw_',
+		) );
+		$this->assertEquals(
+			wfWikiID(),
+			'example-mw_'
+		);
+	}
+
+	public function testWfMemcKey() {
+		$cache = ObjectCache::getLocalClusterInstance();
+		$this->assertEquals(
+			$cache->makeKey( 'foo', 123, 'bar' ),
+			wfMemcKey( 'foo', 123, 'bar' )
+		);
+	}
+
+	public function testWfForeignMemcKey() {
+		$cache = ObjectCache::getLocalClusterInstance();
+		$keyspace = $this->readAttribute( $cache, 'keyspace' );
+		$this->assertEquals(
+			wfForeignMemcKey( $keyspace, '', 'foo', 'bar' ),
+			$cache->makeKey( 'foo', 'bar' )
+		);
+	}
+
+	public function testWfGlobalCacheKey() {
+		$cache = ObjectCache::getLocalClusterInstance();
+		$this->assertEquals(
+			$cache->makeGlobalKey( 'foo', 123, 'bar' ),
+			wfGlobalCacheKey( 'foo', 123, 'bar' )
+		);
+	}
+
+	public static function provideWfShellWikiCmdList() {
 		global $wgPhpCli;
 
 		return array(

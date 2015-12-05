@@ -21,52 +21,34 @@
  * @ingroup Cache
  */
 
+use Wikimedia\Assert\Assert;
+
 /**
  * Handles purging appropriate Squid URLs given a title (or titles)
  * @ingroup Cache
  */
-class SquidUpdate {
-	/**
-	 * Collection of URLs to purge.
-	 * @var array
-	 */
-	protected $urlArr;
+class SquidUpdate implements DeferrableUpdate, MergeableUpdate {
+	/** @var string[] Collection of URLs to purge */
+	protected $urls = array();
 
 	/**
-	 * @param array $urlArr Collection of URLs to purge
-	 * @param bool|int $maxTitles Maximum number of unique URLs to purge
+	 * @param string[] $urlArr Collection of URLs to purge
 	 */
-	public function __construct( $urlArr = array(), $maxTitles = false ) {
-		global $wgMaxSquidPurgeTitles;
-		if ( $maxTitles === false ) {
-			$maxTitles = $wgMaxSquidPurgeTitles;
-		}
-
-		// Remove duplicate URLs from list
-		$urlArr = array_unique( $urlArr );
-		if ( count( $urlArr ) > $maxTitles ) {
-			// Truncate to desired maximum URL count
-			$urlArr = array_slice( $urlArr, 0, $maxTitles );
-		}
-		$this->urlArr = $urlArr;
+	public function __construct( array $urlArr ) {
+		$this->urls = $urlArr;
 	}
 
 	/**
 	 * Create a SquidUpdate from an array of Title objects, or a TitleArray object
 	 *
-	 * @param array $titles
-	 * @param array $urlArr
+	 * @param Traversable|array $titles
+	 * @param string[] $urlArr
 	 * @return SquidUpdate
 	 */
 	public static function newFromTitles( $titles, $urlArr = array() ) {
-		global $wgMaxSquidPurgeTitles;
-		$i = 0;
 		/** @var Title $title */
 		foreach ( $titles as $title ) {
-			$urlArr[] = $title->getInternalURL();
-			if ( $i++ > $wgMaxSquidPurgeTitles ) {
-				break;
-			}
+			$urlArr = array_merge( $urlArr, $title->getSquidURLs() );
 		}
 
 		return new SquidUpdate( $urlArr );
@@ -75,18 +57,24 @@ class SquidUpdate {
 	/**
 	 * @param Title $title
 	 * @return SquidUpdate
+	 * @deprecated 1.27
 	 */
 	public static function newSimplePurge( Title $title ) {
-		$urlArr = $title->getSquidURLs();
-
-		return new SquidUpdate( $urlArr );
+		return new SquidUpdate( $title->getSquidURLs() );
 	}
 
 	/**
 	 * Purges the list of URLs passed to the constructor.
 	 */
 	public function doUpdate() {
-		self::purge( $this->urlArr );
+		self::purge( $this->urls );
+	}
+
+	public function merge( MergeableUpdate $update ) {
+		/** @var SquidUpdate $update */
+		Assert::parameterType( __CLASS__, $update, '$update' );
+
+		$this->urls = array_merge( $this->urls, $update->urls );
 	}
 
 	/**
@@ -95,14 +83,17 @@ class SquidUpdate {
 	 * (example: $urlArr[] = 'http://my.host/something')
 	 * XXX report broken Squids per mail or log
 	 *
-	 * @param array $urlArr List of full URLs to purge
+	 * @param string[] $urlArr List of full URLs to purge
 	 */
-	public static function purge( $urlArr ) {
+	public static function purge( array $urlArr ) {
 		global $wgSquidServers, $wgHTCPRouting;
 
 		if ( !$urlArr ) {
 			return;
 		}
+
+		// Remove duplicate URLs from list
+		$urlArr = array_unique( $urlArr );
 
 		wfDebugLog( 'squid', __METHOD__ . ': ' . implode( ' ', $urlArr ) );
 
@@ -110,40 +101,40 @@ class SquidUpdate {
 			self::HTCPPurge( $urlArr );
 		}
 
-		// Remove duplicate URLs
-		$urlArr = array_unique( $urlArr );
-		// Maximum number of parallel connections per squid
-		$maxSocketsPerSquid = 8;
-		// Number of requests to send per socket
-		// 400 seems to be a good tradeoff, opening a socket takes a while
-		$urlsPerSocket = 400;
-		$socketsPerSquid = ceil( count( $urlArr ) / $urlsPerSocket );
-		if ( $socketsPerSquid > $maxSocketsPerSquid ) {
-			$socketsPerSquid = $maxSocketsPerSquid;
-		}
-
-		$pool = new SquidPurgeClientPool;
-		$chunks = array_chunk( $urlArr, ceil( count( $urlArr ) / $socketsPerSquid ) );
-		foreach ( $wgSquidServers as $server ) {
-			foreach ( $chunks as $chunk ) {
-				$client = new SquidPurgeClient( $server );
-				foreach ( $chunk as $url ) {
-					$client->queuePurge( $url );
-				}
-				$pool->addClient( $client );
+		if ( $wgSquidServers ) {
+			// Maximum number of parallel connections per squid
+			$maxSocketsPerSquid = 8;
+			// Number of requests to send per socket
+			// 400 seems to be a good tradeoff, opening a socket takes a while
+			$urlsPerSocket = 400;
+			$socketsPerSquid = ceil( count( $urlArr ) / $urlsPerSocket );
+			if ( $socketsPerSquid > $maxSocketsPerSquid ) {
+				$socketsPerSquid = $maxSocketsPerSquid;
 			}
-		}
-		$pool->run();
 
+			$pool = new SquidPurgeClientPool;
+			$chunks = array_chunk( $urlArr, ceil( count( $urlArr ) / $socketsPerSquid ) );
+			foreach ( $wgSquidServers as $server ) {
+				foreach ( $chunks as $chunk ) {
+					$client = new SquidPurgeClient( $server );
+					foreach ( $chunk as $url ) {
+						$client->queuePurge( $url );
+					}
+					$pool->addClient( $client );
+				}
+			}
+
+			$pool->run();
+		}
 	}
 
 	/**
 	 * Send Hyper Text Caching Protocol (HTCP) CLR requests.
 	 *
 	 * @throws MWException
-	 * @param array $urlArr Collection of URLs to purge
+	 * @param string[] $urlArr Collection of URLs to purge
 	 */
-	public static function HTCPPurge( $urlArr ) {
+	private static function HTCPPurge( array $urlArr ) {
 		global $wgHTCPRouting, $wgHTCPMulticastTTL;
 
 		// HTCP CLR operation
@@ -174,8 +165,6 @@ class SquidUpdate {
 				$wgHTCPMulticastTTL );
 		}
 
-		// Remove duplicate URLs from collection
-		$urlArr = array_unique( $urlArr );
 		// Get sequential trx IDs for packet loss counting
 		$ids = UIDGenerator::newSequentialPerNodeIDs(
 			'squidhtcppurge', 32, count( $urlArr ), UIDGenerator::QUICK_VOLATILE

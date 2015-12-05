@@ -1,6 +1,6 @@
 <?php
 /**
- * Context for resource loader modules.
+ * Context for ResourceLoader modules.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -22,6 +22,8 @@
  * @author Roan Kattouw
  */
 
+use MediaWiki\Logger\LoggerFactory;
+
 /**
  * Object passed around to modules which contains information about the state
  * of a specific loader request
@@ -31,19 +33,24 @@ class ResourceLoaderContext {
 
 	protected $resourceLoader;
 	protected $request;
-	protected $modules;
-	protected $language;
-	protected $direction;
+
+	// Module content vary
 	protected $skin;
-	protected $user;
+	protected $language;
 	protected $debug;
+	protected $user;
+
+	// Request vary (in addition to cache vary)
+	protected $modules;
 	protected $only;
 	protected $version;
-	protected $hash;
 	protected $raw;
 	protected $image;
 	protected $variant;
 	protected $format;
+
+	protected $direction;
+	protected $hash;
 	protected $userObj;
 	protected $imageObj;
 
@@ -57,24 +64,26 @@ class ResourceLoaderContext {
 		$this->resourceLoader = $resourceLoader;
 		$this->request = $request;
 
-		// Interpret request
 		// List of modules
 		$modules = $request->getVal( 'modules' );
 		$this->modules = $modules ? self::expandModuleNames( $modules ) : array();
+
 		// Various parameters
-		$this->skin = $request->getVal( 'skin' );
 		$this->user = $request->getVal( 'user' );
 		$this->debug = $request->getFuzzyBool(
-			'debug', $resourceLoader->getConfig()->get( 'ResourceLoaderDebug' )
+			'debug',
+			$resourceLoader->getConfig()->get( 'ResourceLoaderDebug' )
 		);
-		$this->only = $request->getVal( 'only' );
-		$this->version = $request->getVal( 'version' );
+		$this->only = $request->getVal( 'only', null );
+		$this->version = $request->getVal( 'version', null );
 		$this->raw = $request->getFuzzyBool( 'raw' );
+
 		// Image requests
 		$this->image = $request->getVal( 'image' );
 		$this->variant = $request->getVal( 'variant' );
 		$this->format = $request->getVal( 'format' );
 
+		$this->skin = $request->getVal( 'skin' );
 		$skinnames = Skin::getSkinNames();
 		// If no skin is specified, or we don't recognize the skin, use the default skin
 		if ( !$this->skin || !isset( $skinnames[$this->skin] ) ) {
@@ -123,7 +132,8 @@ class ResourceLoaderContext {
 	 */
 	public static function newDummyContext() {
 		return new self( new ResourceLoader(
-			ConfigFactory::getDefaultInstance()->makeConfig( 'main' )
+			ConfigFactory::getDefaultInstance()->makeConfig( 'main' ),
+			LoggerFactory::getInstance( 'resourceloader' )
 		), new FauxRequest( array() ) );
 	}
 
@@ -153,8 +163,16 @@ class ResourceLoaderContext {
 	 */
 	public function getLanguage() {
 		if ( $this->language === null ) {
-			// Must be a valid language code after this point (bug 62849)
-			$this->language = RequestContext::sanitizeLangCode( $this->request->getVal( 'lang' ) );
+			// Must be a valid language code after this point (T64849)
+			// Only support uselang values that follow built-in conventions (T102058)
+			$lang = $this->getRequest()->getVal( 'lang', '' );
+			// Stricter version of RequestContext::sanitizeLangCode()
+			if ( !Language::isValidBuiltInCode( $lang ) ) {
+				wfDebug( "Invalid user language code\n" );
+				global $wgLanguageCode;
+				$lang = $wgLanguageCode;
+			}
+			$this->language = $lang;
 		}
 		return $this->language;
 	}
@@ -164,7 +182,7 @@ class ResourceLoaderContext {
 	 */
 	public function getDirection() {
 		if ( $this->direction === null ) {
-			$this->direction = $this->request->getVal( 'dir' );
+			$this->direction = $this->getRequest()->getVal( 'dir' );
 			if ( !$this->direction ) {
 				// Determine directionality based on user language (bug 6100)
 				$this->direction = Language::factory( $this->getLanguage() )->getDir();
@@ -174,7 +192,7 @@ class ResourceLoaderContext {
 	}
 
 	/**
-	 * @return string|null
+	 * @return string
 	 */
 	public function getSkin() {
 		return $this->skin;
@@ -227,6 +245,8 @@ class ResourceLoaderContext {
 	}
 
 	/**
+	 * @see ResourceLoaderModule::getVersionHash
+	 * @see OutputPage::makeResourceLoaderLink
 	 * @return string|null
 	 */
 	public function getVersion() {
@@ -285,7 +305,7 @@ class ResourceLoaderContext {
 				return $this->imageObj;
 			}
 
-			$image = $module->getImage( $this->image );
+			$image = $module->getImage( $this->image, $this );
 			if ( !$image ) {
 				return $this->imageObj;
 			}
@@ -300,32 +320,49 @@ class ResourceLoaderContext {
 	 * @return bool
 	 */
 	public function shouldIncludeScripts() {
-		return is_null( $this->getOnly() ) || $this->getOnly() === 'scripts';
+		return $this->getOnly() === null || $this->getOnly() === 'scripts';
 	}
 
 	/**
 	 * @return bool
 	 */
 	public function shouldIncludeStyles() {
-		return is_null( $this->getOnly() ) || $this->getOnly() === 'styles';
+		return $this->getOnly() === null || $this->getOnly() === 'styles';
 	}
 
 	/**
 	 * @return bool
 	 */
 	public function shouldIncludeMessages() {
-		return is_null( $this->getOnly() ) || $this->getOnly() === 'messages';
+		return $this->getOnly() === null;
 	}
 
 	/**
+	 * All factors that uniquely identify this request, except 'modules'.
+	 *
+	 * The list of modules is excluded here for legacy reasons as most callers already
+	 * split up handling of individual modules. Including it here would massively fragment
+	 * the cache and decrease its usefulness.
+	 *
+	 * E.g. Used by RequestFileCache to form a cache key for storing the reponse output.
+	 *
 	 * @return string
 	 */
 	public function getHash() {
 		if ( !isset( $this->hash ) ) {
 			$this->hash = implode( '|', array(
-				$this->getLanguage(), $this->getDirection(), $this->getSkin(), $this->getUser(),
-				$this->getImage(), $this->getVariant(), $this->getFormat(),
-				$this->getDebug(), $this->getOnly(), $this->getVersion()
+				// Module content vary
+				$this->getLanguage(),
+				$this->getSkin(),
+				$this->getDebug(),
+				$this->getUser(),
+				// Request vary
+				$this->getOnly(),
+				$this->getVersion(),
+				$this->getRaw(),
+				$this->getImage(),
+				$this->getVariant(),
+				$this->getFormat(),
 			) );
 		}
 		return $this->hash;

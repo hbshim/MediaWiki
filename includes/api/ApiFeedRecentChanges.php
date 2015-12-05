@@ -26,6 +26,8 @@
  */
 class ApiFeedRecentChanges extends ApiBase {
 
+	private $params;
+
 	/**
 	 * This module uses a custom feed wrapper printer.
 	 *
@@ -66,9 +68,17 @@ class ApiFeedRecentChanges extends ApiBase {
 
 		$formatter = $this->getFeedObject( $feedFormat, $specialClass );
 
-		// Everything is passed implicitly via $wgRequest… :(
-		// The row-getting functionality should maybe be factored out of ChangesListSpecialPage too…
+		// Parameters are passed via the request in the context… :(
+		$context = new DerivativeContext( $this );
+		$context->setRequest( new DerivativeRequest(
+			$this->getRequest(),
+			$this->params,
+			$this->getRequest()->wasPosted()
+		) );
+
+		// The row-getting functionality should be factored out of ChangesListSpecialPage too…
 		$rc = new $specialClass();
+		$rc->setContext( $context );
 		$rows = $rc->getRows();
 
 		$feedItems = $rows ? ChangesFeed::buildItems( $rows ) : array();
@@ -147,6 +157,7 @@ class ApiFeedRecentChanges extends ApiBase {
 			'hideliu' => false,
 			'hidepatrolled' => false,
 			'hidemyself' => false,
+			'hidecategorization' => false,
 
 			'tagfilter' => array(
 				ApiBase::PARAM_TYPE => 'string',

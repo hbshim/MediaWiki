@@ -31,17 +31,8 @@ class XMPInfo {
 	 * @return array XMP item configuration array.
 	 */
 	public static function getItems() {
-		if ( !self::$ranHooks ) {
-			// This is for if someone makes a custom metadata extension.
-			// For example, a medical wiki might want to decode DICOM xmp properties.
-			Hooks::run( 'XMPGetInfo', array( &self::$items ) );
-			self::$ranHooks = true; // Only want to do this once.
-		}
-
 		return self::$items;
 	}
-
-	static private $ranHooks = false;
 
 	/**
 	 * XMPInfo::$items keeps a list of all the items
@@ -57,7 +48,7 @@ class XMPInfo {
 	 *   * mode - What type of item (self::MODE_SIMPLE usually, see above for
 	 *     all values).
 	 *   * validate - Method to validate input. Could also post-process the
-	 *     input. A string value is assumed to be a static method of
+	 *     input. A string value is assumed to be a method of
 	 *     XMPValidate. Can also take a array( 'className', 'methodName' ).
 	 *   * choices - Array of potential values (format of 'value' => true ).
 	 *     Only used with validateClosed.
@@ -714,7 +705,7 @@ class XMPInfo {
 			),
 			'creator' => array(
 				'map_group' => 'general',
-				'map_name' => 'Artist', //map with exif Artist, iptc byline (2:80)
+				'map_name' => 'Artist', // map with exif Artist, iptc byline (2:80)
 				'mode' => XMPReader::MODE_SEQ,
 			),
 			'date' => array(
@@ -881,7 +872,7 @@ class XMPInfo {
 				'mode' => XMPReader::MODE_SIMPLE,
 			),
 		),
-		//Note, this property affects how jpeg metadata is extracted.
+		// Note, this property affects how jpeg metadata is extracted.
 		'http://ns.adobe.com/xmp/note/' => array(
 			'HasExtendedXMP' => array(
 				'map_group' => 'special',

@@ -21,6 +21,8 @@
  * @author Antoine Musso "<hashar at free dot fr>", Aaron Schulz
  */
 
+use IPSet\IPSet;
+
 // Some regex definition to "play" with IP address and IP address blocks
 
 // An IPv4 address is made of 4 bytes from x00 to xFF which is d0 to d255
@@ -240,7 +242,7 @@ class IP {
 	 * A bare IPv6 address is accepted despite the lack of square brackets.
 	 *
 	 * @param string $both The string with the host and port
-	 * @return array
+	 * @return array|false Array normally, false on certain failures
 	 */
 	public static function splitHostAndPort( $both ) {
 		if ( substr( $both, 0, 1 ) === '[' ) {
@@ -375,6 +377,8 @@ class IP {
 				'127.0.0.0/8', # loopback
 				'fc00::/7', # RFC 4193 (local)
 				'0:0:0:0:0:0:0:1', # loopback
+				'169.254.0.0/16', # link-local
+				'fe80::/10', # link-local
 			) );
 		}
 		return !$privateSet->match( $ip );
@@ -407,7 +411,7 @@ class IP {
 				}
 			}
 			if ( $n !== false ) {
-				# Floating points can handle the conversion; faster than wfBaseConvert()
+				# Floating points can handle the conversion; faster than Wikimedia\base_convert()
 				$n = strtoupper( str_pad( base_convert( $n, 10, 16 ), 8, '0', STR_PAD_LEFT ) );
 			}
 		} else {
@@ -547,11 +551,11 @@ class IP {
 			} else {
 				# Native 32 bit functions WONT work here!!!
 				# Convert to a padded binary number
-				$network = wfBaseConvert( $network, 16, 2, 128 );
+				$network = Wikimedia\base_convert( $network, 16, 2, 128 );
 				# Truncate the last (128-$bits) bits and replace them with zeros
 				$network = str_pad( substr( $network, 0, $bits ), 128, 0, STR_PAD_RIGHT );
 				# Convert back to an integer
-				$network = wfBaseConvert( $network, 2, 10 );
+				$network = Wikimedia\base_convert( $network, 2, 10 );
 			}
 		} else {
 			$network = false;
@@ -583,13 +587,13 @@ class IP {
 			if ( $network === false ) {
 				$start = $end = false;
 			} else {
-				$start = wfBaseConvert( $network, 10, 16, 32, false );
+				$start = Wikimedia\base_convert( $network, 10, 16, 32, false );
 				# Turn network to binary (again)
-				$end = wfBaseConvert( $network, 10, 2, 128 );
+				$end = Wikimedia\base_convert( $network, 10, 2, 128 );
 				# Truncate the last (128-$bits) bits and replace them with ones
 				$end = str_pad( substr( $end, 0, $bits ), 128, 1, STR_PAD_RIGHT );
 				# Convert to hex
-				$end = wfBaseConvert( $end, 2, 16, 32, false );
+				$end = Wikimedia\base_convert( $end, 2, 16, 32, false );
 				# see toHex() comment
 				$start = "v6-$start";
 				$end = "v6-$end";
@@ -655,7 +659,7 @@ class IP {
 	 * unusual representations may be added later.
 	 *
 	 * @param string $addr Something that might be an IP address
-	 * @return string Valid dotted quad IPv4 address or null
+	 * @return string|null Valid dotted quad IPv4 address or null
 	 */
 	public static function canonicalize( $addr ) {
 		// remove zone info (bug 35738)

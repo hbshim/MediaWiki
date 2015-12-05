@@ -92,10 +92,12 @@ if ( $maintenance->getDbType() === Maintenance::DB_NONE ) {
 	}
 }
 
-$maintenance->setConfig( ConfigFactory::getDefaultInstance()->makeConfig( 'main' ) );
 $maintenance->finalSetup();
 // Some last includes
 require_once "$IP/includes/Setup.php";
+
+// Initialize main config instance
+$maintenance->setConfig( ConfigFactory::getDefaultInstance()->makeConfig( 'main' ) );
 
 // Do the work
 $maintenance->execute();
@@ -104,7 +106,7 @@ $maintenance->execute();
 $maintenance->globals();
 
 // Perform deferred updates.
-DeferredUpdates::doUpdates( 'commit' );
+DeferredUpdates::doUpdates();
 
 // log profiling info
 wfLogProfilingData();

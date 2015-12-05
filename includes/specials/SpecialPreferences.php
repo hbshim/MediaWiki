@@ -47,17 +47,57 @@ class SpecialPreferences extends SpecialPage {
 		}
 
 		$out->addModules( 'mediawiki.special.preferences' );
+		$out->addModuleStyles( 'mediawiki.special.preferences.styles' );
 
 		if ( $this->getRequest()->getCheck( 'success' ) ) {
 			$out->wrapWikiMsg(
-				"<div class=\"successbox\">\n$1\n</div>",
+				Html::rawElement(
+					'div',
+					array(
+						'class' => 'mw-preferences-messagebox successbox',
+						'id' => 'mw-preferences-success'
+					),
+					Html::element( 'p', array(), '$1' )
+				),
 				'savedprefs'
 			);
 		}
 
+		$this->addHelpLink( 'Help:Preferences' );
+
 		$htmlForm = Preferences::getFormObject( $this->getUser(), $this->getContext() );
 		$htmlForm->setSubmitCallback( array( 'Preferences', 'tryUISubmit' ) );
+		$sectionTitles = $htmlForm->getPreferenceSections();
 
+		$prefTabs = '';
+		foreach ( $sectionTitles as $key ) {
+			$prefTabs .= Html::rawElement( 'li',
+				array(
+					'role' => 'presentation',
+					'class' => ( $key === 'personal' ) ? 'selected' : null
+				),
+				Html::rawElement( 'a',
+					array(
+						'id' => 'preftab-' . $key,
+						'role' => 'tab',
+						'href' => '#mw-prefsection-' . $key,
+						'aria-controls' => 'mw-prefsection-' . $key,
+						'aria-selected' => ( $key === 'personal' ) ? 'true' : 'false',
+						'tabIndex' => ( $key === 'personal' ) ? 0 : -1,
+					),
+					$htmlForm->getLegend( $key )
+				)
+			);
+		}
+
+		$out->addHTML(
+			Html::rawElement( 'ul',
+				array(
+					'id' => 'preftoc',
+					'role' => 'tablist'
+				),
+				$prefTabs )
+		);
 		$htmlForm->show();
 	}
 

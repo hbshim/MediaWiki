@@ -89,6 +89,7 @@ class ApiMain extends ApiBase {
 		'imagerotate' => 'ApiImageRotate',
 		'revisiondelete' => 'ApiRevisionDelete',
 		'managetags' => 'ApiManageTags',
+		'tag' => 'ApiTag',
 	);
 
 	/**
@@ -99,19 +100,9 @@ class ApiMain extends ApiBase {
 		'jsonfm' => 'ApiFormatJson',
 		'php' => 'ApiFormatPhp',
 		'phpfm' => 'ApiFormatPhp',
-		'wddx' => 'ApiFormatWddx',
-		'wddxfm' => 'ApiFormatWddx',
 		'xml' => 'ApiFormatXml',
 		'xmlfm' => 'ApiFormatXml',
-		'yaml' => 'ApiFormatYaml',
-		'yamlfm' => 'ApiFormatYaml',
 		'rawfm' => 'ApiFormatJson',
-		'txt' => 'ApiFormatTxt',
-		'txtfm' => 'ApiFormatTxt',
-		'dbg' => 'ApiFormatDbg',
-		'dbgfm' => 'ApiFormatDbg',
-		'dump' => 'ApiFormatDump',
-		'dumpfm' => 'ApiFormatDump',
 		'none' => 'ApiFormatNone',
 	);
 
@@ -139,7 +130,7 @@ class ApiMain extends ApiBase {
 	 */
 	private $mPrinter;
 
-	private $mModuleMgr, $mResult;
+	private $mModuleMgr, $mResult, $mErrorFormatter, $mContinuationManager;
 	private $mAction;
 	private $mEnableWrite;
 	private $mInternalMode, $mSquidMaxage, $mModule;
@@ -181,10 +172,10 @@ class ApiMain extends ApiBase {
 			// Remove all modules other than login
 			global $wgUser;
 
-			if ( $this->getVal( 'callback' ) !== null ) {
-				// JSON callback allows cross-site reads.
-				// For safety, strip user credentials.
-				wfDebug( "API: stripping user credentials for JSON callback\n" );
+			if ( $this->lacksSameOriginSecurity() ) {
+				// If we're in a mode that breaks the same-origin policy, strip
+				// user credentials for security.
+				wfDebug( "API: stripping user credentials when the same-origin policy is not applied\n" );
 				$wgUser = new User();
 				$this->getContext()->setUser( $wgUser );
 			}
@@ -217,7 +208,11 @@ class ApiMain extends ApiBase {
 
 		Hooks::run( 'ApiMain::moduleManager', array( $this->mModuleMgr ) );
 
-		$this->mResult = new ApiResult( $this );
+		$this->mResult = new ApiResult( $this->getConfig()->get( 'APIMaxResultSize' ) );
+		$this->mErrorFormatter = new ApiErrorFormatter_BackCompat( $this->mResult );
+		$this->mResult->setErrorFormatter( $this->mErrorFormatter );
+		$this->mResult->setMainForContinuation( $this );
+		$this->mContinuationManager = null;
 		$this->mEnableWrite = $enableWrite;
 
 		$this->mSquidMaxage = -1; // flag for executeActionWithErrorHandling()
@@ -239,6 +234,43 @@ class ApiMain extends ApiBase {
 	 */
 	public function getResult() {
 		return $this->mResult;
+	}
+
+	/**
+	 * Get the ApiErrorFormatter object associated with current request
+	 * @return ApiErrorFormatter
+	 */
+	public function getErrorFormatter() {
+		return $this->mErrorFormatter;
+	}
+
+	/**
+	 * Get the continuation manager
+	 * @return ApiContinuationManager|null
+	 */
+	public function getContinuationManager() {
+		return $this->mContinuationManager;
+	}
+
+	/**
+	 * Set the continuation manager
+	 * @param ApiContinuationManager|null
+	 */
+	public function setContinuationManager( $manager ) {
+		if ( $manager !== null ) {
+			if ( !$manager instanceof ApiContinuationManager ) {
+				throw new InvalidArgumentException( __METHOD__ . ': Was passed ' .
+					is_object( $manager ) ? get_class( $manager ) : gettype( $manager )
+				);
+			}
+			if ( $this->mContinuationManager !== null ) {
+				throw new UnexpectedValueException(
+					__METHOD__ . ': tried to set manager from ' . $manager->getSource() .
+					' when a manager is already set from ' . $this->mContinuationManager->getSource()
+				);
+			}
+		}
+		$this->mContinuationManager = $manager;
 	}
 
 	/**
@@ -361,14 +393,11 @@ class ApiMain extends ApiBase {
 	 * Execute api request. Any errors will be handled if the API was called by the remote client.
 	 */
 	public function execute() {
-		$this->profileIn();
 		if ( $this->mInternalMode ) {
 			$this->executeAction();
 		} else {
 			$this->executeActionWithErrorHandling();
 		}
-
-		$this->profileOut();
 	}
 
 	/**
@@ -390,23 +419,33 @@ class ApiMain extends ApiBase {
 
 		// In case an error occurs during data output,
 		// clear the output buffer and print just the error information
+		$obLevel = ob_get_level();
 		ob_start();
 
 		$t = microtime( true );
 		try {
 			$this->executeAction();
+			$isError = false;
 		} catch ( Exception $e ) {
 			$this->handleException( $e );
+			$isError = true;
 		}
 
 		// Log the request whether or not there was an error
 		$this->logRequest( microtime( true ) - $t );
 
+		// Commit DBs and send any related cookies and headers
+		MediaWiki::preOutputCommit( $this->getContext() );
+
 		// Send cache headers after any code which might generate an error, to
 		// avoid sending public cache headers for errors.
-		$this->sendCacheHeaders();
+		$this->sendCacheHeaders( $isError );
 
-		ob_end_flush();
+		// Executing the action might have already messed with the output
+		// buffers.
+		while ( ob_get_level() > $obLevel ) {
+			ob_end_flush();
+		}
 	}
 
 	/**
@@ -419,7 +458,13 @@ class ApiMain extends ApiBase {
 		// Bug 63145: Rollback any open database transactions
 		if ( !( $e instanceof UsageException ) ) {
 			// UsageExceptions are intentional, so don't rollback if that's the case
-			MWExceptionHandler::rollbackMasterChangesAndLog( $e );
+			try {
+				MWExceptionHandler::rollbackMasterChangesAndLog( $e );
+			} catch ( DBError $e2 ) {
+				// Rollback threw an exception too. Log it, but don't interrupt
+				// our regularly scheduled exception handling.
+				MWExceptionHandler::logException( $e2 );
+			}
 		}
 
 		// Allow extra cleanup and logging
@@ -450,9 +495,22 @@ class ApiMain extends ApiBase {
 		// Reset and print just the error message
 		ob_clean();
 
-		// If the error occurred during printing, do a printer->profileOut()
-		$this->mPrinter->safeProfileOut();
-		$this->printResult( true );
+		// Printer may not be initialized if the extractRequestParams() fails for the main module
+		$this->createErrorPrinter();
+
+		try {
+			$this->printResult( true );
+		} catch ( UsageException $ex ) {
+			// The error printer itself is failing. Try suppressing its request
+			// parameters and redo.
+			$this->setWarning(
+				'Error printer failed (will retry without params): ' . $ex->getMessage()
+			);
+			$this->mPrinter = null;
+			$this->createErrorPrinter();
+			$this->mPrinter->forceDefaultParams();
+			$this->printResult( true );
+		}
 	}
 
 	/**
@@ -478,7 +536,7 @@ class ApiMain extends ApiBase {
 
 		// Log the request and reset cache headers
 		$main->logRequest( 0 );
-		$main->sendCacheHeaders();
+		$main->sendCacheHeaders( true );
 
 		ob_end_flush();
 	}
@@ -519,8 +577,7 @@ class ApiMain extends ApiBase {
 		if ( !in_array( $originParam, $origins ) ) {
 			// origin parameter set but incorrect
 			// Send a 403 response
-			$message = HttpStatus::getMessage( 403 );
-			$response->header( "HTTP/1.1 403 $message", true, 403 );
+			$response->statusHeader( 403 );
 			$response->header( 'Cache-Control: no-cache' );
 			echo "'origin' parameter does not match Origin header\n";
 
@@ -558,10 +615,13 @@ class ApiMain extends ApiBase {
 
 			$response->header( "Access-Control-Allow-Origin: $originHeader" );
 			$response->header( 'Access-Control-Allow-Credentials: true' );
-			$response->header( "Timing-Allow-Origin: $originHeader" ); # http://www.w3.org/TR/resource-timing/#timing-allow-origin
+			// http://www.w3.org/TR/resource-timing/#timing-allow-origin
+			$response->header( "Timing-Allow-Origin: $originHeader" );
 
 			if ( !$preflight ) {
-				$response->header( 'Access-Control-Expose-Headers: MediaWiki-API-Error, Retry-After, X-Database-Lag' );
+				$response->header(
+					'Access-Control-Expose-Headers: MediaWiki-API-Error, Retry-After, X-Database-Lag'
+				);
 			}
 		}
 
@@ -648,7 +708,12 @@ class ApiMain extends ApiBase {
 		return "/^https?:\/\/$wildcard$/";
 	}
 
-	protected function sendCacheHeaders() {
+	/**
+	 * Send caching headers
+	 * @param boolean $isError Whether an error response is being output
+	 * @since 1.26 added $isError parameter
+	 */
+	protected function sendCacheHeaders( $isError ) {
 		$response = $this->getRequest()->response();
 		$out = $this->getOutput();
 
@@ -658,36 +723,65 @@ class ApiMain extends ApiBase {
 			$out->addVaryHeader( 'X-Forwarded-Proto' );
 		}
 
+		if ( !$isError && $this->mModule &&
+			( $this->getRequest()->getMethod() === 'GET' || $this->getRequest()->getMethod() === 'HEAD' )
+		) {
+			$etag = $this->mModule->getConditionalRequestData( 'etag' );
+			if ( $etag !== null ) {
+				$response->header( "ETag: $etag" );
+			}
+			$lastMod = $this->mModule->getConditionalRequestData( 'last-modified' );
+			if ( $lastMod !== null ) {
+				$response->header( 'Last-Modified: ' . wfTimestamp( TS_RFC2822, $lastMod ) );
+			}
+		}
+
+		// The logic should be:
+		// $this->mCacheControl['max-age'] is set?
+		//    Use it, the module knows better than our guess.
+		// !$this->mModule || $this->mModule->isWriteMode(), and mCacheMode is private?
+		//    Use 0 because we can guess caching is probably the wrong thing to do.
+		// Use $this->getParameter( 'maxage' ), which already defaults to 0.
+		$maxage = 0;
+		if ( isset( $this->mCacheControl['max-age'] ) ) {
+			$maxage = $this->mCacheControl['max-age'];
+		} elseif ( ( $this->mModule && !$this->mModule->isWriteMode() ) ||
+			$this->mCacheMode !== 'private'
+		) {
+			$maxage = $this->getParameter( 'maxage' );
+		}
+		$privateCache = 'private, must-revalidate, max-age=' . $maxage;
+
 		if ( $this->mCacheMode == 'private' ) {
-			$response->header( 'Cache-Control: private' );
+			$response->header( "Cache-Control: $privateCache" );
 			return;
 		}
 
-		$useXVO = $config->get( 'UseXVO' );
+		$useKeyHeader = $config->get( 'UseKeyHeader' );
 		if ( $this->mCacheMode == 'anon-public-user-private' ) {
 			$out->addVaryHeader( 'Cookie' );
 			$response->header( $out->getVaryHeader() );
-			if ( $useXVO ) {
-				$response->header( $out->getXVO() );
+			if ( $useKeyHeader ) {
+				$response->header( $out->getKeyHeader() );
 				if ( $out->haveCacheVaryCookies() ) {
 					// Logged in, mark this request private
-					$response->header( 'Cache-Control: private' );
+					$response->header( "Cache-Control: $privateCache" );
 					return;
 				}
 				// Logged out, send normal public headers below
 			} elseif ( session_id() != '' ) {
 				// Logged in or otherwise has session (e.g. anonymous users who have edited)
 				// Mark request private
-				$response->header( 'Cache-Control: private' );
+				$response->header( "Cache-Control: $privateCache" );
 
 				return;
-			} // else no XVO and anonymous, send public headers below
+			} // else no Key and anonymous, send public headers below
 		}
 
 		// Send public headers
 		$response->header( $out->getVaryHeader() );
-		if ( $useXVO ) {
-			$response->header( $out->getXVO() );
+		if ( $useKeyHeader ) {
+			$response->header( $out->getKeyHeader() );
 		}
 
 		// If nobody called setCacheMaxAge(), use the (s)maxage parameters
@@ -702,7 +796,7 @@ class ApiMain extends ApiBase {
 			// Public cache not requested
 			// Sending a Vary header in this case is harmless, and protects us
 			// against conditional calls of setCacheMaxAge().
-			$response->header( 'Cache-Control: private' );
+			$response->header( "Cache-Control: $privateCache" );
 
 			return;
 		}
@@ -733,6 +827,25 @@ class ApiMain extends ApiBase {
 	}
 
 	/**
+	 * Create the printer for error output
+	 */
+	private function createErrorPrinter() {
+		if ( !isset( $this->mPrinter ) ) {
+			$value = $this->getRequest()->getVal( 'format', self::API_DEFAULT_FORMAT );
+			if ( !$this->mModuleMgr->isDefined( $value, 'format' ) ) {
+				$value = self::API_DEFAULT_FORMAT;
+			}
+			$this->mPrinter = $this->createPrinterByName( $value );
+		}
+
+		// Printer may not be able to handle errors. This is particularly
+		// likely if the module returns something for getCustomPrinter().
+		if ( !$this->mPrinter->canPrintErrors() ) {
+			$this->mPrinter = $this->createPrinterByName( self::API_DEFAULT_FORMAT );
+		}
+	}
+
+	/**
 	 * Replace the result data with the information about an exception.
 	 * Returns the error code
 	 * @param Exception $e
@@ -740,35 +853,13 @@ class ApiMain extends ApiBase {
 	 */
 	protected function substituteResultWithError( $e ) {
 		$result = $this->getResult();
-
-		// Printer may not be initialized if the extractRequestParams() fails for the main module
-		if ( !isset( $this->mPrinter ) ) {
-			// The printer has not been created yet. Try to manually get formatter value.
-			$value = $this->getRequest()->getVal( 'format', self::API_DEFAULT_FORMAT );
-			if ( !$this->mModuleMgr->isDefined( $value, 'format' ) ) {
-				$value = self::API_DEFAULT_FORMAT;
-			}
-
-			$this->mPrinter = $this->createPrinterByName( $value );
-		}
-
-		// Printer may not be able to handle errors. This is particularly
-		// likely if the module returns something for getCustomPrinter().
-		if ( !$this->mPrinter->canPrintErrors() ) {
-			$this->mPrinter->safeProfileOut();
-			$this->mPrinter = $this->createPrinterByName( self::API_DEFAULT_FORMAT );
-		}
-
-		// Update raw mode flag for the selected printer.
-		$result->setRawMode( $this->mPrinter->getNeedsRawData() );
-
 		$config = $this->getConfig();
 
 		if ( $e instanceof UsageException ) {
 			// User entered incorrect parameters - generate error response
 			$errMessage = $e->getMessageArray();
 			$link = wfExpandUrl( wfScript( 'api' ) );
-			ApiResult::setContent( $errMessage, "See $link for API usage" );
+			ApiResult::setContentValue( $errMessage, 'docref', "See $link for API usage" );
 		} else {
 			// Something is seriously wrong
 			if ( ( $e instanceof DBQueryError ) && !$config->get( 'ShowSQLErrors' ) ) {
@@ -782,16 +873,16 @@ class ApiMain extends ApiBase {
 				'info' => '[' . MWExceptionHandler::getLogId( $e ) . '] ' . $info,
 			);
 			if ( $config->get( 'ShowExceptionDetails' ) ) {
-				ApiResult::setContent(
+				ApiResult::setContentValue(
 					$errMessage,
+					'trace',
 					MWExceptionHandler::getRedactedTraceAsString( $e )
 				);
 			}
 		}
 
 		// Remember all the warnings to re-add them later
-		$oldResult = $result->getData();
-		$warnings = isset( $oldResult['warnings'] ) ? $oldResult['warnings'] : null;
+		$warnings = $result->getResultData( array( 'warnings' ) );
 
 		$result->reset();
 		// Re-add the id
@@ -801,7 +892,7 @@ class ApiMain extends ApiBase {
 		}
 		if ( $config->get( 'ShowHostnames' ) ) {
 			// servedby is especially useful when debugging errors
-			$result->addValue( null, 'servedby', wfHostName(), ApiResult::NO_SIZE_CHECK );
+			$result->addValue( null, 'servedby', wfHostname(), ApiResult::NO_SIZE_CHECK );
 		}
 		if ( $warnings !== null ) {
 			$result->addValue( null, 'warnings', $warnings, ApiResult::NO_SIZE_CHECK );
@@ -886,7 +977,8 @@ class ApiMain extends ApiBase {
 				)
 			) {
 				$this->dieUsage(
-					"The '{$module->encodeParamName( 'token' )}' parameter was found in the query string, but must be in the POST body",
+					"The '{$module->encodeParamName( 'token' )}' parameter was " .
+						'found in the query string, but must be in the POST body',
 					'mustposttoken'
 				);
 			}
@@ -907,7 +999,6 @@ class ApiMain extends ApiBase {
 	 */
 	protected function checkMaxLag( $module, $params ) {
 		if ( $module->shouldCheckMaxlag() && isset( $params['maxlag'] ) ) {
-			// Check for maxlag
 			$maxLag = $params['maxlag'];
 			list( $host, $lag ) = wfGetLB()->getMaxLag();
 			if ( $lag > $maxLag ) {
@@ -928,6 +1019,121 @@ class ApiMain extends ApiBase {
 	}
 
 	/**
+	 * Check selected RFC 7232 precondition headers
+	 *
+	 * RFC 7232 envisions a particular model where you send your request to "a
+	 * resource", and for write requests that you can read "the resource" by
+	 * changing the method to GET. When the API receives a GET request, it
+	 * works out even though "the resource" from RFC 7232's perspective might
+	 * be many resources from MediaWiki's perspective. But it totally fails for
+	 * a POST, since what HTTP sees as "the resource" is probably just
+	 * "/api.php" with all the interesting bits in the body.
+	 *
+	 * Therefore, we only support RFC 7232 precondition headers for GET (and
+	 * HEAD). That means we don't need to bother with If-Match and
+	 * If-Unmodified-Since since they only apply to modification requests.
+	 *
+	 * And since we don't support Range, If-Range is ignored too.
+	 *
+	 * @since 1.26
+	 * @param ApiBase $module Api module being used
+	 * @return bool True on success, false should exit immediately
+	 */
+	protected function checkConditionalRequestHeaders( $module ) {
+		if ( $this->mInternalMode ) {
+			// No headers to check in internal mode
+			return true;
+		}
+
+		if ( $this->getRequest()->getMethod() !== 'GET' && $this->getRequest()->getMethod() !== 'HEAD' ) {
+			// Don't check POSTs
+			return true;
+		}
+
+		$return304 = false;
+
+		$ifNoneMatch = array_diff(
+			$this->getRequest()->getHeader( 'If-None-Match', WebRequest::GETHEADER_LIST ) ?: array(),
+			array( '' )
+		);
+		if ( $ifNoneMatch ) {
+			if ( $ifNoneMatch === array( '*' ) ) {
+				// API responses always "exist"
+				$etag = '*';
+			} else {
+				$etag = $module->getConditionalRequestData( 'etag' );
+			}
+		}
+		if ( $ifNoneMatch && $etag !== null ) {
+			$test = substr( $etag, 0, 2 ) === 'W/' ? substr( $etag, 2 ) : $etag;
+			$match = array_map( function ( $s ) {
+				return substr( $s, 0, 2 ) === 'W/' ? substr( $s, 2 ) : $s;
+			}, $ifNoneMatch );
+			$return304 = in_array( $test, $match, true );
+		} else {
+			$value = trim( $this->getRequest()->getHeader( 'If-Modified-Since' ) );
+
+			// Some old browsers sends sizes after the date, like this:
+			//  Wed, 20 Aug 2003 06:51:19 GMT; length=5202
+			// Ignore that.
+			$i = strpos( $value, ';' );
+			if ( $i !== false ) {
+				$value = trim( substr( $value, 0, $i ) );
+			}
+
+			if ( $value !== '' ) {
+				try {
+					$ts = new MWTimestamp( $value );
+					if (
+						// RFC 7231 IMF-fixdate
+						$ts->getTimestamp( TS_RFC2822 ) === $value ||
+						// RFC 850
+						$ts->format( 'l, d-M-y H:i:s' ) . ' GMT' === $value ||
+						// asctime (with and without space-padded day)
+						$ts->format( 'D M j H:i:s Y' ) === $value ||
+						$ts->format( 'D M  j H:i:s Y' ) === $value
+					) {
+						$lastMod = $module->getConditionalRequestData( 'last-modified' );
+						if ( $lastMod !== null ) {
+							// Mix in some MediaWiki modification times
+							$modifiedTimes = array(
+								'page' => $lastMod,
+								'user' => $this->getUser()->getTouched(),
+								'epoch' => $this->getConfig()->get( 'CacheEpoch' ),
+							);
+							if ( $this->getConfig()->get( 'UseSquid' ) ) {
+								// T46570: the core page itself may not change, but resources might
+								$modifiedTimes['sepoch'] = wfTimestamp(
+									TS_MW, time() - $this->getConfig()->get( 'SquidMaxage' )
+								);
+							}
+							Hooks::run( 'OutputPageCheckLastModified', array( &$modifiedTimes ) );
+							$lastMod = max( $modifiedTimes );
+							$return304 = wfTimestamp( TS_MW, $lastMod ) <= $ts->getTimestamp( TS_MW );
+						}
+					}
+				} catch ( TimestampException $e ) {
+					// Invalid timestamp, ignore it
+				}
+			}
+		}
+
+		if ( $return304 ) {
+			$this->getRequest()->response()->statusHeader( 304 );
+
+			// Avoid outputting the compressed representation of a zero-length body
+			MediaWiki\suppressWarnings();
+			ini_set( 'zlib.output_compression', 0 );
+			MediaWiki\restoreWarnings();
+			wfClearOutputBuffers();
+
+			return false;
+		}
+
+		return true;
+	}
+
+	/**
 	 * Check for sufficient permissions to execute
 	 * @param ApiBase $module An Api module
 	 */
@@ -938,22 +1144,62 @@ class ApiMain extends ApiBase {
 		) {
 			$this->dieUsageMsg( 'readrequired' );
 		}
+
 		if ( $module->isWriteMode() ) {
 			if ( !$this->mEnableWrite ) {
 				$this->dieUsageMsg( 'writedisabled' );
-			}
-			if ( !$user->isAllowed( 'writeapi' ) ) {
+			} elseif ( !$user->isAllowed( 'writeapi' ) ) {
 				$this->dieUsageMsg( 'writerequired' );
+			} elseif ( $this->getRequest()->getHeader( 'Promise-Non-Write-API-Action' ) ) {
+				$this->dieUsage(
+					"Promise-Non-Write-API-Action HTTP header cannot be sent to write API modules",
+					'promised-nonwrite-api'
+				);
 			}
-			if ( wfReadOnly() ) {
-				$this->dieReadOnly();
-			}
+
+			$this->checkReadOnly( $module );
 		}
 
 		// Allow extensions to stop execution for arbitrary reasons.
 		$message = false;
 		if ( !Hooks::run( 'ApiCheckCanExecute', array( $module, $user, &$message ) ) ) {
 			$this->dieUsageMsg( $message );
+		}
+	}
+
+	/**
+	 * Check if the DB is read-only for this user
+	 * @param ApiBase $module An Api module
+	 */
+	protected function checkReadOnly( $module ) {
+		if ( wfReadOnly() ) {
+			$this->dieReadOnly();
+		}
+
+		if ( $module->isWriteMode()
+			&& in_array( 'bot', $this->getUser()->getGroups() )
+			&& wfGetLB()->getServerCount() > 1
+		) {
+			// Figure out how many servers have passed the lag threshold
+			$numLagged = 0;
+			$lagLimit = $this->getConfig()->get( 'APIMaxLagThreshold' );
+			foreach ( wfGetLB()->getLagTimes() as $lag ) {
+				if ( $lag > $lagLimit ) {
+					++$numLagged;
+				}
+			}
+			// If a majority of slaves are too lagged then disallow writes
+			$slaveCount = wfGetLB()->getServerCount() - 1;
+			if ( $numLagged >= ceil( $slaveCount / 2 ) ) {
+				$parsed = $this->parseMsg( array( 'readonlytext' ) );
+				$this->dieUsage(
+					$parsed['info'],
+					$parsed['code'],
+					/* http error */
+					0,
+					array( 'readonlyreason' => "Waiting for $numLagged lagged database(s)" )
+				);
+			}
 		}
 	}
 
@@ -997,10 +1243,6 @@ class ApiMain extends ApiBase {
 			// Create an appropriate printer
 			$this->mPrinter = $this->createPrinterByName( $params['format'] );
 		}
-
-		if ( $this->mPrinter->getNeedsRawData() ) {
-			$this->getResult()->setRawMode();
-		}
 	}
 
 	/**
@@ -1017,6 +1259,10 @@ class ApiMain extends ApiBase {
 			return;
 		}
 
+		if ( !$this->checkConditionalRequestHeaders( $module ) ) {
+			return;
+		}
+
 		if ( !$this->mInternalMode ) {
 			$this->setupExternalResponse( $module, $params );
 		}
@@ -1024,15 +1270,13 @@ class ApiMain extends ApiBase {
 		$this->checkAsserts( $params );
 
 		// Execute
-		$module->profileIn();
 		$module->execute();
 		Hooks::run( 'APIAfterExecute', array( &$module ) );
-		$module->profileOut();
 
 		$this->reportUnusedParams();
 
 		if ( !$this->mInternalMode ) {
-			//append Debug information
+			// append Debug information
 			MWDebug::appendDebugInfoToApiResult( $this->getContext(), $this->getResult() );
 
 			// Print result data
@@ -1042,31 +1286,45 @@ class ApiMain extends ApiBase {
 
 	/**
 	 * Log the preceding request
-	 * @param int $time Time in seconds
+	 * @param float $time Time in seconds
 	 */
 	protected function logRequest( $time ) {
 		$request = $this->getRequest();
-		$milliseconds = $time === null ? '?' : round( $time * 1000 );
-		$s = 'API' .
-			' ' . $request->getMethod() .
-			' ' . wfUrlencode( str_replace( ' ', '_', $this->getUser()->getName() ) ) .
-			' ' . $request->getIP() .
-			' T=' . $milliseconds . 'ms';
+		$logCtx = array(
+			'dt' => date( 'c' ),
+			'client_ip' => $request->getIP(),
+			'user_agent' => $this->getUserAgent(),
+			'wiki' => wfWikiId(),
+			'time_backend_ms' => round( $time * 1000 ),
+			'params' => array(),
+		);
+
+		// Construct space separated message for 'api' log channel
+		$msg = "API {$request->getMethod()} " .
+			wfUrlencode( str_replace( ' ', '_', $this->getUser()->getName() ) ) .
+			" {$logCtx['client_ip']} " .
+			"T={$logCtx['time_backend_ms']}ms";
+
 		foreach ( $this->getParamsUsed() as $name ) {
 			$value = $request->getVal( $name );
 			if ( $value === null ) {
 				continue;
 			}
-			$s .= ' ' . $name . '=';
+
 			if ( strlen( $value ) > 256 ) {
-				$encValue = $this->encodeRequestLogValue( substr( $value, 0, 256 ) );
-				$s .= $encValue . '[...]';
+				$value = substr( $value, 0, 256 );
+				$encValue = $this->encodeRequestLogValue( $value ) . '[...]';
 			} else {
-				$s .= $this->encodeRequestLogValue( $value );
+				$encValue = $this->encodeRequestLogValue( $value );
 			}
+
+			$logCtx['params'][$name] = $value;
+			$msg .= " {$name}={$encValue}";
 		}
-		$s .= "\n";
-		wfDebugLog( 'api', $s, 'private' );
+
+		wfDebugLog( 'api', $msg, 'private' );
+		// ApiRequest channel is for structured data consumers
+		wfDebugLog( 'ApiRequest', '', 'private', $logCtx );
 	}
 
 	/**
@@ -1176,15 +1434,10 @@ class ApiMain extends ApiBase {
 			$this->setWarning( 'SECURITY WARNING: $wgDebugAPI is enabled' );
 		}
 
-		$this->getResult()->cleanUpUTF8();
 		$printer = $this->mPrinter;
-		$printer->profileIn();
-
 		$printer->initPrinter( false );
-
 		$printer->execute();
 		$printer->closePrinter();
-		$printer->profileOut();
 	}
 
 	/**
@@ -1243,7 +1496,7 @@ class ApiMain extends ApiBase {
 		);
 	}
 
-	public function modifyHelp( array &$help, array $options ) {
+	public function modifyHelp( array &$help, array $options, array &$tocData ) {
 		// Wish PHP had an "array_insert_before". Instead, we have to manually
 		// reindex the array to get 'permissions' in the right place.
 		$oldHelp = $help;
@@ -1254,6 +1507,7 @@ class ApiMain extends ApiBase {
 			}
 			$help[$k] = $v;
 		}
+		$help['datatypes'] = '';
 		$help['credits'] = '';
 
 		// Fill 'permissions'
@@ -1286,13 +1540,48 @@ class ApiMain extends ApiBase {
 		$help['permissions'] .= Html::closeElement( 'dl' );
 		$help['permissions'] .= Html::closeElement( 'div' );
 
-		// Fill 'credits', if applicable
+		// Fill 'datatypes' and 'credits', if applicable
 		if ( empty( $options['nolead'] ) ) {
-			$help['credits'] .= Html::element( 'h' . min( 6, $options['headerlevel'] + 1 ),
-				array( 'id' => '+credits', 'class' => 'apihelp-header' ),
-				$this->msg( 'api-credits-header' )->parse()
+			$level = $options['headerlevel'];
+			$tocnumber = &$options['tocnumber'];
+
+			$header = $this->msg( 'api-help-datatypes-header' )->parse();
+			$help['datatypes'] .= Html::rawElement( 'h' . min( 6, $level ),
+				array( 'id' => 'main/datatypes', 'class' => 'apihelp-header' ),
+				Html::element( 'span', array( 'id' => Sanitizer::escapeId( 'main/datatypes' ) ) ) .
+				$header
+			);
+			$help['datatypes'] .= $this->msg( 'api-help-datatypes' )->parseAsBlock();
+			if ( !isset( $tocData['main/datatypes'] ) ) {
+				$tocnumber[$level]++;
+				$tocData['main/datatypes'] = array(
+					'toclevel' => count( $tocnumber ),
+					'level' => $level,
+					'anchor' => 'main/datatypes',
+					'line' => $header,
+					'number' => join( '.', $tocnumber ),
+					'index' => false,
+				);
+			}
+
+			$header = $this->msg( 'api-credits-header' )->parse();
+			$help['credits'] .= Html::rawElement( 'h' . min( 6, $level ),
+				array( 'id' => 'main/credits', 'class' => 'apihelp-header' ),
+				Html::element( 'span', array( 'id' => Sanitizer::escapeId( 'main/credits' ) ) ) .
+				$header
 			);
 			$help['credits'] .= $this->msg( 'api-credits' )->useDatabase( false )->parseAsBlock();
+			if ( !isset( $tocData['main/credits'] ) ) {
+				$tocnumber[$level]++;
+				$tocData['main/credits'] = array(
+					'toclevel' => count( $tocnumber ),
+					'level' => $level,
+					'anchor' => 'main/credits',
+					'line' => $header,
+					'number' => join( '.', $tocnumber ),
+					'index' => false,
+				);
+			}
 		}
 	}
 
@@ -1357,25 +1646,19 @@ class ApiMain extends ApiBase {
 	 */
 	public function makeHelpMsg() {
 		wfDeprecated( __METHOD__, '1.25' );
-		global $wgMemc;
+
 		$this->setHelp();
-		// Get help text from cache if present
-		$key = wfMemcKey( 'apihelp', $this->getModuleName(),
-			str_replace( ' ', '_', SpecialVersion::getVersion( 'nodb' ) ) );
-
 		$cacheHelpTimeout = $this->getConfig()->get( 'APICacheHelpTimeout' );
-		if ( $cacheHelpTimeout > 0 ) {
-			$cached = $wgMemc->get( $key );
-			if ( $cached ) {
-				return $cached;
-			}
-		}
-		$retval = $this->reallyMakeHelpMsg();
-		if ( $cacheHelpTimeout > 0 ) {
-			$wgMemc->set( $key, $retval, $cacheHelpTimeout );
-		}
 
-		return $retval;
+		return ObjectCache::getMainWANInstance()->getWithSetCallback(
+			wfMemcKey(
+				'apihelp',
+				$this->getModuleName(),
+				str_replace( ' ', '_', SpecialVersion::getVersion( 'nodb' ) )
+			),
+			$cacheHelpTimeout > 0 ? $cacheHelpTimeout : WANObjectCache::TTL_UNCACHEABLE,
+			array( $this, 'reallyMakeHelpMsg' )
+		);
 	}
 
 	/**

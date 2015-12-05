@@ -58,9 +58,9 @@ class AutoLoaderTest extends MediaWikiTestCase {
 				continue;
 			}
 
-			wfSuppressWarnings();
+			MediaWiki\suppressWarnings();
 			$contents = file_get_contents( $filePath );
-			wfRestoreWarnings();
+			MediaWiki\restoreWarnings();
 
 			if ( $contents === false ) {
 				$actual[$class] = "[couldn't read file '$filePath']";
@@ -130,10 +130,14 @@ class AutoLoaderTest extends MediaWikiTestCase {
 	}
 
 	function testWrongCaseClass() {
+		$this->setMwGlobals( 'wgAutoloadAttemptLowercase', true );
+
 		$this->assertTrue( class_exists( 'testautoLoadedcamlCLASS' ) );
 	}
 
 	function testWrongCaseSerializedClass() {
+		$this->setMwGlobals( 'wgAutoloadAttemptLowercase', true );
+
 		$dummyCereal = 'O:29:"testautoloadedserializedclass":0:{}';
 		$uncerealized = unserialize( $dummyCereal );
 		$this->assertFalse( $uncerealized instanceof __PHP_Incomplete_Class,

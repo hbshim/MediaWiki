@@ -29,13 +29,13 @@ $namespaceNames = array(
 
 $namespaceAliases = array(
 	'Imagen' => NS_FILE,
-	'Imagen_Discusión' => NS_FILE_TALK,
+	'Imagen_discusión' => NS_FILE_TALK,
 );
 
 $namespaceGenderAliases = array(
 	NS_USER => array( 'male' => 'Usuario', 'female' => 'Usuaria' ),
-	NS_USER_TALK => array( 'male' => 'Usuario_Discusión', 'female' => 'Usuaria_Discusión' ),
-);
+	NS_USER_TALK => array( 'male' => 'Usuario_discusión', 'female' => 'Usuaria_discusión' ),
+); // T113499
 
 $specialPageAliases = array(
 	'Activeusers'               => array( 'UsuariosActivos' ),
@@ -99,7 +99,6 @@ $specialPageAliases = array(
 	'Newpages'                  => array( 'PáginasNuevas', 'Páginas_nuevas' ),
 	'PasswordReset'             => array( 'RestablecerContraseña' ),
 	'PermanentLink'             => array( 'EnlacePermanente' ),
-	'Popularpages'              => array( 'PáginasMásVisitadas', 'PáginasPopulares', 'Páginas_más_visitadas' ),
 	'Preferences'               => array( 'Preferencias' ),
 	'Prefixindex'               => array( 'PáginasPorPrefijo', 'Páginas_por_prefijo' ),
 	'Protectedpages'            => array( 'PáginasProtegidas', 'Páginas_protegidas' ),

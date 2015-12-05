@@ -46,6 +46,7 @@ class SpecialWhatLinksHere extends IncludableSpecialPage {
 
 		$this->setHeaders();
 		$this->outputHeader();
+		$this->addHelpLink( 'Help:What links here' );
 
 		$opts = new FormOptions();
 
@@ -73,7 +74,9 @@ class SpecialWhatLinksHere extends IncludableSpecialPage {
 
 		$this->target = Title::newFromURL( $opts->getValue( 'target' ) );
 		if ( !$this->target ) {
-			$out->addHTML( $this->whatlinkshereForm() );
+			if ( !$this->including() ) {
+				$out->addHTML( $this->whatlinkshereForm() );
+			}
 
 			return;
 		}
@@ -124,20 +127,13 @@ class SpecialWhatLinksHere extends IncludableSpecialPage {
 			'il_to' => $target->getDBkey(),
 		);
 
-		$useLinkNamespaceDBFields = $this->getConfig()->get( 'UseLinkNamespaceDBFields' );
 		$namespace = $this->opts->getValue( 'namespace' );
 		$invert = $this->opts->getValue( 'invert' );
 		$nsComparison = ( $invert ? '!= ' : '= ' ) . $dbr->addQuotes( $namespace );
 		if ( is_int( $namespace ) ) {
-			if ( $useLinkNamespaceDBFields ) {
-				$conds['pagelinks'][] = "pl_from_namespace $nsComparison";
-				$conds['templatelinks'][] = "tl_from_namespace $nsComparison";
-				$conds['imagelinks'][] = "il_from_namespace $nsComparison";
-			} else {
-				$conds['pagelinks'][] = "page_namespace $nsComparison";
-				$conds['templatelinks'][] = "page_namespace $nsComparison";
-				$conds['imagelinks'][] = "page_namespace $nsComparison";
-			}
+			$conds['pagelinks'][] = "pl_from_namespace $nsComparison";
+			$conds['templatelinks'][] = "tl_from_namespace $nsComparison";
+			$conds['imagelinks'][] = "il_from_namespace $nsComparison";
 		}
 
 		if ( $from ) {
@@ -152,7 +148,9 @@ class SpecialWhatLinksHere extends IncludableSpecialPage {
 			$conds['pagelinks'][] = 'rd_from is NOT NULL';
 		}
 
-		$queryFunc = function ( $dbr, $table, $fromCol ) use ( $conds, $target, $limit, $useLinkNamespaceDBFields ) {
+		$queryFunc = function ( IDatabase $dbr, $table, $fromCol ) use (
+			$conds, $target, $limit
+		) {
 			// Read an extra row as an at-end check
 			$queryLimit = $limit + 1;
 			$on = array(
@@ -160,16 +158,15 @@ class SpecialWhatLinksHere extends IncludableSpecialPage {
 				'rd_title' => $target->getDBkey(),
 				'rd_interwiki = ' . $dbr->addQuotes( '' ) . ' OR rd_interwiki IS NULL'
 			);
-			if ( $useLinkNamespaceDBFields ) { // migration check
-				$on['rd_namespace'] = $target->getNamespace();
-			}
+			$on['rd_namespace'] = $target->getNamespace();
 			// Inner LIMIT is 2X in case of stale backlinks with wrong namespaces
 			$subQuery = $dbr->selectSqlText(
-				array( $table, 'page', 'redirect' ),
+				array( $table, 'redirect', 'page' ),
 				array( $fromCol, 'rd_from' ),
 				$conds[$table],
 				__CLASS__ . '::showIndirectLinks',
-				array( 'ORDER BY' => $fromCol, 'LIMIT' => 2 * $queryLimit ),
+				// Force JOIN order per T106682 to avoid large filesorts
+				array( 'ORDER BY' => $fromCol, 'LIMIT' => 2 * $queryLimit, 'STRAIGHT_JOIN' ),
 				array(
 					'page' => array( 'INNER JOIN', "$fromCol = page_id" ),
 					'redirect' => array( 'LEFT JOIN', $on )
@@ -262,6 +259,14 @@ class SpecialWhatLinksHere extends IncludableSpecialPage {
 		}
 		$prevId = $from;
 
+		// use LinkBatch to make sure, that all required data (associated with Titles)
+		// is loaded in one query
+		$lb = new LinkBatch();
+		foreach ( $rows as $row ) {
+			$lb->add( $row->page_namespace, $row->page_title );
+		}
+		$lb->execute();
+
 		if ( $level == 0 ) {
 			if ( !$this->including() ) {
 				$out->addHTML( $this->whatlinkshereForm() );
@@ -278,7 +283,11 @@ class SpecialWhatLinksHere extends IncludableSpecialPage {
 
 			if ( $row->rd_from && $level < 2 ) {
 				$out->addHTML( $this->listItem( $row, $nt, $target, true ) );
-				$this->showIndirectLinks( $level + 1, $nt, $this->getConfig()->get( 'MaxRedirectLinksRetrieved' ) );
+				$this->showIndirectLinks(
+					$level + 1,
+					$nt,
+					$this->getConfig()->get( 'MaxRedirectLinksRetrieved' )
+				);
 				$out->addHTML( Xml::closeElement( 'li' ) );
 			} else {
 				$out->addHTML( $this->listItem( $row, $nt, $target ) );
@@ -305,7 +314,7 @@ class SpecialWhatLinksHere extends IncludableSpecialPage {
 		static $msgcache = null;
 		if ( $msgcache === null ) {
 			static $msgs = array( 'isredirect', 'istemplate', 'semicolon-separator',
-				'whatlinkshere-links', 'isimage' );
+				'whatlinkshere-links', 'isimage', 'editlink' );
 			$msgcache = array();
 			foreach ( $msgs as $msg ) {
 				$msgcache[$msg] = $this->msg( $msg )->escaped();
@@ -346,7 +355,7 @@ class SpecialWhatLinksHere extends IncludableSpecialPage {
 		}
 
 		# Space for utilities links, with a what-links-here link provided
-		$wlhLink = $this->wlhLink( $nt, $msgcache['whatlinkshere-links'] );
+		$wlhLink = $this->wlhLink( $nt, $msgcache['whatlinkshere-links'], $msgcache['editlink'] );
 		$wlh = Xml::wrapClass(
 			$this->msg( 'parentheses' )->rawParams( $wlhLink )->escaped(),
 			'mw-whatlinkshere-tools'
@@ -361,18 +370,39 @@ class SpecialWhatLinksHere extends IncludableSpecialPage {
 		return Xml::closeElement( 'ul' );
 	}
 
-	protected function wlhLink( Title $target, $text ) {
+	protected function wlhLink( Title $target, $text, $editText ) {
 		static $title = null;
 		if ( $title === null ) {
 			$title = $this->getPageTitle();
 		}
 
-		return Linker::linkKnown(
-			$title,
-			$text,
-			array(),
-			array( 'target' => $target->getPrefixedText() )
+		// always show a "<- Links" link
+		$links = array(
+			'links' => Linker::linkKnown(
+				$title,
+				$text,
+				array(),
+				array( 'target' => $target->getPrefixedText() )
+			),
 		);
+
+		// if the page is editable, add an edit link
+		if (
+			// check user permissions
+			$this->getUser()->isAllowed( 'edit' ) &&
+			// check, if the content model is editable through action=edit
+			ContentHandler::getForTitle( $target )->supportsDirectEditing()
+		) {
+			$links['edit'] = Linker::linkKnown(
+				$target,
+				$editText,
+				array(),
+				array( 'action' => 'edit' )
+			);
+		}
+
+		// build the links html
+		return $this->getLanguage()->pipeList( $links );
 	}
 
 	function makeSelfLink( $text, $query ) {

@@ -58,7 +58,8 @@ class SearchHighlighter {
 			3 => "/(\n\\{\\|)|(\n\\|\\})/" ); // table
 
 		// @todo FIXME: This should prolly be a hook or something
-		if ( function_exists( 'wfCite' ) ) {
+		// instead of hardcoding a class name from the Cite extension
+		if ( class_exists( 'Cite' ) ) {
 			$spat .= '|(<ref>)'; // references via cite extension
 			$endPatterns[4] = '/(<ref>)|(<\/ref>)/';
 		}
@@ -217,7 +218,7 @@ class SearchHighlighter {
 			}
 
 			// calc by how much to extend existing snippets
-			$targetchars = intval( ( $contextchars * $contextlines ) / count ( $snippets ) );
+			$targetchars = intval( ( $contextchars * $contextlines ) / count( $snippets ) );
 		}
 
 		foreach ( $snippets as $index => $line ) {
@@ -546,7 +547,9 @@ class SearchHighlighter {
 		$text = ltrim( $text ) . "\n"; // make sure the preg_match may find the last line
 		$text = str_replace( "\n\n", "\n", $text ); // remove empty lines
 		preg_match( "/^(.*\n){0,$contextlines}/", $text, $match );
-		$text = htmlspecialchars( substr( trim( $match[0] ), 0, $contextlines * $contextchars ) ); // trim and limit to max number of chars
+
+		// Trim and limit to max number of chars
+		$text = htmlspecialchars( substr( trim( $match[0] ), 0, $contextlines * $contextchars ) );
 		return str_replace( "\n", '<br>', $text );
 	}
 }

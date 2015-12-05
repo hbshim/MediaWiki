@@ -14,7 +14,7 @@ class ExtensionProcessorTest extends MediaWikiTestCase {
 	 *
 	 * @var array
 	 */
-	static $default = array(
+	public static $default = array(
 		'name' => 'FooBar',
 	);
 
@@ -27,33 +27,40 @@ class ExtensionProcessorTest extends MediaWikiTestCase {
 		$processor->extractInfo( $this->dir, self::$default + array(
 			'@metadata' => array( 'foobarbaz' ),
 			'AnAttribute' => array( 'omg' ),
-		) );
+			'AutoloadClasses' => array( 'FooBar' => 'includes/FooBar.php' ),
+		), 1 );
 
 		$extracted = $processor->getExtractedInfo();
 		$attributes = $extracted['attributes'];
 		$this->assertArrayHasKey( 'AnAttribute', $attributes );
 		$this->assertArrayNotHasKey( '@metadata', $attributes );
+		$this->assertArrayNotHasKey( 'AutoloadClasses', $attributes );
 	}
 
 	public static function provideRegisterHooks() {
+		$merge = array( ExtensionRegistry::MERGE_STRATEGY => 'array_merge_recursive' );
+		// Format:
+		// Current $wgHooks
+		// Content in extension.json
+		// Expected value of $wgHooks
 		return array(
 			// No hooks
 			array(
 				array(),
 				self::$default,
-				array(),
+				$merge,
 			),
 			// No current hooks, adding one for "FooBaz"
 			array(
 				array(),
 				array( 'Hooks' => array( 'FooBaz' => 'FooBazCallback' ) ) + self::$default,
-				array( 'FooBaz' => array( 'FooBazCallback' ) ),
+				array( 'FooBaz' => array( 'FooBazCallback' ) ) + $merge,
 			),
 			// Hook for "FooBaz", adding another one
 			array(
 				array( 'FooBaz' => array( 'PriorCallback' ) ),
 				array( 'Hooks' => array( 'FooBaz' => 'FooBazCallback' ) ) + self::$default,
-				array( 'FooBaz' => array( 'PriorCallback', 'FooBazCallback' ) ),
+				array( 'FooBaz' => array( 'PriorCallback', 'FooBazCallback' ) ) + $merge,
 			),
 			// Hook for "BarBaz", adding one for "FooBaz"
 			array(
@@ -62,7 +69,23 @@ class ExtensionProcessorTest extends MediaWikiTestCase {
 				array(
 					'BarBaz' => array( 'BarBazCallback' ),
 					'FooBaz' => array( 'FooBazCallback' ),
-				),
+				) + $merge,
+			),
+			// Callbacks for FooBaz wrapped in an array
+			array(
+				array(),
+				array( 'Hooks' => array( 'FooBaz' => array( 'Callback1' ) ) ) + self::$default,
+				array(
+					'FooBaz' => array( 'Callback1' ),
+				) + $merge,
+			),
+			// Multiple callbacks for FooBaz hook
+			array(
+				array(),
+				array( 'Hooks' => array( 'FooBaz' => array( 'Callback1', 'Callback2' ) ) ) + self::$default,
+				array(
+					'FooBaz' => array( 'Callback1', 'Callback2' ),
+				) + $merge,
 			),
 		);
 	}
@@ -73,7 +96,7 @@ class ExtensionProcessorTest extends MediaWikiTestCase {
 	 */
 	public function testRegisterHooks( $pre, $info, $expected ) {
 		$processor = new MockExtensionProcessor( array( 'wgHooks' => $pre ) );
-		$processor->extractInfo( $this->dir, $info );
+		$processor->extractInfo( $this->dir, $info, 1 );
 		$extracted = $processor->getExtractedInfo();
 		$this->assertEquals( $expected, $extracted['globals']['wgHooks'] );
 	}
@@ -90,11 +113,20 @@ class ExtensionProcessorTest extends MediaWikiTestCase {
 				'@IGNORED' => 'yes',
 			),
 		) + self::$default;
-		$processor->extractInfo( $this->dir, $info );
+		$info2 = array(
+			'config' => array(
+				'_prefix' => 'eg',
+				'Bar' => 'somevalue'
+			),
+		) + self::$default;
+		$processor->extractInfo( $this->dir, $info, 1 );
+		$processor->extractInfo( $this->dir, $info2, 1 );
 		$extracted = $processor->getExtractedInfo();
 		$this->assertEquals( 'somevalue', $extracted['globals']['wgBar'] );
 		$this->assertEquals( 10, $extracted['globals']['wgFoo'] );
 		$this->assertArrayNotHasKey( 'wg@IGNORED', $extracted['globals'] );
+		// Custom prefix:
+		$this->assertEquals( 'somevalue', $extracted['globals']['egBar'] );
 	}
 
 	public static function provideExtracttExtensionMessagesFiles() {
@@ -127,7 +159,7 @@ class ExtensionProcessorTest extends MediaWikiTestCase {
 	 */
 	public function testExtracttExtensionMessagesFiles( $input, $expected ) {
 		$processor = new ExtensionProcessor();
-		$processor->extractInfo( $this->dir, $input + self::$default );
+		$processor->extractInfo( $this->dir, $input + self::$default, 1 );
 		$out = $processor->getExtractedInfo();
 		foreach ( $expected as $key => $value ) {
 			$this->assertEquals( $value, $out['globals'][$key] );
@@ -155,7 +187,7 @@ class ExtensionProcessorTest extends MediaWikiTestCase {
 	 */
 	public function testExtractMessagesDirs( $input, $expected ) {
 		$processor = new ExtensionProcessor();
-		$processor->extractInfo( $this->dir, $input + self::$default );
+		$processor->extractInfo( $this->dir, $input + self::$default, 1 );
 		$out = $processor->getExtractedInfo();
 		foreach ( $expected as $key => $value ) {
 			$this->assertEquals( $value, $out['globals'][$key] );
@@ -168,7 +200,7 @@ class ExtensionProcessorTest extends MediaWikiTestCase {
 	 */
 	public function testExtractResourceLoaderModules( $input, $expected ) {
 		$processor = new ExtensionProcessor();
-		$processor->extractInfo( $this->dir, $input + self::$default );
+		$processor->extractInfo( $this->dir, $input + self::$default, 1 );
 		$out = $processor->getExtractedInfo();
 		foreach ( $expected as $key => $value ) {
 			$this->assertEquals( $value, $out['globals'][$key] );
@@ -261,6 +293,57 @@ class ExtensionProcessorTest extends MediaWikiTestCase {
 					),
 				),
 			),
+			// ResourceModuleSkinStyles with file module paths
+			array(
+				// Input
+				array(
+					'ResourceFileModulePaths' => array(
+						'localBasePath' => '',
+						'remoteSkinPath' => 'FooBar',
+					),
+					'ResourceModuleSkinStyles' => array(
+						'foobar' => array(
+							'test.foo' => 'foo.css',
+						)
+					),
+				),
+				// Expected
+				array(
+					'wgResourceModuleSkinStyles' => array(
+						'foobar' => array(
+							'test.foo' => 'foo.css',
+							'localBasePath' => $dir,
+							'remoteSkinPath' => 'FooBar',
+						),
+					),
+				),
+			),
+			// ResourceModuleSkinStyles with file module paths and an override
+			array(
+				// Input
+				array(
+					'ResourceFileModulePaths' => array(
+						'localBasePath' => '',
+						'remoteSkinPath' => 'FooBar',
+					),
+					'ResourceModuleSkinStyles' => array(
+						'foobar' => array(
+							'test.foo' => 'foo.css',
+							'remoteSkinPath' => 'BarFoo'
+						),
+					),
+				),
+				// Expected
+				array(
+					'wgResourceModuleSkinStyles' => array(
+						'foobar' => array(
+							'test.foo' => 'foo.css',
+							'localBasePath' => $dir,
+							'remoteSkinPath' => 'BarFoo',
+						),
+					),
+				),
+			),
 		);
 	}
 
@@ -296,13 +379,21 @@ class ExtensionProcessorTest extends MediaWikiTestCase {
 			array(
 				array( 'wgGroupPermissions' ),
 				array(
-					'wgGroupPermissions' => array( 'sysop' => array( 'delete' ) ),
+					'wgGroupPermissions' => array(
+						'sysop' => array( 'delete' )
+					),
 				),
 				array(
-					'GroupPermissions' => array( 'sysop' => array( 'undelete' ), 'user' => array( 'edit' ) ),
+					'GroupPermissions' => array(
+						'sysop' => array( 'undelete' ),
+						'user' => array( 'edit' )
+					),
 				),
 				array(
-					'wgGroupPermissions' => array( 'sysop' => array( 'delete', 'undelete' ), 'user' => array( 'edit' ) ),
+					'wgGroupPermissions' => array(
+						'sysop' => array( 'delete', 'undelete' ),
+						'user' => array( 'edit' )
+					),
 				)
 			)
 		);

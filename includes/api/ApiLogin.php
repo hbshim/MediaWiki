@@ -24,6 +24,7 @@
  *
  * @file
  */
+use MediaWiki\Logger\LoggerFactory;
 
 /**
  * Unit to authenticate log-in attempts to the current wiki.
@@ -46,11 +47,12 @@ class ApiLogin extends ApiBase {
 	 * is reached. The expiry is $this->mLoginThrottle.
 	 */
 	public function execute() {
-		// If we're in JSON callback mode, no tokens can be obtained
-		if ( !is_null( $this->getMain()->getRequest()->getVal( 'callback' ) ) ) {
+		// If we're in a mode that breaks the same-origin policy, no tokens can
+		// be obtained
+		if ( $this->lacksSameOriginSecurity() ) {
 			$this->getResult()->addValue( null, 'login', array(
 				'result' => 'Aborted',
-				'reason' => 'Cannot log in when using a callback',
+				'reason' => 'Cannot log in when the same-origin policy is not applied',
 			) );
 
 			return;
@@ -143,6 +145,10 @@ class ApiLogin extends ApiBase {
 			case LoginForm::CREATE_BLOCKED:
 				$result['result'] = 'CreateBlocked';
 				$result['details'] = 'Your IP address is blocked from account creation';
+				$block = $context->getUser()->getBlock();
+				if ( $block ) {
+					$result = array_merge( $result, ApiQueryUserInfo::getBlockInfo( $block ) );
+				}
 				break;
 
 			case LoginForm::THROTTLED:
@@ -153,6 +159,10 @@ class ApiLogin extends ApiBase {
 
 			case LoginForm::USER_BLOCKED:
 				$result['result'] = 'Blocked';
+				$block = User::newFromName( $params['name'] )->getBlock();
+				if ( $block ) {
+					$result = array_merge( $result, ApiQueryUserInfo::getBlockInfo( $block ) );
+				}
 				break;
 
 			case LoginForm::ABORTED:
@@ -165,6 +175,12 @@ class ApiLogin extends ApiBase {
 		}
 
 		$this->getResult()->addValue( null, 'login', $result );
+
+		LoggerFactory::getInstance( 'authmanager' )->info( 'Login attempt', array(
+			'event' => 'login',
+			'successful' => $authRes === LoginForm::SUCCESS,
+			'status' => LoginForm::$statusCodes[$authRes],
+		) );
 	}
 
 	public function mustBePosted() {
@@ -178,7 +194,9 @@ class ApiLogin extends ApiBase {
 	public function getAllowedParams() {
 		return array(
 			'name' => null,
-			'password' => null,
+			'password' => array(
+				ApiBase::PARAM_TYPE => 'password',
+			),
 			'domain' => null,
 			'token' => null,
 		);

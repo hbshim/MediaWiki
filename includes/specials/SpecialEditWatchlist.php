@@ -71,6 +71,7 @@ class SpecialEditWatchlist extends UnlistedSpecialPage {
 
 		$this->outputHeader();
 		$this->outputSubtitle();
+		$out->addModuleStyles( 'mediawiki.special' );
 
 		# B/C: $mode used to be waaay down the parameter list, and the first parameter
 		# was $wgUser
@@ -102,7 +103,7 @@ class SpecialEditWatchlist extends UnlistedSpecialPage {
 
 			case self::EDIT_NORMAL:
 			default:
-			$this->executeViewEditWatchlist();
+				$this->executeViewEditWatchlist();
 				break;
 		}
 	}
@@ -281,10 +282,12 @@ class SpecialEditWatchlist extends UnlistedSpecialPage {
 			}
 
 			if ( $title instanceof Title ) {
-				$output .= "<li>"
-					. Linker::link( $title )
-					. ' (' . Linker::link( $title->getTalkPage(), $talk )
-					. ")</li>\n";
+				$output .= '<li>' .
+					Linker::link( $title ) . ' ' .
+					$this->msg( 'parentheses' )->rawParams(
+						Linker::link( $title->getTalkPage(), $talk )
+					)->escaped() .
+					"</li>\n";
 			}
 		}
 
@@ -299,7 +302,9 @@ class SpecialEditWatchlist extends UnlistedSpecialPage {
 	 */
 	private function getWatchlist() {
 		$list = array();
-		$dbr = wfGetDB( DB_MASTER );
+
+		$index = $this->getRequest()->wasPosted() ? DB_MASTER : DB_SLAVE;
+		$dbr = wfGetDB( $index );
 
 		$res = $dbr->select(
 			'watchlist',
@@ -312,6 +317,7 @@ class SpecialEditWatchlist extends UnlistedSpecialPage {
 		);
 
 		if ( $res->numRows() > 0 ) {
+			/** @var Title[] $titles */
 			$titles = array();
 			foreach ( $res as $row ) {
 				$title = Title::makeTitleSafe( $row->wl_namespace, $row->wl_title );
@@ -344,7 +350,7 @@ class SpecialEditWatchlist extends UnlistedSpecialPage {
 	 */
 	protected function getWatchlistInfo() {
 		$titles = array();
-		$dbr = wfGetDB( DB_MASTER );
+		$dbr = wfGetDB( DB_SLAVE );
 
 		$res = $dbr->select(
 			array( 'watchlist' ),
@@ -400,7 +406,7 @@ class SpecialEditWatchlist extends UnlistedSpecialPage {
 	 */
 	private function cleanupWatchlist() {
 		if ( !count( $this->badItems ) ) {
-			return; //nothing to do
+			return; // nothing to do
 		}
 
 		$dbw = wfGetDB( DB_MASTER );
@@ -655,7 +661,8 @@ class SpecialEditWatchlist extends UnlistedSpecialPage {
 			$link = '<span class="watchlistredir">' . $link . '</span>';
 		}
 
-		return $link . " (" . $this->getLanguage()->pipeList( $tools ) . ")";
+		return $link . ' ' .
+			$this->msg( 'parentheses' )->rawParams( $this->getLanguage()->pipeList( $tools ) )->escaped();
 	}
 
 	/**

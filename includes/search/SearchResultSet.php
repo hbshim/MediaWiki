@@ -25,6 +25,27 @@
  * @ingroup Search
  */
 class SearchResultSet {
+
+	/**
+	 * Types of interwiki results
+	 */
+	/**
+	 * Results that are displayed only together with existing main wiki results
+	 * @var int
+	 */
+	const SECONDARY_RESULTS = 0;
+	/**
+	 * Results that can displayed even if no existing main wiki results exist
+	 * @var int
+	 */
+	const INLINE_RESULTS = 1;
+
+	protected $containedSyntax = false;
+
+	public function __construct( $containedSyntax = false ) {
+		$this->containedSyntax = $containedSyntax;
+	}
+
 	/**
 	 * Fetch an array of regular expression fragments for matching
 	 * the search terms as parsed by this engine in a text extract.
@@ -55,6 +76,33 @@ class SearchResultSet {
 	}
 
 	/**
+	 * Some search modes will run an alternative query that it thinks gives
+	 * a better result than the provided search. Returns true if this has
+	 * occured.
+	 *
+	 * @return bool
+	 */
+	function hasRewrittenQuery() {
+		return false;
+	}
+
+	/**
+	 * @return string|null The search the query was internally rewritten to,
+	 *  or null when the result of the original query was returned.
+	 */
+	function getQueryAfterRewrite() {
+		return null;
+	}
+
+	/**
+	 * @return string|null Same as self::getQueryAfterRewrite(), but in HTML
+	 *  and with changes highlighted. Null when the query was not rewritten.
+	 */
+	function getQueryAfterRewriteSnippet() {
+		return null;
+	}
+
+	/**
 	 * Some search modes return a suggested alternate term if there are
 	 * no exact hits. Returns true if there is one on this set.
 	 *
@@ -65,7 +113,7 @@ class SearchResultSet {
 	}
 
 	/**
-	 * @return string Suggested query, null if none
+	 * @return string|null Suggested query, null if none
 	 */
 	function getSuggestionQuery() {
 		return null;
@@ -83,7 +131,7 @@ class SearchResultSet {
 	 *
 	 * @return SearchResultSet
 	 */
-	function getInterwikiResults() {
+	function getInterwikiResults( $type = self::SECONDARY_RESULTS ) {
 		return null;
 	}
 
@@ -92,8 +140,8 @@ class SearchResultSet {
 	 *
 	 * @return bool
 	 */
-	function hasInterwikiResults() {
-		return $this->getInterwikiResults() != null;
+	function hasInterwikiResults( $type = self::SECONDARY_RESULTS ) {
+		return false;
 	}
 
 	/**
@@ -120,7 +168,7 @@ class SearchResultSet {
 	 * @return bool
 	 */
 	public function searchContainedSyntax() {
-		return false;
+		return $this->containedSyntax;
 	}
 }
 

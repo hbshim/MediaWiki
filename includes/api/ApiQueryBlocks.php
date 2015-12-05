@@ -187,21 +187,23 @@ class ApiQueryBlocks extends ApiQueryBase {
 				$this->setContinueEnumParameter( 'continue', "$row->ipb_timestamp|$row->ipb_id" );
 				break;
 			}
-			$block = array();
+			$block = array(
+				ApiResult::META_TYPE => 'assoc',
+			);
 			if ( $fld_id ) {
-				$block['id'] = $row->ipb_id;
+				$block['id'] = (int)$row->ipb_id;
 			}
 			if ( $fld_user && !$row->ipb_auto ) {
 				$block['user'] = $row->ipb_address;
 			}
 			if ( $fld_userid && !$row->ipb_auto ) {
-				$block['userid'] = $row->ipb_user;
+				$block['userid'] = (int)$row->ipb_user;
 			}
 			if ( $fld_by ) {
 				$block['by'] = $row->ipb_by_text;
 			}
 			if ( $fld_byid ) {
-				$block['byid'] = $row->ipb_by;
+				$block['byid'] = (int)$row->ipb_by;
 			}
 			if ( $fld_timestamp ) {
 				$block['timestamp'] = wfTimestamp( TS_ISO_8601, $row->ipb_timestamp );
@@ -218,27 +220,13 @@ class ApiQueryBlocks extends ApiQueryBase {
 			}
 			if ( $fld_flags ) {
 				// For clarity, these flags use the same names as their action=block counterparts
-				if ( $row->ipb_auto ) {
-					$block['automatic'] = '';
-				}
-				if ( $row->ipb_anon_only ) {
-					$block['anononly'] = '';
-				}
-				if ( $row->ipb_create_account ) {
-					$block['nocreate'] = '';
-				}
-				if ( $row->ipb_enable_autoblock ) {
-					$block['autoblock'] = '';
-				}
-				if ( $row->ipb_block_email ) {
-					$block['noemail'] = '';
-				}
-				if ( $row->ipb_deleted ) {
-					$block['hidden'] = '';
-				}
-				if ( $row->ipb_allow_usertalk ) {
-					$block['allowusertalk'] = '';
-				}
+				$block['automatic'] = (bool)$row->ipb_auto;
+				$block['anononly'] = (bool)$row->ipb_anon_only;
+				$block['nocreate'] = (bool)$row->ipb_create_account;
+				$block['autoblock'] = (bool)$row->ipb_enable_autoblock;
+				$block['noemail'] = (bool)$row->ipb_block_email;
+				$block['hidden'] = (bool)$row->ipb_deleted;
+				$block['allowusertalk'] = (bool)$row->ipb_allow_usertalk;
 			}
 			$fit = $result->addValue( array( 'query', $this->getModuleName() ), null, $block );
 			if ( !$fit ) {
@@ -246,7 +234,7 @@ class ApiQueryBlocks extends ApiQueryBase {
 				break;
 			}
 		}
-		$result->setIndexedTagName_internal( array( 'query', $this->getModuleName() ), 'block' );
+		$result->addIndexedTagName( array( 'query', $this->getModuleName() ), 'block' );
 	}
 
 	protected function prepareUsername( $user ) {
@@ -315,7 +303,8 @@ class ApiQueryBlocks extends ApiQueryBase {
 					'range',
 					'flags'
 				),
-				ApiBase::PARAM_ISMULTI => true
+				ApiBase::PARAM_ISMULTI => true,
+				ApiBase::PARAM_HELP_MSG_PER_VALUE => array(),
 			),
 			'show' => array(
 				ApiBase::PARAM_TYPE => array(

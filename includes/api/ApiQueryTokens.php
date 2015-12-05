@@ -35,10 +35,12 @@ class ApiQueryTokens extends ApiQueryBase {
 
 	public function execute() {
 		$params = $this->extractRequestParams();
-		$res = array();
+		$res = array(
+			ApiResult::META_TYPE => 'assoc',
+		);
 
-		if ( $this->getMain()->getRequest()->getVal( 'callback' ) !== null ) {
-			$this->setWarning( 'Tokens may not be obtained when using a callback' );
+		if ( $this->lacksSameOriginSecurity() ) {
+			$this->setWarning( 'Tokens may not be obtained when the same-origin policy is not applied' );
 			return;
 		}
 
@@ -90,5 +92,9 @@ class ApiQueryTokens extends ApiQueryBase {
 
 	public function getCacheMode( $params ) {
 		return 'private';
+	}
+
+	public function getHelpUrls() {
+		return 'https://www.mediawiki.org/wiki/API:Tokens';
 	}
 }

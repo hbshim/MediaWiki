@@ -25,9 +25,12 @@
 
 /**
  * Implements the default log formatting.
- * Can be overridden by subclassing and setting
- * $wgLogActionsHandlers['type/subtype'] = 'class'; or
- * $wgLogActionsHandlers['type/*'] = 'class';
+ *
+ * Can be overridden by subclassing and setting:
+ *
+ *     $wgLogActionsHandlers['type/subtype'] = 'class'; or
+ *     $wgLogActionsHandlers['type/*'] = 'class';
+ *
  * @since 1.19
  */
 class LogFormatter {
@@ -190,6 +193,8 @@ class LogFormatter {
 	 * @return string Text
 	 */
 	public function getIRCActionText() {
+		global $wgContLang;
+
 		$this->plaintext = true;
 		$this->irctext = true;
 
@@ -258,7 +263,7 @@ class LogFormatter {
 				switch ( $entry->getSubtype() ) {
 					case 'protect':
 						$text = wfMessage( 'protectedarticle' )
-							->rawParams( $target . ' ' . $parameters[0] )->inContentLanguage()->escaped();
+							->rawParams( $target . ' ' . $parameters['4::description'] )->inContentLanguage()->escaped();
 						break;
 					case 'unprotect':
 						$text = wfMessage( 'unprotectedarticle' )
@@ -266,7 +271,11 @@ class LogFormatter {
 						break;
 					case 'modify':
 						$text = wfMessage( 'modifiedarticleprotection' )
-							->rawParams( $target . ' ' . $parameters[0] )->inContentLanguage()->escaped();
+							->rawParams( $target . ' ' . $parameters['4::description'] )->inContentLanguage()->escaped();
+						break;
+					case 'move_prot':
+						$text = wfMessage( 'movedarticleprotection' )
+							->rawParams( $target, $parameters['4::oldtitle'] )->inContentLanguage()->escaped();
 						break;
 				}
 				break;
@@ -335,9 +344,17 @@ class LogFormatter {
 			case 'block':
 				switch ( $entry->getSubtype() ) {
 					case 'block':
-						global $wgContLang;
-						$duration = $wgContLang->translateBlockExpiry( $parameters['5::duration'] );
-						$flags = BlockLogFormatter::formatBlockFlags( $parameters['6::flags'], $wgContLang );
+						// Keep compatibility with extensions by checking for
+						// new key (5::duration/6::flags) or old key (0/optional 1)
+						if ( $entry->isLegacy() ) {
+							$rawDuration = $parameters[0];
+							$rawFlags = isset( $parameters[1] ) ? $parameters[1] : '';
+						} else {
+							$rawDuration = $parameters['5::duration'];
+							$rawFlags = $parameters['6::flags'];
+						}
+						$duration = $wgContLang->translateBlockExpiry( $rawDuration );
+						$flags = BlockLogFormatter::formatBlockFlags( $rawFlags, $wgContLang );
 						$text = wfMessage( 'blocklogentry' )
 							->rawParams( $target, $duration, $flags )->inContentLanguage()->escaped();
 						break;
@@ -346,11 +363,23 @@ class LogFormatter {
 							->rawParams( $target )->inContentLanguage()->escaped();
 						break;
 					case 'reblock':
-						global $wgContLang;
 						$duration = $wgContLang->translateBlockExpiry( $parameters['5::duration'] );
 						$flags = BlockLogFormatter::formatBlockFlags( $parameters['6::flags'], $wgContLang );
 						$text = wfMessage( 'reblock-logentry' )
 							->rawParams( $target, $duration, $flags )->inContentLanguage()->escaped();
+						break;
+				}
+				break;
+
+			case 'import':
+				switch ( $entry->getSubtype() ) {
+					case 'upload':
+						$text = wfMessage( 'import-logentry-upload' )
+							->rawParams( $target )->inContentLanguage()->escaped();
+						break;
+					case 'interwiki':
+						$text = wfMessage( 'import-logentry-interwiki' )
+							->rawParams( $target )->inContentLanguage()->escaped();
 						break;
 				}
 				break;
@@ -447,7 +476,9 @@ class LogFormatter {
 				continue;
 			}
 			list( $index, $type, ) = explode( ':', $key, 3 );
-			$params[$index - 1] = $this->formatParameterValue( $type, $value );
+			if ( ctype_digit( $index ) ) {
+				$params[$index - 1] = $this->formatParameterValue( $type, $value );
+			}
 		}
 
 		/* Message class doesn't like non consecutive numbering.
@@ -515,8 +546,8 @@ class LogFormatter {
 	 *     * title-link: The value is a page title,
 	 *                   returns link to this page
 	 *     * number: Format value as number
-	 * @param string $value The parameter value that should
-	 *                      be formated
+	 *     * list: Format value as a comma-separated list
+	 * @param mixed $value The parameter value that should be formatted
 	 * @return string|array Formated value
 	 * @since 1.21
 	 */
@@ -526,6 +557,9 @@ class LogFormatter {
 		switch ( strtolower( trim( $type ) ) ) {
 			case 'raw':
 				$value = Message::rawParam( $value );
+				break;
+			case 'list':
+				$value = $this->context->getLanguage()->commaList( $value );
 				break;
 			case 'msg':
 				$value = $this->msg( $value )->text();
@@ -570,12 +604,13 @@ class LogFormatter {
 	 * value in consideration.
 	 * @param Title $title The page
 	 * @param array $parameters Query parameters
+	 * @param string|null $html Linktext of the link as raw html
 	 * @throws MWException
 	 * @return string
 	 */
-	protected function makePageLink( Title $title = null, $parameters = array() ) {
+	protected function makePageLink( Title $title = null, $parameters = array(), $html = null ) {
 		if ( !$this->plaintext ) {
-			$link = Linker::link( $title, null, array(), $parameters );
+			$link = Linker::link( $title, $html, array(), $parameters );
 		} else {
 			if ( !$title instanceof Title ) {
 				throw new MWException( "Expected title, got null" );
@@ -703,6 +738,120 @@ class LogFormatter {
 		// problems with extensions
 		return $this->getMessageParameters();
 	}
+
+	/**
+	 * Get the array of parameters, converted from legacy format if necessary.
+	 * @since 1.25
+	 * @return array
+	 */
+	protected function getParametersForApi() {
+		return $this->entry->getParameters();
+	}
+
+	/**
+	 * Format parameters for API output
+	 *
+	 * The result array should generally map named keys to values. Index and
+	 * type should be omitted, e.g. "4::foo" should be returned as "foo" in the
+	 * output. Values should generally be unformatted.
+	 *
+	 * Renames or removals of keys besides from the legacy numeric format to
+	 * modern named style should be avoided. Any renames should be announced to
+	 * the mediawiki-api-announce mailing list.
+	 *
+	 * @since 1.25
+	 * @return array
+	 */
+	public function formatParametersForApi() {
+		$logParams = array();
+		foreach ( $this->getParametersForApi() as $key => $value ) {
+			$vals = explode( ':', $key, 3 );
+			if ( count( $vals ) !== 3 ) {
+				$logParams[$key] = $value;
+				continue;
+			}
+			$logParams += $this->formatParameterValueForApi( $vals[2], $vals[1], $value );
+		}
+		ApiResult::setIndexedTagName( $logParams, 'param' );
+		ApiResult::setArrayType( $logParams, 'assoc' );
+
+		return $logParams;
+	}
+
+	/**
+	 * Format a single parameter value for API output
+	 *
+	 * @since 1.25
+	 * @param string $name
+	 * @param string $type
+	 * @param string $value
+	 * @return array
+	 */
+	protected function formatParameterValueForApi( $name, $type, $value ) {
+		$type = strtolower( trim( $type ) );
+		switch ( $type ) {
+			case 'bool':
+				$value = (bool)$value;
+				break;
+
+			case 'number':
+				if ( ctype_digit( $value ) || is_int( $value ) ) {
+					$value = (int)$value;
+				} else {
+					$value = (float)$value;
+				}
+				break;
+
+			case 'array':
+			case 'assoc':
+			case 'kvp':
+				if ( is_array( $value ) ) {
+					ApiResult::setArrayType( $value, $type );
+				}
+				break;
+
+			case 'timestamp':
+				$value = wfTimestamp( TS_ISO_8601, $value );
+				break;
+
+			case 'msg':
+			case 'msg-content':
+				$msg = $this->msg( $value );
+				if ( $type === 'msg-content' ) {
+					$msg->inContentLanguage();
+				}
+				$value = array();
+				$value["{$name}_key"] = $msg->getKey();
+				if ( $msg->getParams() ) {
+					$value["{$name}_params"] = $msg->getParams();
+				}
+				$value["{$name}_text"] = $msg->text();
+				return $value;
+
+			case 'title':
+			case 'title-link':
+				$title = Title::newFromText( $value );
+				if ( $title ) {
+					$value = array();
+					ApiQueryBase::addTitleInfo( $value, $title, "{$name}_" );
+				}
+				return $value;
+
+			case 'user':
+			case 'user-link':
+				$user = User::newFromName( $value );
+				if ( $user ) {
+					$value = $user->getName();
+				}
+				break;
+
+			default:
+				// do nothing
+				break;
+		}
+
+		return array( $name => $value );
+	}
 }
 
 /**
@@ -783,32 +932,6 @@ class LegacyLogFormatter extends LogFormatter {
 		$title = $this->entry->getTarget();
 		$type = $this->entry->getType();
 		$subtype = $this->entry->getSubtype();
-
-		if ( $type == 'protect'
-			&& ( $subtype == 'protect' || $subtype == 'modify' || $subtype == 'unprotect' )
-		) {
-			$links = array(
-				Linker::link( $title,
-					$this->msg( 'hist' )->escaped(),
-					array(),
-					array(
-						'action' => 'history',
-						'offset' => $this->entry->getTimestamp()
-					)
-				)
-			);
-			if ( $this->context->getUser()->isAllowed( 'protect' ) ) {
-				$links[] = Linker::linkKnown(
-					$title,
-					$this->msg( 'protect_change' )->escaped(),
-					array(),
-					array( 'action' => 'protect' )
-				);
-			}
-
-			return $this->msg( 'parentheses' )->rawParams(
-				$this->context->getLanguage()->pipeList( $links ) )->escaped();
-		}
 
 		// Do nothing. The implementation is handled by the hook modifiying the
 		// passed-by-ref parameters. This also changes the default value so that

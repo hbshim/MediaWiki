@@ -48,10 +48,10 @@ if ( !isset( $wgVersion ) ) {
 $ps_default = Profiler::instance()->scopedProfileIn( $fname . '-defaults' );
 
 if ( $wgScript === false ) {
-	$wgScript = "$wgScriptPath/index$wgScriptExtension";
+	$wgScript = "$wgScriptPath/index.php";
 }
 if ( $wgLoadScript === false ) {
-	$wgLoadScript = "$wgScriptPath/load$wgScriptExtension";
+	$wgLoadScript = "$wgScriptPath/load.php";
 }
 
 if ( $wgArticlePath === false ) {
@@ -68,20 +68,18 @@ if ( !empty( $wgActionPaths ) && !isset( $wgActionPaths['view'] ) ) {
 	$wgActionPaths['view'] = $wgArticlePath;
 }
 
-if ( $wgStylePath === false ) {
-	$wgStylePath = "$wgScriptPath/skins";
-}
-if ( $wgLocalStylePath === false ) {
-	$wgLocalStylePath = "$wgScriptPath/skins";
-}
-if ( $wgStyleDirectory === false ) {
-	$wgStyleDirectory = "$IP/skins";
-}
-if ( $wgExtensionAssetsPath === false ) {
-	$wgExtensionAssetsPath = "$wgScriptPath/extensions";
-}
 if ( $wgResourceBasePath === null ) {
 	$wgResourceBasePath = $wgScriptPath;
+}
+if ( $wgStylePath === false ) {
+	$wgStylePath = "$wgResourceBasePath/skins";
+}
+if ( $wgLocalStylePath === false ) {
+	// Avoid wgResourceBasePath here since that may point to a different domain (e.g. CDN)
+	$wgLocalStylePath = "$wgScriptPath/skins";
+}
+if ( $wgExtensionAssetsPath === false ) {
+	$wgExtensionAssetsPath = "$wgResourceBasePath/extensions";
 }
 
 if ( $wgLogo === false ) {
@@ -106,6 +104,10 @@ if ( $wgDeletedDirectory === false ) {
 
 if ( $wgGitInfoCacheDirectory === false && $wgCacheDirectory !== false ) {
 	$wgGitInfoCacheDirectory = "{$wgCacheDirectory}/gitinfo";
+}
+
+if ( $wgEnableParserCache === false ) {
+	$wgParserCacheType = CACHE_NONE;
 }
 
 // Fix path to icon images after they were moved in 1.24
@@ -184,7 +186,7 @@ if ( !$wgLocalFileRepo ) {
 		'name' => 'local',
 		'directory' => $wgUploadDirectory,
 		'scriptDirUrl' => $wgScriptPath,
-		'scriptExtension' => $wgScriptExtension,
+		'scriptExtension' => '.php',
 		'url' => $wgUploadBaseUrl ? $wgUploadBaseUrl . $wgUploadPath : $wgUploadPath,
 		'hashLevels' => $wgHashedUploadDirectory ? 2 : 0,
 		'thumbScriptUrl' => $wgThumbnailScriptPath,
@@ -235,10 +237,11 @@ if ( $wgUseInstantCommons ) {
 	$wgForeignFileRepos[] = array(
 		'class' => 'ForeignAPIRepo',
 		'name' => 'wikimediacommons',
-		'apibase' => WebRequest::detectProtocol() === 'https' ?
-			'https://commons.wikimedia.org/w/api.php' :
-			'http://commons.wikimedia.org/w/api.php',
+		'apibase' => 'https://commons.wikimedia.org/w/api.php',
+		'url' => 'https://upload.wikimedia.org/wikipedia/commons',
+		'thumbUrl' => 'https://upload.wikimedia.org/wikipedia/commons/thumb',
 		'hashLevels' => 2,
+		'transformVia404' => true,
 		'fetchDescription' => true,
 		'descriptionCacheExpiry' => 43200,
 		'apiThumbCacheExpiry' => 86400,
@@ -362,11 +365,28 @@ if ( $wgMetaNamespace === false ) {
 	$wgMetaNamespace = str_replace( ' ', '_', $wgSitename );
 }
 
-// Default value is either the suhosin limit or -1 for unlimited
+// Default value is 2000 or the suhosin limit if it is between 1 and 2000
 if ( $wgResourceLoaderMaxQueryLength === false ) {
-	$maxValueLength = ini_get( 'suhosin.get.max_value_length' );
-	$wgResourceLoaderMaxQueryLength = $maxValueLength > 0 ? $maxValueLength : -1;
+	$suhosinMaxValueLength = (int)ini_get( 'suhosin.get.max_value_length' );
+	if ( $suhosinMaxValueLength > 0 && $suhosinMaxValueLength < 2000 ) {
+		$wgResourceLoaderMaxQueryLength = $suhosinMaxValueLength;
+	} else {
+		$wgResourceLoaderMaxQueryLength = 2000;
+	}
+	unset( $suhosinMaxValueLength );
 }
+
+// Ensure the minimum chunk size is less than PHP upload limits or the maximum
+// upload size.
+$wgMinUploadChunkSize = min(
+	$wgMinUploadChunkSize,
+	UploadBase::getMaxUploadSize( 'file' ),
+	UploadBase::getMaxPhpUploadSize(),
+	( wfShorthandToInteger(
+		ini_get( 'post_max_size' ) ?: ini_get( 'hhvm.server.max_post_size' ),
+		PHP_INT_MAX
+	) ?: PHP_INT_MAX ) - 1024 // Leave some room for other POST parameters
+);
 
 /**
  * Definitions of the NS_ constants are in Defines.php
@@ -401,11 +421,9 @@ if ( is_array( $wgExtraNamespaces ) ) {
 // To determine the user language, use $wgLang->getCode()
 $wgContLanguageCode = $wgLanguageCode;
 
-// Easy to forget to falsify $wgShowIPinHeader for static caches.
+// Easy to forget to falsify $wgDebugToolbar for static caches.
 // If file cache or squid cache is on, just disable this (DWIMD).
-// Do the same for $wgDebugToolbar.
 if ( $wgUseFileCache || $wgUseSquid ) {
-	$wgShowIPinHeader = false;
 	$wgDebugToolbar = false;
 }
 
@@ -425,12 +443,12 @@ if ( !$wgHtml5Version && $wgAllowRdfaAttributes ) {
 }
 
 // Blacklisted file extensions shouldn't appear on the "allowed" list
-$wgFileExtensions = array_values( array_diff ( $wgFileExtensions, $wgFileBlacklist ) );
+$wgFileExtensions = array_values( array_diff( $wgFileExtensions, $wgFileBlacklist ) );
 
 if ( $wgInvalidateCacheOnLocalSettingsChange ) {
-	// @codingStandardsIgnoreStart Generic.PHP.NoSilencedErrors.Discouraged - No GlobalFunction here yet.
-	$wgCacheEpoch = max( $wgCacheEpoch, gmdate( 'YmdHis', @filemtime( "$IP/LocalSettings.php" ) ) );
-	// @codingStandardsIgnoreEnd
+	MediaWiki\suppressWarnings();
+	$wgCacheEpoch = max( $wgCacheEpoch, gmdate( 'YmdHis', filemtime( "$IP/LocalSettings.php" ) ) );
+	MediaWiki\restoreWarnings();
 }
 
 if ( $wgNewUserLog ) {
@@ -454,14 +472,24 @@ if ( $wgCookieSecure === 'detect' ) {
 	$wgCookieSecure = ( WebRequest::detectProtocol() === 'https' );
 }
 
-// Back compatibility for $wgRateLimitLog deprecated with 1.23
-if ( $wgRateLimitLog && !array_key_exists( 'ratelimit', $wgDebugLogGroups ) ) {
-	$wgDebugLogGroups['ratelimit'] = $wgRateLimitLog;
-}
-
 if ( $wgProfileOnly ) {
 	$wgDebugLogGroups['profileoutput'] = $wgDebugLogFile;
 	$wgDebugLogFile = '';
+}
+
+// Backwards compatibility with old password limits
+if ( $wgMinimalPasswordLength !== false ) {
+	$wgPasswordPolicy['policies']['default']['MinimalPasswordLength'] = $wgMinimalPasswordLength;
+}
+
+if ( $wgMaximalPasswordLength !== false ) {
+	$wgPasswordPolicy['policies']['default']['MaximalPasswordLength'] = $wgMaximalPasswordLength;
+}
+
+// Backwards compatibility with deprecated alias
+// Must be before call to wfSetupSession()
+if ( $wgSessionsInMemcached ) {
+	$wgSessionsInObjectCache = true;
 }
 
 Profiler::instance()->scopedProfileOut( $ps_default );
@@ -479,7 +507,22 @@ if ( !class_exists( 'AutoLoader' ) ) {
 
 MWExceptionHandler::installHandler();
 
-require_once "$IP/includes/libs/normal/UtfNormalUtil.php";
+require_once "$IP/includes/compat/normal/UtfNormalUtil.php";
+
+
+$ps_validation = Profiler::instance()->scopedProfileIn( $fname . '-validation' );
+
+// T48998: Bail out early if $wgArticlePath is non-absolute
+if ( !preg_match( '/^(https?:\/\/|\/)/', $wgArticlePath ) ) {
+	throw new FatalError(
+		'If you use a relative URL for $wgArticlePath, it must start ' .
+		'with a slash (<code>/</code>).<br><br>See ' .
+		'<a href="https://www.mediawiki.org/wiki/Manual:$wgArticlePath">' .
+		'https://www.mediawiki.org/wiki/Manual:$wgArticlePath</a>.'
+	);
+}
+
+Profiler::instance()->scopedProfileOut( $ps_validation );
 
 $ps_default2 = Profiler::instance()->scopedProfileIn( $fname . '-defaults2' );
 
@@ -498,11 +541,11 @@ unset( $serverParts );
 
 // Set defaults for configuration variables
 // that are derived from the server name by default
-if ( $wgEmergencyContact === false ) {
+// Note: $wgEmergencyContact and $wgPasswordSender may be false or empty string (T104142)
+if ( !$wgEmergencyContact ) {
 	$wgEmergencyContact = 'wikiadmin@' . $wgServerName;
 }
-
-if ( $wgPasswordSender === false ) {
+if ( !$wgPasswordSender ) {
 	$wgPasswordSender = 'apache@' . $wgServerName;
 }
 
@@ -512,16 +555,30 @@ if ( $wgSecureLogin && substr( $wgServer, 0, 2 ) !== '//' ) {
 		. 'HTTP or HTTPS. Disabling secure login.' );
 }
 
+$wgVirtualRestConfig['global']['domain'] = $wgCanonicalServer;
+
 // Now that GlobalFunctions is loaded, set defaults that depend on it.
 if ( $wgTmpDirectory === false ) {
-	$ps_tmpdir = Profiler::instance()->scopedProfileIn( $fname . '-tempDir' );
 	$wgTmpDirectory = wfTempDir();
-	Profiler::instance()->scopedProfileOut( $ps_tmpdir );
 }
 
 // We don't use counters anymore. Left here for extensions still
 // expecting this to exist. Should be removed sometime 1.26 or later.
-$wgDisableCounters = true;
+if ( !isset( $wgDisableCounters ) ) {
+	$wgDisableCounters = true;
+}
+
+if ( $wgMainWANCache === false ) {
+	// Setup a WAN cache from $wgMainCacheType with no relayer.
+	// Sites using multiple datacenters can configure a relayer.
+	$wgMainWANCache = 'mediawiki-main-default';
+	$wgWANObjectCaches[$wgMainWANCache] = array(
+		'class'         => 'WANObjectCache',
+		'cacheId'       => $wgMainCacheType,
+		'pool'          => 'mediawiki-main-default',
+		'relayerConfig' => array( 'class' => 'EventRelayerNull' )
+	);
+}
 
 Profiler::instance()->scopedProfileOut( $ps_default2 );
 
@@ -536,14 +593,18 @@ wfMemoryLimit();
  * explicitly set. Inspired by phpMyAdmin's treatment of the problem.
  */
 if ( is_null( $wgLocaltimezone ) ) {
-	wfSuppressWarnings();
+	MediaWiki\suppressWarnings();
 	$wgLocaltimezone = date_default_timezone_get();
-	wfRestoreWarnings();
+	MediaWiki\restoreWarnings();
 }
 
 date_default_timezone_set( $wgLocaltimezone );
 if ( is_null( $wgLocalTZoffset ) ) {
 	$wgLocalTZoffset = date( 'Z' ) / 60;
+}
+
+if ( !$wgDBerrorLogTZ ) {
+	$wgDBerrorLogTZ = $wgLocaltimezone;
 }
 
 // Useful debug output
@@ -573,9 +634,11 @@ $ps_memcached = Profiler::instance()->scopedProfileIn( $fname . '-memcached' );
 $wgMemc = wfGetMainCache();
 $messageMemc = wfGetMessageCacheStorage();
 $parserMemc = wfGetParserCacheStorage();
-$wgLangConvMemc = wfGetLangConverterCacheStorage();
 
-wfDebugLog( 'caches', 'main: ' . get_class( $wgMemc ) .
+wfDebugLog( 'caches',
+	'cluster: ' . get_class( $wgMemc ) .
+	', WAN: ' . $wgMainWANCache .
+	', stash: ' . $wgMainStash .
 	', message: ' . get_class( $messageMemc ) .
 	', parser: ' . get_class( $parserMemc ) );
 
@@ -640,16 +703,10 @@ if ( !is_object( $wgAuth ) ) {
  */
 $wgTitle = null;
 
-/**
- * @deprecated since 1.24 Use DeferredUpdates::addUpdate instead
- * @var array
- */
-$wgDeferredUpdateList = array();
-
 Profiler::instance()->scopedProfileOut( $ps_globals );
 $ps_extensions = Profiler::instance()->scopedProfileIn( $fname . '-extensions' );
 
-// Extension setup functions for extensions other than skins
+// Extension setup functions
 // Entries should be added to this variable during the inclusion
 // of the extension file. This allows the extension to perform
 // any necessary initialisation in the fully initialised environment

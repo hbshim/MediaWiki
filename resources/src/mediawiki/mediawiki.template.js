@@ -17,14 +17,14 @@
 			if ( !compiler.compile ) {
 				throw new Error( 'Compiler must implement compile method.' );
 			}
-			compilers[name] = compiler;
+			compilers[ name ] = compiler;
 		},
 
 		/**
 		 * Get the name of the compiler associated with a template based on its name.
 		 *
 		 * @param {string} templateName Name of template (including file suffix)
-		 * @return {String} Name of compiler
+		 * @return {string} Name of compiler
 		 */
 		getCompilerName: function ( templateName ) {
 			var templateParts = templateName.split( '.' );
@@ -63,12 +63,12 @@
 			var compiledTemplate,
 				compilerName = this.getCompilerName( templateName );
 
-			if ( !compiledTemplates[moduleName] ) {
-				compiledTemplates[moduleName] = {};
+			if ( !compiledTemplates[ moduleName ] ) {
+				compiledTemplates[ moduleName ] = {};
 			}
 
 			compiledTemplate = this.compile( templateBody, compilerName );
-			compiledTemplates[moduleName][ templateName ] = compiledTemplate;
+			compiledTemplates[ moduleName ][ templateName ] = compiledTemplate;
 			return compiledTemplate;
 		},
 

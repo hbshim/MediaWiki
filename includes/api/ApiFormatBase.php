@@ -32,6 +32,7 @@
 abstract class ApiFormatBase extends ApiBase {
 	private $mIsHtml, $mFormat, $mUnescapeAmps, $mHelp;
 	private $mBuffer, $mDisabled = false;
+	protected $mForceDefaultParams = false;
 
 	/**
 	 * If $format ends with 'fm', pretty-print the output in HTML.
@@ -59,14 +60,6 @@ abstract class ApiFormatBase extends ApiBase {
 	 * @return string
 	 */
 	abstract public function getMimeType();
-
-	/**
-	 * Whether this formatter needs raw data such as _element tags
-	 * @return bool
-	 */
-	public function getNeedsRawData() {
-		return false;
-	}
 
 	/**
 	 * Get the internal format name
@@ -116,6 +109,34 @@ abstract class ApiFormatBase extends ApiBase {
 	}
 
 	/**
+	 * Ignore request parameters, force a default.
+	 *
+	 * Used as a fallback if errors are being thrown.
+	 * @since 1.26
+	 */
+	public function forceDefaultParams() {
+		$this->mForceDefaultParams = true;
+	}
+
+	/**
+	 * Overridden to honor $this->forceDefaultParams(), if applicable
+	 * @since 1.26
+	 */
+	protected function getParameterFromSettings( $paramName, $paramSettings, $parseLimit ) {
+		if ( !$this->mForceDefaultParams ) {
+			return parent::getParameterFromSettings( $paramName, $paramSettings, $parseLimit );
+		}
+
+		if ( !is_array( $paramSettings ) ) {
+			return $paramSettings;
+		} elseif ( isset( $paramSettings[self::PARAM_DFLT] ) ) {
+			return $paramSettings[self::PARAM_DFLT];
+		} else {
+			return null;
+		}
+	}
+
+	/**
 	 * Initialize the printer function and prepare the output headers.
 	 * @param bool $unused Always false since 1.25
 	 */
@@ -134,7 +155,7 @@ abstract class ApiFormatBase extends ApiBase {
 
 		$this->getMain()->getRequest()->response()->header( "Content-Type: $mime; charset=utf-8" );
 
-		//Set X-Frame-Options API results (bug 39180)
+		// Set X-Frame-Options API results (bug 39180)
 		$apiFrameOptions = $this->getConfig()->get( 'ApiFrameOptions' );
 		if ( $apiFrameOptions ) {
 			$this->getMain()->getRequest()->response()->header( "X-Frame-Options: $apiFrameOptions" );
@@ -152,6 +173,7 @@ abstract class ApiFormatBase extends ApiBase {
 		$mime = $this->getMimeType();
 		if ( $this->getIsHtml() && $mime !== null ) {
 			$format = $this->getFormat();
+			$lcformat = strtolower( $format );
 			$result = $this->getBuffer();
 
 			$context = new DerivativeContext( $this->getMain() );
@@ -160,12 +182,17 @@ abstract class ApiFormatBase extends ApiBase {
 			$out = new OutputPage( $context );
 			$context->setOutput( $out );
 
-			$out->addModules( 'mediawiki.apipretty' );
+			$out->addModuleStyles( 'mediawiki.apipretty' );
 			$out->setPageTitle( $context->msg( 'api-format-title' ) );
 
-			$header = $context->msg( 'api-format-prettyprint-header' )
-				->params( $format, strtolower( $format ) )
-				->parseAsBlock();
+			// When the format without suffix 'fm' is defined, there is a non-html version
+			if ( $this->getMain()->getModuleManager()->isDefined( $lcformat, 'format' ) ) {
+				$msg = $context->msg( 'api-format-prettyprint-header' )->params( $format, $lcformat );
+			} else {
+				$msg = $context->msg( 'api-format-prettyprint-header-only-html' )->params( $format );
+			}
+
+			$header = $msg->parseAsBlock();
 			$out->addHTML(
 				Html::rawElement( 'div', array( 'class' => 'api-pretty-header' ),
 					ApiHelp::fixHelpLinks( $header )
@@ -180,7 +207,7 @@ abstract class ApiFormatBase extends ApiBase {
 
 			// API handles its own clickjacking protection.
 			// Note, that $wgBreakFrames will still override $wgApiFrameOptions for format mode.
-			$out->allowClickJacking();
+			$out->allowClickjacking();
 			$out->output();
 		} else {
 			// For non-HTML output, clear all errors that might have been
@@ -216,18 +243,6 @@ abstract class ApiFormatBase extends ApiBase {
 
 	public function getHelpUrls() {
 		return 'https://www.mediawiki.org/wiki/API:Data_formats';
-	}
-
-	/**
-	 * To avoid code duplication with the deprecation of dbg, dump, txt, wddx,
-	 * and yaml, this method is added to do the necessary work. It should be
-	 * removed when those deprecated formats are removed.
-	 */
-	protected function markDeprecated() {
-		$fm = $this->getIsHtml() ? 'fm' : '';
-		$name = $this->getModuleName();
-		$this->logFeatureUsage( "format=$name" );
-		$this->setWarning( "format=$name has been deprecated. Please use format=json$fm instead." );
 	}
 
 	/************************************************************************//**
@@ -285,7 +300,7 @@ abstract class ApiFormatBase extends ApiBase {
 		// Escape everything first for full coverage
 		$text = htmlspecialchars( $text );
 
-		if ( $this->mFormat === 'XML' || $this->mFormat === 'WDDX' ) {
+		if ( $this->mFormat === 'XML' ) {
 			// encode all comments or tags as safe blue strings
 			$text = str_replace( '&lt;', '<span style="color:blue;">&lt;', $text );
 			$text = str_replace( '&gt;', '&gt;</span>', $text );
@@ -348,6 +363,23 @@ abstract class ApiFormatBase extends ApiBase {
 	 * @param bool $value
 	 */
 	public function setBufferResult( $value ) {
+	}
+
+	/**
+	 * Formerly indicated whether the formatter needed metadata from ApiResult.
+	 *
+	 * ApiResult previously (indirectly) used this to decide whether to add
+	 * metadata or to ignore calls to metadata-setting methods, which
+	 * unfortunately made several methods that should have been static have to
+	 * be dynamic instead. Now ApiResult always stores metadata and formatters
+	 * are required to ignore it or filter it out.
+	 *
+	 * @deprecated since 1.25
+	 * @return bool Always true
+	 */
+	public function getNeedsRawData() {
+		wfDeprecated( __METHOD__, '1.25' );
+		return true;
 	}
 
 	/**@}*/

@@ -167,7 +167,7 @@ abstract class TransformationalImageHandler extends ImageHandler {
 			return $this->getClientScalingThumbnailImage( $image, $scalerParams );
 		}
 
-		if ( !$this->isImageAreaOkForThumbnaling( $image, $params ) ) {
+		if ( $image->isTransformedLocally() && !$this->isImageAreaOkForThumbnaling( $image, $params ) ) {
 			global $wgMaxImageArea;
 			return new TransformTooBigImageAreaError( $params, $wgMaxImageArea );
 		}
@@ -505,30 +505,31 @@ abstract class TransformationalImageHandler extends ImageHandler {
 	 * Retrieve the version of the installed ImageMagick
 	 * You can use PHPs version_compare() to use this value
 	 * Value is cached for one hour.
-	 * @return string Representing the IM version.
+	 * @return string|bool Representing the IM version; false on error
 	 */
 	protected function getMagickVersion() {
-		global $wgMemc;
+		$cache = ObjectCache::getLocalServerInstance( CACHE_NONE );
+		return $cache->getWithSetCallback(
+			'imagemagick-version',
+			$cache::TTL_HOUR,
+			function () {
+				global $wgImageMagickConvertCommand;
 
-		$cache = $wgMemc->get( "imagemagick-version" );
-		if ( !$cache ) {
-			global $wgImageMagickConvertCommand;
-			$cmd = wfEscapeShellArg( $wgImageMagickConvertCommand ) . ' -version';
-			wfDebug( __METHOD__ . ": Running convert -version\n" );
-			$retval = '';
-			$return = wfShellExec( $cmd, $retval );
-			$x = preg_match( '/Version: ImageMagick ([0-9]*\.[0-9]*\.[0-9]*)/', $return, $matches );
-			if ( $x != 1 ) {
-				wfDebug( __METHOD__ . ": ImageMagick version check failed\n" );
+				$cmd = wfEscapeShellArg( $wgImageMagickConvertCommand ) . ' -version';
+				wfDebug( __METHOD__ . ": Running convert -version\n" );
+				$retval = '';
+				$return = wfShellExec( $cmd, $retval );
+				$x = preg_match(
+					'/Version: ImageMagick ([0-9]*\.[0-9]*\.[0-9]*)/', $return, $matches
+				);
+				if ( $x != 1 ) {
+					wfDebug( __METHOD__ . ": ImageMagick version check failed\n" );
+					return false;
+				}
 
-				return null;
+				return $matches[1];
 			}
-			$wgMemc->set( "imagemagick-version", $matches[1], 3600 );
-
-			return $matches[1];
-		}
-
-		return $cache;
+		);
 	}
 
 	/**

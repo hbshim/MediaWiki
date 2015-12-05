@@ -2,6 +2,9 @@
 
 /**
  * Select dropdown field, with an additional "other" textbox.
+ *
+ * HTMLComboboxField implements the same functionality using a single form field
+ * and should be used instead.
  */
 class HTMLSelectOrOtherField extends HTMLTextField {
 	function __construct( $params ) {
@@ -60,6 +63,10 @@ class HTMLSelectOrOtherField extends HTMLTextField {
 		$textbox = Html::input( $this->mName . '-other', $valInSelect ? '' : $value, 'text', $tbAttribs );
 
 		return "$select<br />\n$textbox";
+	}
+
+	function getInputOOUI( $value ) {
+		return false;
 	}
 
 	/**

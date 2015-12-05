@@ -355,12 +355,7 @@ class LanguageConverter {
 		   2. HTML entities
 		   3. placeholders created by the parser
 		*/
-		global $wgParser;
-		if ( isset( $wgParser ) && $wgParser->UniqPrefix() != '' ) {
-			$marker = '|' . $wgParser->UniqPrefix() . '[\-a-zA-Z0-9]+';
-		} else {
-			$marker = '';
-		}
+		$marker = '|' . Parser::MARKER_PREFIX . '[\-a-zA-Z0-9]+';
 
 		// this one is needed when the text is inside an HTML markup
 		$htmlfix = '|<[^>]+$|^[^<>]*>';
@@ -507,13 +502,9 @@ class LanguageConverter {
 			}
 
 			if ( $action == 'add' ) {
+				// More efficient than array_merge(), about 2.5 times.
 				foreach ( $pair as $from => $to ) {
-					// to ensure that $from and $to not be left blank
-					// so $this->translate() could always return a string
-					if ( $from || $to ) {
-						// more efficient than array_merge(), about 2.5 times.
-						$this->mTables[$variant]->setPair( $from, $to );
-					}
+					$this->mTables[$variant]->setPair( $from, $to );
 				}
 			} elseif ( $action == 'remove' ) {
 				$this->mTables[$variant]->removeArray( $pair );
@@ -548,27 +539,45 @@ class LanguageConverter {
 	 * @return string Namespace name for display
 	 */
 	public function convertNamespace( $index, $variant = null ) {
+		if ( $index === NS_MAIN ) {
+			return '';
+		}
+
 		if ( $variant === null ) {
 			$variant = $this->getPreferredVariant();
 		}
-		if ( $index === NS_MAIN ) {
-			return '';
-		} else {
-			// First check if a message gives a converted name in the target variant.
-			$nsConvMsg = wfMessage( 'conversion-ns' . $index )->inLanguage( $variant );
-			if ( $nsConvMsg->exists() ) {
-				return $nsConvMsg->plain();
-			}
-			// Then check if a message gives a converted name in content language
-			// which needs extra translation to the target variant.
+
+		$cache = ObjectCache::newAccelerator( CACHE_NONE );
+		$key = wfMemcKey( 'languageconverter', 'namespace-text', $index, $variant );
+		$nsVariantText = $cache->get( $key );
+		if ( $nsVariantText !== false ) {
+			return $nsVariantText;
+		}
+
+		// First check if a message gives a converted name in the target variant.
+		$nsConvMsg = wfMessage( 'conversion-ns' . $index )->inLanguage( $variant );
+		if ( $nsConvMsg->exists() ) {
+			$nsVariantText = $nsConvMsg->plain();
+		}
+
+		// Then check if a message gives a converted name in content language
+		// which needs extra translation to the target variant.
+		if ( $nsVariantText === false ) {
 			$nsConvMsg = wfMessage( 'conversion-ns' . $index )->inContentLanguage();
 			if ( $nsConvMsg->exists() ) {
-				return $this->translate( $nsConvMsg->plain(), $variant );
+				$nsVariantText = $this->translate( $nsConvMsg->plain(), $variant );
 			}
+		}
+
+		if ( $nsVariantText === false ) {
 			// No message exists, retrieve it from the target variant's namespace names.
 			$langObj = $this->mLangObj->factory( $variant );
-			return $langObj->getFormattedNsText( $index );
+			$nsVariantText = $langObj->getFormattedNsText( $index );
 		}
+
+		$cache->set( $key, $nsVariantText, 60 );
+
+		return $nsVariantText;
 	}
 
 	/**
@@ -842,7 +851,7 @@ class LanguageConverter {
 	 * @param bool $fromCache Load from memcached? Defaults to true.
 	 */
 	function loadTables( $fromCache = true ) {
-		global $wgLangConvMemc;
+		global $wgLanguageConverterCacheType;
 
 		if ( $this->mTablesLoaded ) {
 			return;
@@ -850,9 +859,10 @@ class LanguageConverter {
 
 		$this->mTablesLoaded = true;
 		$this->mTables = false;
+		$cache = ObjectCache::getInstance( $wgLanguageConverterCacheType );
 		if ( $fromCache ) {
 			wfProfileIn( __METHOD__ . '-cache' );
-			$this->mTables = $wgLangConvMemc->get( $this->mCacheKey );
+			$this->mTables = $cache->get( $this->mCacheKey );
 			wfProfileOut( __METHOD__ . '-cache' );
 		}
 		if ( !$this->mTables || !array_key_exists( self::CACHE_VERSION_KEY, $this->mTables ) ) {
@@ -869,7 +879,7 @@ class LanguageConverter {
 			$this->postLoadTables();
 			$this->mTables[self::CACHE_VERSION_KEY] = true;
 
-			$wgLangConvMemc->set( $this->mCacheKey, $this->mTables, 43200 );
+			$cache->set( $this->mCacheKey, $this->mTables, 43200 );
 			wfProfileOut( __METHOD__ . '-recache' );
 		}
 	}
@@ -1000,7 +1010,7 @@ class LanguageConverter {
 		if ( $recursive ) {
 			foreach ( $sublinks as $link ) {
 				$s = $this->parseCachedTable( $code, $link, $recursive );
-				$ret = array_merge( $ret, $s );
+				$ret = $s + $ret;
 			}
 		}
 
@@ -1100,13 +1110,13 @@ class LanguageConverter {
 			// text should be splited by ";" only if a valid variant
 			// name exist after the markup, for example:
 			//  -{zh-hans:<span style="font-size:120%;">xxx</span>;zh-hant:\
-			//	<span style="font-size:120%;">yyy</span>;}-
+			// 	<span style="font-size:120%;">yyy</span>;}-
 			// we should split it as:
 			//  array(
-			//	  [0] => 'zh-hans:<span style="font-size:120%;">xxx</span>'
-			//	  [1] => 'zh-hant:<span style="font-size:120%;">yyy</span>'
-			//	  [2] => ''
-			//	 )
+			// 	  [0] => 'zh-hans:<span style="font-size:120%;">xxx</span>'
+			// 	  [1] => 'zh-hant:<span style="font-size:120%;">yyy</span>'
+			// 	  [2] => ''
+			// 	 )
 			$pat = '/;\s*(?=';
 			foreach ( $this->mVariants as $variant ) {
 				// zh-hans:xxx;zh-hant:yyy

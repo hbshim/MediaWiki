@@ -20,6 +20,7 @@
  * @file
  * @ingroup SpecialPage
  */
+use MediaWiki\Logger\LoggerFactory;
 
 /**
  * Implements Special:UserLogin
@@ -42,6 +43,24 @@ class LoginForm extends SpecialPage {
 	const NEED_TOKEN = 12;
 	const WRONG_TOKEN = 13;
 	const USER_MIGRATED = 14;
+
+	public static $statusCodes = array(
+		self::SUCCESS => 'success',
+		self::NO_NAME => 'no_name',
+		self::ILLEGAL => 'illegal',
+		self::WRONG_PLUGIN_PASS => 'wrong_plugin_pass',
+		self::NOT_EXISTS => 'not_exists',
+		self::WRONG_PASS => 'wrong_pass',
+		self::EMPTY_PASS => 'empty_pass',
+		self::RESET_PASS => 'reset_pass',
+		self::ABORTED => 'aborted',
+		self::CREATE_BLOCKED => 'create_blocked',
+		self::THROTTLED => 'throttled',
+		self::USER_BLOCKED => 'user_blocked',
+		self::NEED_TOKEN => 'need_token',
+		self::WRONG_TOKEN => 'wrong_token',
+		self::USER_MIGRATED => 'user_migrated',
+	);
 
 	/**
 	 * Valid error and warning messages
@@ -194,13 +213,13 @@ class LoginForm extends SpecialPage {
 			&& in_array( $entryError->getKey(), self::getValidErrorMessages() )
 		) {
 			$this->mEntryErrorType = 'error';
-			$this->mEntryError = $entryError->rawParams( $loginreqlink )->escaped();
+			$this->mEntryError = $entryError->rawParams( $loginreqlink )->parse();
 
 		} elseif ( $entryWarning->exists()
 			&& in_array( $entryWarning->getKey(), self::getValidErrorMessages() )
 		) {
 			$this->mEntryErrorType = 'warning';
-			$this->mEntryError = $entryWarning->rawParams( $loginreqlink )->escaped();
+			$this->mEntryError = $entryWarning->rawParams( $loginreqlink )->parse();
 		}
 
 		if ( $wgEnableEmail ) {
@@ -257,13 +276,17 @@ class LoginForm extends SpecialPage {
 		}
 		$this->setHeaders();
 
-		// In the case where the user is already logged in, and was redirected to the login form from a
-		// page that requires login, do not show the login page. The use case scenario for this is when
-		// a user opens a large number of tabs, is redirected to the login page on all of them, and then
-		// logs in on one, expecting all the others to work properly.
-		//
-		// However, do show the form if it was visited intentionally (no 'returnto' is present). People
-		// who often switch between several accounts have grown accustomed to this behavior.
+		/**
+		 * In the case where the user is already logged in, and was redirected to
+		 * the login form from a page that requires login, do not show the login
+		 * page. The use case scenario for this is when a user opens a large number
+		 * of tabs, is redirected to the login page on all of them, and then logs
+		 * in on one, expecting all the others to work properly.
+		 *
+		 * However, do show the form if it was visited intentionally (no 'returnto'
+		 * is present). People who often switch between several accounts have grown
+		 * accustomed to this behavior.
+		 */
 		if (
 			$this->mType !== 'signup' &&
 			!$this->mPosted &&
@@ -338,6 +361,10 @@ class LoginForm extends SpecialPage {
 		}
 
 		$status = $this->addNewAccountInternal();
+		LoggerFactory::getInstance( 'authmanager' )->info(
+			'Account creation attempt with mailed password',
+			array( 'event' => 'accountcreation', 'status' => $status )
+		);
 		if ( !$status->isGood() ) {
 			$error = $status->getMessage();
 			$this->mainLoginForm( $error->toString() );
@@ -375,6 +402,11 @@ class LoginForm extends SpecialPage {
 
 		# Create the account and abort if there's a problem doing so
 		$status = $this->addNewAccountInternal();
+		LoggerFactory::getInstance( 'authmanager' )->info( 'Account creation attempt', array(
+			'event' => 'accountcreation',
+			'status' => $status,
+		) );
+
 		if ( !$status->isGood() ) {
 			$error = $status->getMessage();
 			$this->mainLoginForm( $error->toString() );
@@ -453,8 +485,7 @@ class LoginForm extends SpecialPage {
 	 * @return Status
 	 */
 	public function addNewAccountInternal() {
-		global $wgAuth, $wgMemc, $wgAccountCreationThrottle,
-			$wgMinimalPasswordLength, $wgEmailConfirmToEdit;
+		global $wgAuth, $wgAccountCreationThrottle, $wgEmailConfirmToEdit;
 
 		// If the user passes an invalid domain, something is fishy
 		if ( !$wgAuth->validDomain( $this->mDomain ) ) {
@@ -530,9 +561,16 @@ class LoginForm extends SpecialPage {
 
 		# Now create a dummy user ($u) and check if it is valid
 		$u = User::newFromName( $this->mUsername, 'creatable' );
-		if ( !is_object( $u ) ) {
+		if ( !$u ) {
 			return Status::newFatal( 'noname' );
-		} elseif ( 0 != $u->idForName() ) {
+		}
+
+		$cache = ObjectCache::getLocalClusterInstance();
+		# Make sure the user does not exist already
+		$lock = $cache->getScopedLock( $cache->makeGlobalKey( 'account', md5( $this->mUsername ) ) );
+		if ( !$lock ) {
+			return Status::newFatal( 'usernameinprogress' );
+		} elseif ( $u->idForName( User::READ_LOCKING ) ) {
 			return Status::newFatal( 'userexists' );
 		}
 
@@ -545,14 +583,11 @@ class LoginForm extends SpecialPage {
 				return Status::newFatal( 'badretype' );
 			}
 
-			# check for minimal password length
-			$valid = $u->getPasswordValidity( $this->mPassword );
-			if ( $valid !== true ) {
-				if ( !is_array( $valid ) ) {
-					$valid = array( $valid, $wgMinimalPasswordLength );
-				}
-
-				return call_user_func_array( 'Status::newFatal', $valid );
+			# check for password validity, return a fatal Status if invalid
+			$validity = $u->checkPasswordValidity( $this->mPassword, 'create' );
+			if ( !$validity->isGood() ) {
+				$validity->ok = false; // make sure this Status is fatal
+				return $validity;
 			}
 		}
 
@@ -599,14 +634,14 @@ class LoginForm extends SpecialPage {
 		} else {
 			if ( ( $wgAccountCreationThrottle && $currentUser->isPingLimitable() ) ) {
 				$key = wfMemcKey( 'acctcreate', 'ip', $ip );
-				$value = $wgMemc->get( $key );
+				$value = $cache->get( $key );
 				if ( !$value ) {
-					$wgMemc->set( $key, 0, 86400 );
+					$cache->set( $key, 0, $cache::TTL_DAY );
 				}
 				if ( $value >= $wgAccountCreationThrottle ) {
 					return Status::newFatal( 'acct_creation_throttle_hit', $wgAccountCreationThrottle );
 				}
-				$wgMemc->incr( $key );
+				$cache->incr( $key );
 			}
 		}
 
@@ -644,7 +679,12 @@ class LoginForm extends SpecialPage {
 		$u->setRealName( $this->mRealName );
 		$u->setToken();
 
+		Hooks::run( 'LocalUserCreated', array( $u, $autocreate ) );
+		$oldUser = $u;
 		$wgAuth->initUser( $u, $autocreate );
+		if ( $oldUser !== $u ) {
+			wfWarn( get_class( $wgAuth ) . '::initUser() replaced the user object' );
+		}
 
 		$u->saveSettings();
 
@@ -713,7 +753,11 @@ class LoginForm extends SpecialPage {
 		}
 
 		$u = User::newFromName( $this->mUsername );
+		if ( $u === false ) {
+			return self::ILLEGAL;
+		}
 
+		$msg = null;
 		// Give extensions a way to indicate the username has been updated,
 		// rather than telling the user the account doesn't exist.
 		if ( !Hooks::run( 'LoginUserMigrated', array( $u, &$msg ) ) ) {
@@ -721,7 +765,7 @@ class LoginForm extends SpecialPage {
 			return self::USER_MIGRATED;
 		}
 
-		if ( !( $u instanceof User ) || !User::isUsableName( $u->getName() ) ) {
+		if ( !User::isUsableName( $u->getName() ) ) {
 			return self::ILLEGAL;
 		}
 
@@ -739,33 +783,36 @@ class LoginForm extends SpecialPage {
 
 		// Give general extensions, such as a captcha, a chance to abort logins
 		$abort = self::ABORTED;
-		$msg = null;
 		if ( !Hooks::run( 'AbortLogin', array( $u, $this->mPassword, &$abort, &$msg ) ) ) {
+			if ( !in_array( $abort, array_keys( self::$statusCodes ), true ) ) {
+				throw new Exception( 'Invalid status code returned from AbortLogin hook: ' . $abort );
+			}
 			$this->mAbortLoginErrorMsg = $msg;
-
 			return $abort;
 		}
 
 		global $wgBlockDisablesLogin;
 		if ( !$u->checkPassword( $this->mPassword ) ) {
 			if ( $u->checkTemporaryPassword( $this->mPassword ) ) {
-				// The e-mailed temporary password should not be used for actu-
-				// al logins; that's a very sloppy habit, and insecure if an
-				// attacker has a few seconds to click "search" on someone's o-
-				// pen mail reader.
-				//
-				// Allow it to be used only to reset the password a single time
-				// to a new value, which won't be in the user's e-mail ar-
-				// chives.
-				//
-				// For backwards compatibility, we'll still recognize it at the
-				// login form to minimize surprises for people who have been
-				// logging in with a temporary password for some time.
-				//
-				// As a side-effect, we can authenticate the user's e-mail ad-
-				// dress if it's not already done, since the temporary password
-				// was sent via e-mail.
-				if ( !$u->isEmailConfirmed() ) {
+				/**
+				 * The e-mailed temporary password should not be used for actu-
+				 * al logins; that's a very sloppy habit, and insecure if an
+				 * attacker has a few seconds to click "search" on someone's
+				 * open mail reader.
+				 *
+				 * Allow it to be used only to reset the password a single time
+				 * to a new value, which won't be in the user's e-mail ar-
+				 * chives.
+				 *
+				 * For backwards compatibility, we'll still recognize it at the
+				 * login form to minimize surprises for people who have been
+				 * logging in with a temporary password for some time.
+				 *
+				 * As a side-effect, we can authenticate the user's e-mail ad-
+				 * dress if it's not already done, since the temporary password
+				 * was sent via e-mail.
+				 */
+				if ( !$u->isEmailConfirmed() && !wfReadOnly() ) {
 					$u->confirmEmail();
 					$u->saveSettings();
 				}
@@ -782,12 +829,17 @@ class LoginForm extends SpecialPage {
 		} elseif ( $wgBlockDisablesLogin && $u->isBlocked() ) {
 			// If we've enabled it, make it so that a blocked user cannot login
 			$retval = self::USER_BLOCKED;
-		} elseif ( $u->getPasswordExpired() == 'hard' ) {
+		} elseif ( $this->checkUserPasswordExpired( $u ) == 'hard' ) {
 			// Force reset now, without logging in
 			$retval = self::RESET_PASS;
 			$this->mAbortLoginErrorMsg = 'resetpass-expired';
 		} else {
+			Hooks::run( 'UserLoggedIn', array( $u ) );
+			$oldUser = $u;
 			$wgAuth->updateUser( $u );
+			if ( $oldUser !== $u ) {
+				wfWarn( get_class( $wgAuth ) . '::updateUser() replaced the user object' );
+			}
 			$wgUser = $u;
 			// This should set it for OutputPage and the Skin
 			// which is needed or the personal links will be
@@ -818,7 +870,7 @@ class LoginForm extends SpecialPage {
 	 * @return bool|int The integer hit count or True if it is already at the limit
 	 */
 	public static function incLoginThrottle( $username ) {
-		global $wgPasswordAttemptThrottle, $wgMemc, $wgRequest;
+		global $wgPasswordAttemptThrottle, $wgRequest;
 		$username = trim( $username ); // sanity
 
 		$throttleCount = 0;
@@ -827,11 +879,12 @@ class LoginForm extends SpecialPage {
 			$count = $wgPasswordAttemptThrottle['count'];
 			$period = $wgPasswordAttemptThrottle['seconds'];
 
-			$throttleCount = $wgMemc->get( $throttleKey );
+			$cache = ObjectCache::getLocalClusterInstance();
+			$throttleCount = $cache->get( $throttleKey );
 			if ( !$throttleCount ) {
-				$wgMemc->add( $throttleKey, 1, $period ); // start counter
+				$cache->add( $throttleKey, 1, $period ); // start counter
 			} elseif ( $throttleCount < $count ) {
-				$wgMemc->incr( $throttleKey );
+				$cache->incr( $throttleKey );
 			} elseif ( $throttleCount >= $count ) {
 				return true;
 			}
@@ -846,11 +899,11 @@ class LoginForm extends SpecialPage {
 	 * @return void
 	 */
 	public static function clearLoginThrottle( $username ) {
-		global $wgMemc, $wgRequest;
+		global $wgRequest;
 		$username = trim( $username ); // sanity
 
 		$throttleKey = wfMemcKey( 'password-throttle', $wgRequest->getIP(), md5( $username ) );
-		$wgMemc->delete( $throttleKey );
+		ObjectCache::getLocalClusterInstance()->delete( $throttleKey );
 	}
 
 	/**
@@ -909,14 +962,15 @@ class LoginForm extends SpecialPage {
 	}
 
 	function processLogin() {
-		global $wgMemc, $wgLang, $wgSecureLogin, $wgPasswordAttemptThrottle,
-			$wgInvalidPasswordReset;
+		global $wgLang, $wgSecureLogin, $wgPasswordAttemptThrottle, $wgInvalidPasswordReset;
 
-		switch ( $this->authenticateUserData() ) {
+		$cache = ObjectCache::getLocalClusterInstance();
+		$authRes = $this->authenticateUserData();
+		switch ( $authRes ) {
 			case self::SUCCESS:
 				# We've verified now, update the real record
 				$user = $this->getUser();
-				$user->invalidateCache();
+				$user->touch();
 
 				if ( $user->requiresHTTPS() ) {
 					$this->mStickHTTPS = true;
@@ -932,7 +986,7 @@ class LoginForm extends SpecialPage {
 				// Reset the throttle
 				$request = $this->getRequest();
 				$key = wfMemcKey( 'password-throttle', $request->getIP(), md5( $this->mUsername ) );
-				$wgMemc->delete( $key );
+				$cache->delete( $key );
 
 				if ( $this->hasSessionCookie() || $this->mSkipCookieCheck ) {
 					/* Replace the language object to provide user interface in
@@ -944,12 +998,15 @@ class LoginForm extends SpecialPage {
 					$this->getContext()->setLanguage( $userLang );
 					// Reset SessionID on Successful login (bug 40995)
 					$this->renewSessionId();
-					if ( $this->getUser()->getPasswordExpired() == 'soft' ) {
+					if ( $this->checkUserPasswordExpired( $this->getUser() ) == 'soft' ) {
 						$this->resetLoginForm( $this->msg( 'resetpass-expired-soft' ) );
 					} elseif ( $wgInvalidPasswordReset
 						&& !$user->isValidPassword( $this->mPassword )
 					) {
-						$status = $user->checkPasswordValidity( $this->mPassword );
+						$status = $user->checkPasswordValidity(
+							$this->mPassword,
+							'login'
+						);
 						$this->resetLoginForm(
 							$status->getMessage( 'resetpass-validity-soft' )
 						);
@@ -1032,6 +1089,12 @@ class LoginForm extends SpecialPage {
 			default:
 				throw new MWException( 'Unhandled case value' );
 		}
+
+		LoggerFactory::getInstance( 'authmanager' )->info( 'Login attempt', array(
+			'event' => 'login',
+			'successful' => $authRes === self::SUCCESS,
+			'status' => LoginForm::$statusCodes[$authRes],
+		) );
 	}
 
 	/**
@@ -1062,7 +1125,7 @@ class LoginForm extends SpecialPage {
 	function mailPasswordInternal( $u, $throttle = true, $emailTitle = 'passwordremindertitle',
 		$emailText = 'passwordremindertext'
 	) {
-		global $wgNewPasswordExpiry;
+		global $wgNewPasswordExpiry, $wgMinimalPasswordLength;
 
 		if ( $u->getEmail() == '' ) {
 			return Status::newFatal( 'noemail', $u->getName() );
@@ -1075,7 +1138,7 @@ class LoginForm extends SpecialPage {
 		$currentUser = $this->getUser();
 		Hooks::run( 'User::mailPasswordInternal', array( &$currentUser, &$ip, &$u ) );
 
-		$np = $u->randomPassword();
+		$np = PasswordFactory::generateRandomPasswordString( $wgMinimalPasswordLength );
 		$u->setNewpassword( $np, $throttle );
 		$u->saveSettings();
 		$userLanguage = $u->getOption( 'language' );
@@ -1283,8 +1346,9 @@ class LoginForm extends SpecialPage {
 	function mainLoginForm( $msg, $msgtype = 'error' ) {
 		global $wgEnableEmail, $wgEnableUserEmail;
 		global $wgHiddenPrefs, $wgLoginLanguageSelector;
-		global $wgAuth, $wgEmailConfirmToEdit, $wgCookieExpiration;
+		global $wgAuth, $wgEmailConfirmToEdit;
 		global $wgSecureLogin, $wgPasswordResetRoutes;
+		global $wgExtendedLoginCookieExpiration, $wgCookieExpiration;
 
 		$titleObj = $this->getPageTitle();
 		$user = $this->getUser();
@@ -1323,16 +1387,8 @@ class LoginForm extends SpecialPage {
 			'mediawiki.ui.input',
 			'mediawiki.special.userlogin.common.styles'
 		) );
-		$out->addModules( array(
-			'mediawiki.special.userlogin.common.js'
-		) );
 
 		if ( $this->mType == 'signup' ) {
-			// XXX hack pending RL or JS parse() support for complex content messages
-			// https://bugzilla.wikimedia.org/show_bug.cgi?id=25349
-			$out->addJsConfigVars( 'wgCreateacctImgcaptchaHelp',
-				$this->msg( 'createacct-imgcaptcha-help' )->parse() );
-
 			// Additional styles and scripts for signup form
 			$out->addModules( array(
 				'mediawiki.special.userlogin.signup.js'
@@ -1387,6 +1443,7 @@ class LoginForm extends SpecialPage {
 			: is_array( $wgPasswordResetRoutes ) && in_array( true, array_values( $wgPasswordResetRoutes ) );
 
 		$template->set( 'header', '' );
+		$template->set( 'formheader', '' );
 		$template->set( 'skin', $this->getSkin() );
 		$template->set( 'name', $this->mUsername );
 		$template->set( 'password', $this->mPassword );
@@ -1407,7 +1464,9 @@ class LoginForm extends SpecialPage {
 		$template->set( 'emailothers', $wgEnableUserEmail );
 		$template->set( 'canreset', $wgAuth->allowPasswordChange() );
 		$template->set( 'resetlink', $resetLink );
-		$template->set( 'canremember', ( $wgCookieExpiration > 0 ) );
+		$template->set( 'canremember', $wgExtendedLoginCookieExpiration === null ?
+			( $wgCookieExpiration > 0 ) :
+			( $wgExtendedLoginCookieExpiration > 0 ) );
 		$template->set( 'usereason', $user->isLoggedIn() );
 		$template->set( 'remember', $this->mRemember );
 		$template->set( 'cansecurelogin', ( $wgSecureLogin === true ) );
@@ -1529,7 +1588,6 @@ class LoginForm extends SpecialPage {
 	 */
 	public static function getCreateaccountToken() {
 		global $wgRequest;
-
 		return $wgRequest->getSessionData( 'wsCreateaccountToken' );
 	}
 
@@ -1604,22 +1662,21 @@ class LoginForm extends SpecialPage {
 	 */
 	function makeLanguageSelector() {
 		$msg = $this->msg( 'loginlanguagelinks' )->inContentLanguage();
-		if ( !$msg->isBlank() ) {
-			$langs = explode( "\n", $msg->text() );
-			$links = array();
-			foreach ( $langs as $lang ) {
-				$lang = trim( $lang, '* ' );
-				$parts = explode( '|', $lang );
-				if ( count( $parts ) >= 2 ) {
-					$links[] = $this->makeLanguageSelectorLink( $parts[0], trim( $parts[1] ) );
-				}
-			}
-
-			return count( $links ) > 0 ? $this->msg( 'loginlanguagelabel' )->rawParams(
-				$this->getLanguage()->pipeList( $links ) )->escaped() : '';
-		} else {
+		if ( $msg->isBlank() ) {
 			return '';
 		}
+		$langs = explode( "\n", $msg->text() );
+		$links = array();
+		foreach ( $langs as $lang ) {
+			$lang = trim( $lang, '* ' );
+			$parts = explode( '|', $lang );
+			if ( count( $parts ) >= 2 ) {
+				$links[] = $this->makeLanguageSelectorLink( $parts[0], trim( $parts[1] ) );
+			}
+		}
+
+		return count( $links ) > 0 ? $this->msg( 'loginlanguagelabel' )->rawParams(
+			$this->getLanguage()->pipeList( $links ) )->escaped() : '';
 	}
 
 	/**
@@ -1659,4 +1716,25 @@ class LoginForm extends SpecialPage {
 	protected function getGroupName() {
 		return 'login';
 	}
+
+	/**
+	 * Private function to check password expiration, until AuthManager comes
+	 * along to handle that.
+	 * @param User $user
+	 * @return string|bool
+	 */
+	private function checkUserPasswordExpired( User $user ) {
+		global $wgPasswordExpireGrace;
+		$dbr = wfGetDB( DB_SLAVE );
+		$ts = $dbr->selectField( 'user', 'user_password_expires', array( 'user_id' => $user->getId() ) );
+
+		$expired = false;
+		$now = wfTimestamp();
+		$expUnix = wfTimestamp( TS_UNIX, $ts );
+		if ( $ts !== null && $expUnix < $now ) {
+			$expired = ( $expUnix + $wgPasswordExpireGrace < $now ) ? 'hard' : 'soft';
+		}
+		return $expired;
+	}
+
 }

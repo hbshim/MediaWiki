@@ -36,8 +36,8 @@ class ChangesList extends ContextSource {
 	protected $rclistOpen;
 	protected $rcMoveIndex;
 
-	/** @var MapCacheLRU */
-	protected $watchingCache;
+	/** @var BagOStuff */
+	protected $watchMsgCache;
 
 	/**
 	 * Changeslist constructor
@@ -53,7 +53,7 @@ class ChangesList extends ContextSource {
 			$this->skin = $obj;
 		}
 		$this->preCacheMessages();
-		$this->watchingCache = new MapCacheLRU( 50 );
+		$this->watchMsgCache = new HashBagOStuff( array( 'maxKeys' => 50 ) );
 	}
 
 	/**
@@ -74,6 +74,21 @@ class ChangesList extends ContextSource {
 		} else {
 			return $list;
 		}
+	}
+
+	/**
+	 * Format a line
+	 *
+	 * @since 1.27
+	 *
+	 * @param RecentChange $rc Passed by reference
+	 * @param bool $watched (default false)
+	 * @param int $linenumber (default null)
+	 *
+	 * @return string|bool
+	 */
+	public function recentChangesLine( &$rc, $watched = false, $linenumber = null ) {
+		throw new RuntimeException( 'recentChangesLine should be implemented' );
 	}
 
 	/**
@@ -204,7 +219,8 @@ class ChangesList extends ContextSource {
 		$code = $lang->getCode();
 		static $fastCharDiff = array();
 		if ( !isset( $fastCharDiff[$code] ) ) {
-			$fastCharDiff[$code] = $config->get( 'MiserMode' ) || $context->msg( 'rc-change-size' )->plain() === '$1';
+			$fastCharDiff[$code] = $config->get( 'MiserMode' )
+				|| $context->msg( 'rc-change-size' )->plain() === '$1';
 		}
 
 		$formattedSize = $lang->formatNum( $szdiff );
@@ -304,7 +320,11 @@ class ChangesList extends ContextSource {
 	 */
 	public function insertDiffHist( &$s, &$rc, $unpatrolled ) {
 		# Diff link
-		if ( $rc->mAttribs['rc_type'] == RC_NEW || $rc->mAttribs['rc_type'] == RC_LOG ) {
+		if (
+			$rc->mAttribs['rc_type'] == RC_NEW ||
+			$rc->mAttribs['rc_type'] == RC_LOG ||
+			$rc->mAttribs['rc_type'] == RC_CATEGORIZE
+		) {
 			$diffLink = $this->message['diff'];
 		} elseif ( !self::userCan( $rc, Revision::DELETED_TEXT, $this->getUser() ) ) {
 			$diffLink = $this->message['diff'];
@@ -322,17 +342,22 @@ class ChangesList extends ContextSource {
 				$query
 			);
 		}
-		$diffhist = $diffLink . $this->message['pipe-separator'];
-		# History link
-		$diffhist .= Linker::linkKnown(
-			$rc->getTitle(),
-			$this->message['hist'],
-			array(),
-			array(
-				'curid' => $rc->mAttribs['rc_cur_id'],
-				'action' => 'history'
-			)
-		);
+		if ( $rc->mAttribs['rc_type'] == RC_CATEGORIZE ) {
+			$diffhist = $diffLink . $this->message['pipe-separator'] . $this->message['hist'];
+		} else {
+			$diffhist = $diffLink . $this->message['pipe-separator'];
+			# History link
+			$diffhist .= Linker::linkKnown(
+				$rc->getTitle(),
+				$this->message['hist'],
+				array(),
+				array(
+					'curid' => $rc->mAttribs['rc_cur_id'],
+					'action' => 'history'
+				)
+			);
+		}
+
 		// @todo FIXME: Hard coded ". .". Is there a message for this? Should there be?
 		$s .= $this->msg( 'parentheses' )->rawParams( $diffhist )->escaped() .
 			' <span class="mw-changeslist-separator">. .</span> ';
@@ -368,6 +393,19 @@ class ChangesList extends ContextSource {
 			array( &$this, &$articlelink, &$s, &$rc, $unpatrolled, $watched ) );
 
 		$s .= " $articlelink";
+	}
+
+	/**
+	 * @param RecentChange $rc
+	 * @param bool $unpatrolled
+	 * @param bool $watched
+	 * @return string
+	 * @since 1.26
+	 */
+	public function getArticleLink( RecentChange $rc, $unpatrolled, $watched ) {
+		$s = '';
+		$this->insertArticleLink( $s, $rc, $unpatrolled, $watched );
+		return $s;
 	}
 
 	/**
@@ -462,17 +500,17 @@ class ChangesList extends ContextSource {
 	 * @return string
 	 */
 	protected function numberofWatchingusers( $count ) {
-		$cache = $this->watchingCache;
-		if ( $count > 0 ) {
-			if ( !$cache->has( $count ) ) {
-				$cache->set( $count, $this->msg( 'number_of_watching_users_RCview' )
-					->numParams( $count )->escaped() );
-			}
-
-			return $cache->get( $count );
-		} else {
+		if ( $count <= 0 ) {
 			return '';
 		}
+		$cache = $this->watchMsgCache;
+		$that = $this;
+		return $cache->getWithSetCallback( $count, $cache::TTL_INDEFINITE,
+			function () use ( $that, $count ) {
+				return $that->msg( 'number_of_watching_users_RCview' )
+					->numParams( $count )->escaped();
+			}
+		);
 	}
 
 	/**
@@ -543,6 +581,17 @@ class ChangesList extends ContextSource {
 	}
 
 	/**
+	 * @param RecentChange $rc
+	 * @return string
+	 * @since 1.26
+	 */
+	public function getRollback( RecentChange $rc ) {
+		$s = '';
+		$this->insertRollback( $s, $rc );
+		return $s;
+	}
+
+	/**
 	 * @param string $s
 	 * @param RecentChange $rc
 	 * @param array $classes
@@ -558,6 +607,18 @@ class ChangesList extends ContextSource {
 		);
 		$classes = array_merge( $classes, $newClasses );
 		$s .= ' ' . $tagSummary;
+	}
+
+	/**
+	 * @param RecentChange $rc
+	 * @param array $classes
+	 * @return string
+	 * @since 1.26
+	 */
+	public function getTags( RecentChange $rc, array &$classes ) {
+		$s = '';
+		$this->insertTags( $s, $rc, $classes );
+		return $s;
 	}
 
 	public function insertExtra( &$s, &$rc, &$classes ) {
@@ -593,4 +654,19 @@ class ChangesList extends ContextSource {
 
 		return false;
 	}
+
+	/**
+	 * Determines whether a revision is linked to this change; this may not be the case
+	 * when the categorization wasn't done by an edit but a conditional parser function
+	 *
+	 * @since 1.27
+	 *
+	 * @param RecentChange|RCCacheEntry $rcObj
+	 * @return bool
+	 */
+	protected function isCategorizationWithoutRevision( $rcObj ) {
+		return intval( $rcObj->getAttribute( 'rc_type' ) ) === RC_CATEGORIZE
+			&& intval( $rcObj->getAttribute( 'rc_this_oldid' ) ) === 0;
+	}
+
 }

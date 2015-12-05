@@ -267,10 +267,14 @@ class MysqlUpdater extends DatabaseUpdater {
 				'patch-fa_major_mime-chemical.sql' ),
 
 			// 1.25
+			array( 'doUserNewTalkUseridUnsigned' ),
+			// note this patch covers other _comment and _description fields too
+			array( 'modifyField', 'recentchanges', 'rc_comment', 'patch-editsummary-length.sql' ),
+
+			// 1.26
 			array( 'dropTable', 'hitcounter' ),
 			array( 'dropField', 'site_stats', 'ss_total_views', 'patch-drop-ss_total_views.sql' ),
 			array( 'dropField', 'page', 'page_counter', 'patch-drop-page_counter.sql' ),
-			array( 'doUserNewTalkUseridUnsigned' ),
 		);
 	}
 
@@ -1073,7 +1077,7 @@ class MysqlUpdater extends DatabaseUpdater {
 		if ( $info === false ) {
 			return true;
 		}
-		if ( ( $info->flags() & 32 /*MYSQLI_UNSIGNED_FLAG*/ ) ) {
+		if ( $info->isUnsigned() ) {
 			$this->output( "...user_id is already unsigned int.\n" );
 
 			return true;

@@ -1,6 +1,6 @@
 <?php
 
-class UIDGeneratorTest extends MediaWikiTestCase {
+class UIDGeneratorTest extends PHPUnit_Framework_TestCase {
 
 	protected function tearDown() {
 		// Bug: 44850
@@ -18,7 +18,7 @@ class UIDGeneratorTest extends MediaWikiTestCase {
 		$this->assertEquals( true, ctype_digit( $id ), "UID made of digit characters" );
 		$this->assertLessThanOrEqual( $digitlen, strlen( $id ),
 			"UID has the right number of digits" );
-		$this->assertLessThanOrEqual( $bits, strlen( wfBaseConvert( $id, 10, 2 ) ),
+		$this->assertLessThanOrEqual( $bits, strlen( Wikimedia\base_convert( $id, 10, 2 ) ),
 			"UID has the right number of bits" );
 
 		$ids = array();
@@ -28,11 +28,11 @@ class UIDGeneratorTest extends MediaWikiTestCase {
 
 		$lastId = array_shift( $ids );
 
-		$this->assertArrayEquals( array_unique( $ids ), $ids, "All generated IDs are unique." );
+		$this->assertSame( array_unique( $ids ), $ids, "All generated IDs are unique." );
 
 		foreach ( $ids as $id ) {
-			$id_bin = wfBaseConvert( $id, 10, 2 );
-			$lastId_bin = wfBaseConvert( $lastId, 10, 2 );
+			$id_bin = Wikimedia\base_convert( $id, 10, 2 );
+			$lastId_bin = Wikimedia\base_convert( $lastId, 10, 2 );
 
 			$this->assertGreaterThanOrEqual(
 				substr( $lastId_bin, 0, $tbits ),
@@ -105,8 +105,8 @@ class UIDGeneratorTest extends MediaWikiTestCase {
 		$id1 = UIDGenerator::newSequentialPerNodeID( 'test', 32 );
 		$id2 = UIDGenerator::newSequentialPerNodeID( 'test', 32 );
 
-		$this->assertType( 'float', $id1, "ID returned as float" );
-		$this->assertType( 'float', $id2, "ID returned as float" );
+		$this->assertInternalType( 'float', $id1, "ID returned as float" );
+		$this->assertInternalType( 'float', $id2, "ID returned as float" );
 		$this->assertGreaterThan( 0, $id1, "ID greater than 1" );
 		$this->assertGreaterThan( $id1, $id2, "IDs increasing in value" );
 	}
@@ -118,7 +118,7 @@ class UIDGeneratorTest extends MediaWikiTestCase {
 		$ids = UIDGenerator::newSequentialPerNodeIDs( 'test', 32, 5 );
 		$lastId = null;
 		foreach ( $ids as $id ) {
-			$this->assertType( 'float', $id, "ID returned as float" );
+			$this->assertInternalType( 'float', $id, "ID returned as float" );
 			$this->assertGreaterThan( 0, $id, "ID greater than 1" );
 			if ( $lastId ) {
 				$this->assertGreaterThan( $lastId, $id, "IDs increasing in value" );

@@ -58,6 +58,7 @@ class ApiPageSet extends ApiBase {
 	private $mGoodTitles = array();
 	private $mMissingPages = array(); // [ns][dbkey] => fake page_id
 	private $mMissingTitles = array();
+	/** @var array [fake_page_id] => array( 'title' => $title, 'invalidreason' => $reason ) */
 	private $mInvalidTitles = array();
 	private $mMissingPageIDs = array();
 	private $mRedirectTitles = array();
@@ -66,6 +67,7 @@ class ApiPageSet extends ApiBase {
 	private $mInterwikiTitles = array();
 	/** @var Title[] */
 	private $mPendingRedirectIDs = array();
+	private $mResolvedRedirectTitles = array();
 	private $mConvertedTitles = array();
 	private $mGoodRevIDs = array();
 	private $mLiveRevIDs = array();
@@ -77,6 +79,8 @@ class ApiPageSet extends ApiBase {
 	private $mRequestedPageFields = array();
 	/** @var int */
 	private $mDefaultNamespace = NS_MAIN;
+	/** @var callable|null */
+	private $mRedirectMergePolicy;
 
 	/**
 	 * Add all items from $values into the result
@@ -96,7 +100,7 @@ class ApiPageSet extends ApiBase {
 				$v = $val;
 			}
 			if ( $flag !== null ) {
-				$v[$flag] = '';
+				$v[$flag] = true;
 			}
 			$result[] = $v;
 		}
@@ -115,11 +119,9 @@ class ApiPageSet extends ApiBase {
 		$this->mAllowGenerator = ( $flags & ApiPageSet::DISABLE_GENERATORS ) == 0;
 		$this->mDefaultNamespace = $defaultNamespace;
 
-		$this->profileIn();
 		$this->mParams = $this->extractRequestParams();
 		$this->mResolveRedirects = $this->mParams['redirects'];
 		$this->mConvertTitles = $this->mParams['converttitles'];
-		$this->profileOut();
 	}
 
 	/**
@@ -143,17 +145,12 @@ class ApiPageSet extends ApiBase {
 	 *    relevant parameters as used
 	 */
 	private function executeInternal( $isDryRun ) {
-		$this->profileIn();
-
 		$generatorName = $this->mAllowGenerator ? $this->mParams['generator'] : null;
 		if ( isset( $generatorName ) ) {
 			$dbSource = $this->mDbSource;
-			$isQuery = $dbSource instanceof ApiQuery;
-			if ( !$isQuery ) {
+			if ( !$dbSource instanceof ApiQuery ) {
 				// If the parent container of this pageset is not ApiQuery, we must create it to run generator
 				$dbSource = $this->getMain()->getModuleManager()->getModule( 'query' );
-				// Enable profiling for query module because it will be used for db sql profiling
-				$dbSource->profileIn();
 			}
 			$generator = $dbSource->getModuleManager()->getModule( $generatorName, null, true );
 			if ( $generator === null ) {
@@ -174,9 +171,6 @@ class ApiPageSet extends ApiBase {
 			$tmpPageSet->executeInternal( $isDryRun );
 
 			// populate this pageset with the generator output
-			$this->profileOut();
-			$generator->profileIn();
-
 			if ( !$isDryRun ) {
 				$generator->executeGenerator( $this );
 				Hooks::run( 'APIQueryGeneratorAfterExecute', array( &$generator, &$this ) );
@@ -187,16 +181,9 @@ class ApiPageSet extends ApiBase {
 					$main->getVal( $generator->encodeParamName( $paramName ) );
 				}
 			}
-			$generator->profileOut();
-			$this->profileIn();
 
 			if ( !$isDryRun ) {
 				$this->resolvePendingRedirects();
-			}
-
-			if ( !$isQuery ) {
-				// If this pageset is not part of the query, we called profileIn() above
-				$dbSource->profileOut();
 			}
 		} else {
 			// Only one of the titles/pageids/revids is allowed at the same time
@@ -241,7 +228,6 @@ class ApiPageSet extends ApiBase {
 				}
 			}
 		}
-		$this->profileOut();
 	}
 
 	/**
@@ -414,9 +400,22 @@ class ApiPageSet extends ApiBase {
 	/**
 	 * Titles that were deemed invalid by Title::newFromText()
 	 * The array's index will be unique and negative for each item
+	 * @deprecated since 1.26, use self::getInvalidTitlesAndReasons()
 	 * @return string[] Array of strings (not Title objects)
 	 */
 	public function getInvalidTitles() {
+		wfDeprecated( __METHOD__, '1.26' );
+		return array_map( function ( $t ) {
+			return $t['title'];
+		}, $this->mInvalidTitles );
+	}
+
+	/**
+	 * Titles that were deemed invalid by Title::newFromText()
+	 * The array's index will be unique and negative for each item
+	 * @return array[] Array of arrays with 'title' and 'invalidreason' properties
+	 */
+	public function getInvalidTitlesAndReasons() {
 		return $this->mInvalidTitles;
 	}
 
@@ -439,7 +438,7 @@ class ApiPageSet extends ApiBase {
 
 	/**
 	 * Get a list of redirect resolutions - maps a title to its redirect
-	 * target.
+	 * target. Includes generator data for redirect source when available.
 	 * @param ApiResult $result
 	 * @return array Array of prefixed_title (string) => Title object
 	 * @since 1.21
@@ -457,10 +456,19 @@ class ApiPageSet extends ApiBase {
 			if ( $titleTo->isExternal() ) {
 				$r['tointerwiki'] = $titleTo->getInterwiki();
 			}
+			if ( isset( $this->mResolvedRedirectTitles[$titleStrFrom] ) ) {
+				$titleFrom = $this->mResolvedRedirectTitles[$titleStrFrom];
+				$ns = $titleFrom->getNamespace();
+				$dbkey = $titleFrom->getDBkey();
+				if ( isset( $this->mGeneratorData[$ns][$dbkey] ) ) {
+					$r = array_merge( $this->mGeneratorData[$ns][$dbkey], $r );
+				}
+			}
+
 			$values[] = $r;
 		}
 		if ( !empty( $values ) && $result ) {
-			$result->setIndexedTagName( $values, 'r' );
+			ApiResult::setIndexedTagName( $values, 'r' );
 		}
 
 		return $values;
@@ -491,7 +499,7 @@ class ApiPageSet extends ApiBase {
 			);
 		}
 		if ( !empty( $values ) && $result ) {
-			$result->setIndexedTagName( $values, 'n' );
+			ApiResult::setIndexedTagName( $values, 'n' );
 		}
 
 		return $values;
@@ -522,7 +530,7 @@ class ApiPageSet extends ApiBase {
 			);
 		}
 		if ( !empty( $values ) && $result ) {
-			$result->setIndexedTagName( $values, 'c' );
+			ApiResult::setIndexedTagName( $values, 'c' );
 		}
 
 		return $values;
@@ -559,7 +567,7 @@ class ApiPageSet extends ApiBase {
 			$values[] = $item;
 		}
 		if ( !empty( $values ) && $result ) {
-			$result->setIndexedTagName( $values, 'i' );
+			ApiResult::setIndexedTagName( $values, 'i' );
 		}
 
 		return $values;
@@ -570,7 +578,7 @@ class ApiPageSet extends ApiBase {
 	 *
 	 * @param array $invalidChecks List of types of invalid titles to include.
 	 *   Recognized values are:
-	 *   - invalidTitles: Titles from $this->getInvalidTitles()
+	 *   - invalidTitles: Titles and reasons from $this->getInvalidTitlesAndReasons()
 	 *   - special: Titles from $this->getSpecialTitles()
 	 *   - missingIds: ids from $this->getMissingPageIDs()
 	 *   - missingRevIds: ids from $this->getMissingRevisionIDs()
@@ -584,7 +592,7 @@ class ApiPageSet extends ApiBase {
 	) {
 		$result = array();
 		if ( in_array( "invalidTitles", $invalidChecks ) ) {
-			self::addValues( $result, $this->getInvalidTitles(), 'invalid', 'title' );
+			self::addValues( $result, $this->getInvalidTitlesAndReasons(), 'invalid' );
 		}
 		if ( in_array( "special", $invalidChecks ) ) {
 			self::addValues( $result, $this->getSpecialTitles(), 'special', 'title' );
@@ -651,7 +659,7 @@ class ApiPageSet extends ApiBase {
 			);
 		}
 		if ( !empty( $values ) && $result ) {
-			$result->setIndexedTagName( $values, 'rev' );
+			ApiResult::setIndexedTagName( $values, 'rev' );
 		}
 
 		return $values;
@@ -678,9 +686,7 @@ class ApiPageSet extends ApiBase {
 	 * @param array $titles Array of Title objects
 	 */
 	public function populateFromTitles( $titles ) {
-		$this->profileIn();
 		$this->initFromTitles( $titles );
-		$this->profileOut();
 	}
 
 	/**
@@ -688,9 +694,7 @@ class ApiPageSet extends ApiBase {
 	 * @param array $pageIDs Array of page IDs
 	 */
 	public function populateFromPageIDs( $pageIDs ) {
-		$this->profileIn();
 		$this->initFromPageIds( $pageIDs );
-		$this->profileOut();
 	}
 
 	/**
@@ -699,13 +703,11 @@ class ApiPageSet extends ApiBase {
 	 * Note that the query result must include the columns returned by
 	 * $this->getPageTableFields().
 	 *
-	 * @param DatabaseBase $db
+	 * @param IDatabase $db
 	 * @param ResultWrapper $queryResult Query result object
 	 */
 	public function populateFromQueryResult( $db, $queryResult ) {
-		$this->profileIn();
 		$this->initFromQueryResult( $queryResult );
-		$this->profileOut();
 	}
 
 	/**
@@ -713,9 +715,7 @@ class ApiPageSet extends ApiBase {
 	 * @param array $revIDs Array of revision IDs
 	 */
 	public function populateFromRevisionIDs( $revIDs ) {
-		$this->profileIn();
 		$this->initFromRevIDs( $revIDs );
-		$this->profileOut();
 	}
 
 	/**
@@ -778,10 +778,8 @@ class ApiPageSet extends ApiBase {
 		$set = $linkBatch->constructSet( 'page', $db );
 
 		// Get pageIDs data from the `page` table
-		$this->profileDBIn();
 		$res = $db->select( 'page', $this->getPageTableFields(), $set,
 			__METHOD__ );
-		$this->profileDBOut();
 
 		// Hack: get the ns:titles stored in array(ns => array(titles)) format
 		$this->initFromQueryResult( $res, $linkBatch->data, true ); // process Titles
@@ -812,10 +810,8 @@ class ApiPageSet extends ApiBase {
 			$db = $this->getDB();
 
 			// Get pageIDs data from the `page` table
-			$this->profileDBIn();
 			$res = $db->select( 'page', $this->getPageTableFields(), $set,
 				__METHOD__ );
-			$this->profileDBOut();
 		}
 
 		$this->initFromQueryResult( $res, $remaining, false ); // process PageIDs
@@ -921,7 +917,6 @@ class ApiPageSet extends ApiBase {
 			$where = array( 'rev_id' => $revids, 'rev_page = page_id' );
 
 			// Get pageIDs data from the `page` table
-			$this->profileDBIn();
 			$res = $db->select( $tables, $fields, $where, __METHOD__ );
 			foreach ( $res as $row ) {
 				$revid = intval( $row->rev_id );
@@ -931,7 +926,6 @@ class ApiPageSet extends ApiBase {
 				$pageids[$pageid] = '';
 				unset( $remaining[$revid] );
 			}
-			$this->profileDBOut();
 		}
 
 		$this->mMissingRevIDs = array_keys( $remaining );
@@ -948,7 +942,6 @@ class ApiPageSet extends ApiBase {
 			$fields = array( 'ar_rev_id', 'ar_namespace', 'ar_title' );
 			$where = array( 'ar_rev_id' => $this->mMissingRevIDs );
 
-			$this->profileDBIn();
 			$res = $db->select( $tables, $fields, $where, __METHOD__ );
 			$titles = array();
 			foreach ( $res as $row ) {
@@ -956,7 +949,6 @@ class ApiPageSet extends ApiBase {
 				$titles[$revid] = Title::makeTitle( $row->ar_namespace, $row->ar_title );
 				unset( $remaining[$revid] );
 			}
-			$this->profileDBOut();
 
 			$this->initFromTitles( $titles );
 
@@ -1012,9 +1004,7 @@ class ApiPageSet extends ApiBase {
 				}
 
 				// Get pageIDs data from the `page` table
-				$this->profileDBIn();
 				$res = $db->select( 'page', $pageFlds, $set, __METHOD__ );
-				$this->profileDBOut();
 
 				// Hack: get the ns:titles stored in array(ns => array(titles)) format
 				$this->initFromQueryResult( $res, $linkBatch->data, true );
@@ -1033,7 +1023,6 @@ class ApiPageSet extends ApiBase {
 		$lb = new LinkBatch();
 		$db = $this->getDB();
 
-		$this->profileDBIn();
 		$res = $db->select(
 			'redirect',
 			array(
@@ -1045,7 +1034,6 @@ class ApiPageSet extends ApiBase {
 			), array( 'rd_from' => array_keys( $this->mPendingRedirectIDs ) ),
 			__METHOD__
 		);
-		$this->profileDBOut();
 		foreach ( $res as $row ) {
 			$rdfrom = intval( $row->rd_from );
 			$from = $this->mPendingRedirectIDs[$rdfrom]->getPrefixedText();
@@ -1055,6 +1043,7 @@ class ApiPageSet extends ApiBase {
 				$row->rd_fragment,
 				$row->rd_interwiki
 			);
+			$this->mResolvedRedirectTitles[$from] = $this->mPendingRedirectIDs[$rdfrom];
 			unset( $this->mPendingRedirectIDs[$rdfrom] );
 			if ( $to->isExternal() ) {
 				$this->mInterwikiTitles[$to->getPrefixedText()] = $to->getInterwiki();
@@ -1075,7 +1064,9 @@ class ApiPageSet extends ApiBase {
 					continue;
 				}
 				$lb->addObj( $rt );
-				$this->mRedirectTitles[$title->getPrefixedText()] = $rt;
+				$from = $title->getPrefixedText();
+				$this->mResolvedRedirectTitles[$from] = $title;
+				$this->mRedirectTitles[$from] = $rt;
 				unset( $this->mPendingRedirectIDs[$id] );
 			}
 		}
@@ -1115,16 +1106,20 @@ class ApiPageSet extends ApiBase {
 
 		foreach ( $titles as $title ) {
 			if ( is_string( $title ) ) {
-				$titleObj = Title::newFromText( $title, $this->mDefaultNamespace );
+				try {
+					$titleObj = Title::newFromTextThrow( $title, $this->mDefaultNamespace );
+				} catch ( MalformedTitleException $ex ) {
+					// Handle invalid titles gracefully
+					$this->mAllPages[0][$title] = $this->mFakePageId;
+					$this->mInvalidTitles[$this->mFakePageId] = array(
+						'title' => $title,
+						'invalidreason' => $ex->getMessage(),
+					);
+					$this->mFakePageId--;
+					continue; // There's nothing else we can do
+				}
 			} else {
 				$titleObj = $title;
-			}
-			if ( !$titleObj ) {
-				// Handle invalid titles gracefully
-				$this->mAllPages[0][$title] = $this->mFakePageId;
-				$this->mInvalidTitles[$this->mFakePageId] = $title;
-				$this->mFakePageId--;
-				continue; // There's nothing else we can do
 			}
 			$unconvertedTitle = $titleObj->getPrefixedText();
 			$titleWasConverted = false;
@@ -1205,6 +1200,29 @@ class ApiPageSet extends ApiBase {
 	}
 
 	/**
+	 * Controls how generator data about a redirect source is merged into
+	 * the generator data for the redirect target. When not set no data
+	 * is merged. Note that if multiple titles redirect to the same target
+	 * the order of operations is undefined.
+	 *
+	 * Example to include generated data from redirect in target, prefering
+	 * the data generated for the destination when there is a collision:
+	 * @code
+	 *   $pageSet->setRedirectMergePolicy( function( array $current, array $new ) {
+	 *       return $current + $new;
+	 *   } );
+	 * @endcode
+	 *
+	 * @param callable|null $callable Recieves two array arguments, first the
+	 *  generator data for the redirect target and second the generator data
+	 *  for the redirect source. Returns the resulting generator data to use
+	 *  for the redirect target.
+	 */
+	public function setRedirectMergePolicy( $callable ) {
+		$this->mRedirectMergePolicy = $callable;
+	}
+
+	/**
 	 * Populate the generator data for all titles in the result
 	 *
 	 * The page data may be inserted into an ApiResult object or into an
@@ -1226,17 +1244,20 @@ class ApiPageSet extends ApiBase {
 	 */
 	public function populateGeneratorData( &$result, array $path = array() ) {
 		if ( $result instanceof ApiResult ) {
-			$data = $result->getData();
-		} else {
-			$data = &$result;
-		}
-		foreach ( $path as $key ) {
-			if ( !isset( $data[$key] ) ) {
-				// Path isn't in $result, so nothing to add, so everything
-				// "fits"
+			$data = $result->getResultData( $path );
+			if ( $data === null ) {
 				return true;
 			}
-			$data = &$data[$key];
+		} else {
+			$data = &$result;
+			foreach ( $path as $key ) {
+				if ( !isset( $data[$key] ) ) {
+					// Path isn't in $result, so nothing to add, so everything
+					// "fits"
+					return true;
+				}
+				$data = &$data[$key];
+			}
 		}
 		foreach ( $this->mGeneratorData as $ns => $dbkeys ) {
 			if ( $ns === -1 ) {
@@ -1274,6 +1295,36 @@ class ApiPageSet extends ApiBase {
 				}
 			}
 		}
+
+		// Merge data generated about redirect titles into the redirect destination
+		if ( $this->mRedirectMergePolicy ) {
+			foreach ( $this->mResolvedRedirectTitles as $titleFrom ) {
+				$dest = $titleFrom;
+				while ( isset( $this->mRedirectTitles[$dest->getPrefixedText()] ) ) {
+					$dest = $this->mRedirectTitles[$dest->getPrefixedText()];
+				}
+				$fromNs = $titleFrom->getNamespace();
+				$fromDBkey = $titleFrom->getDBkey();
+				$toPageId = $dest->getArticleID();
+				if ( isset( $data[$toPageId] ) &&
+					isset( $this->mGeneratorData[$fromNs][$fromDBkey] )
+				) {
+					// It is necesary to set both $data and add to $result, if an ApiResult,
+					// to ensure multiple redirects to the same destination are all merged.
+					$data[$toPageId] = call_user_func(
+						$this->mRedirectMergePolicy,
+						$data[$toPageId],
+						$this->mGeneratorData[$fromNs][$fromDBkey]
+					);
+					if ( $result instanceof ApiResult ) {
+						if ( !$result->addValue( $path, $toPageId, $data[$toPageId], ApiResult::OVERRIDE ) ) {
+							return false;
+						}
+					}
+				}
+			}
+		}
+
 		return true;
 	}
 
@@ -1322,8 +1373,8 @@ class ApiPageSet extends ApiBase {
 			),
 			'generator' => array(
 				ApiBase::PARAM_TYPE => null,
-				ApiBase::PARAM_VALUE_LINKS => array(),
 				ApiBase::PARAM_HELP_MSG => 'api-pageset-param-generator',
+				ApiBase::PARAM_SUBMODULE_PARAM_PREFIX => 'g',
 			),
 			'redirects' => array(
 				ApiBase::PARAM_DFLT => false,
@@ -1349,10 +1400,8 @@ class ApiPageSet extends ApiBase {
 		if ( !$this->mAllowGenerator ) {
 			unset( $result['generator'] );
 		} elseif ( $flags & ApiBase::GET_VALUES_FOR_HELP ) {
-			foreach ( $this->getGenerators() as $g ) {
-				$result['generator'][ApiBase::PARAM_TYPE][] = $g;
-				$result['generator'][ApiBase::PARAM_VALUE_LINKS][$g] = "Special:ApiHelp/query+$g";
-			}
+			$result['generator'][ApiBase::PARAM_TYPE] = 'submodule';
+			$result['generator'][ApiBase::PARAM_SUBMODULE_MAP] = $this->getGenerators();
 		}
 
 		return $result;
@@ -1373,13 +1422,14 @@ class ApiPageSet extends ApiBase {
 				$query = $this->getMain()->getModuleManager()->getModule( 'query' );
 			}
 			$gens = array();
+			$prefix = $query->getModulePath() . '+';
 			$mgr = $query->getModuleManager();
 			foreach ( $mgr->getNamesWithClasses() as $name => $class ) {
 				if ( is_subclass_of( $class, 'ApiQueryGeneratorBase' ) ) {
-					$gens[] = $name;
+					$gens[$name] = $prefix . $name;
 				}
 			}
-			sort( $gens );
+			ksort( $gens );
 			self::$generators = $gens;
 		}
 

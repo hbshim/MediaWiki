@@ -36,6 +36,9 @@ class RollbackAction extends FormlessAction {
 	}
 
 	public function onView() {
+		// TODO: use $this->useTransactionalTimeLimit(); when POST only
+		wfTransactionalTimeLimit();
+
 		$details = null;
 
 		$request = $this->getRequest();
@@ -75,13 +78,13 @@ class RollbackAction extends FormlessAction {
 			return;
 		}
 
-		#NOTE: Permission errors already handled by Action::checkExecute.
+		# NOTE: Permission errors already handled by Action::checkExecute.
 
 		if ( $result == array( array( 'readonlytext' ) ) ) {
 			throw new ReadOnlyError;
 		}
 
-		#XXX: Would be nice if ErrorPageError could take multiple errors, and/or a status object.
+		# XXX: Would be nice if ErrorPageError could take multiple errors, and/or a status object.
 		#     Right now, we only show the first error
 		foreach ( $result as $error ) {
 			throw new ErrorPageError( 'rollbackfailed', $error[0], array_slice( $error, 1 ) );
@@ -106,7 +109,7 @@ class RollbackAction extends FormlessAction {
 		$this->getOutput()->returnToMain( false, $this->getTitle() );
 
 		if ( !$request->getBool( 'hidediff', false ) &&
-			!$this->getUser()->getBoolOption( 'norollbackdiff', false )
+			!$this->getUser()->getBoolOption( 'norollbackdiff' )
 		) {
 			$contentHandler = $current->getContentHandler();
 			$de = $contentHandler->createDifferenceEngine(

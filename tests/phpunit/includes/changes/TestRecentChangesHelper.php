@@ -3,7 +3,6 @@
 /**
  * Helper for generating test recent changes entries.
  *
- * @licence GNU GPL v2+
  * @author Katie Filbert < aude.wiki@gmail.com >
  */
 class TestRecentChangesHelper {
@@ -26,8 +25,8 @@ class TestRecentChangesHelper {
 		return $this->makeRecentChange( $attribs, $counter, $watchingUsers );
 	}
 
-	public function makeLogRecentChange( $logType, $logAction, User $user, $titleText, $timestamp, $counter,
-		$watchingUsers
+	public function makeLogRecentChange(
+		$logType, $logAction, User $user, $titleText, $timestamp, $counter, $watchingUsers
 	) {
 		$attribs = array_merge(
 			$this->getDefaultAttributes( $titleText, $timestamp ),
@@ -96,6 +95,36 @@ class TestRecentChangesHelper {
 		$change->numberofWatchingusers = $watchingUsers;
 
 		return $change;
+	}
+
+	public function getCacheEntry( $recentChange ) {
+		$rcCacheFactory = new RCCacheEntryFactory(
+			new RequestContext(),
+			array( 'diff' => 'diff', 'cur' => 'cur', 'last' => 'last' )
+		);
+		return $rcCacheFactory->newFromRecentChange( $recentChange, false );
+	}
+
+	public function makeCategorizationRecentChange(
+		User $user, $titleText, $curid, $thisid, $lastid, $timestamp
+	) {
+
+		$attribs = array_merge(
+			$this->getDefaultAttributes( $titleText, $timestamp ),
+			array(
+				'rc_type' => RC_CATEGORIZE,
+				'rc_user' => $user->getId(),
+				'rc_user_text' => $user->getName(),
+				'rc_this_oldid' => $thisid,
+				'rc_last_oldid' => $lastid,
+				'rc_cur_id' => $curid,
+				'rc_comment' => '[[:Testpage]] added to category',
+				'rc_old_len' => 0,
+				'rc_new_len' => 0,
+			)
+		);
+
+		return $this->makeRecentChange( $attribs, 0, 0 );
 	}
 
 	private function getDefaultAttributes( $titleText, $timestamp ) {

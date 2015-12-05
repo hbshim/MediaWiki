@@ -1,6 +1,6 @@
 <?php
 /**
- * Resource loader module based on local JavaScript/CSS files.
+ * ResourceLoader module based on local JavaScript/CSS files.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -74,15 +74,6 @@ class ResourceLoaderFileModule extends ResourceLoaderModule {
 	protected $debugScripts = array();
 
 	/**
-	 * @var array List of paths to JavaScript files to include in the startup module
-	 * @par Usage:
-	 * @code
-	 * array( [file-path], [file-path], ... )
-	 * @endcode
-	 */
-	protected $loaderScripts = array();
-
-	/**
 	 * @var array List of paths to CSS files to always include
 	 * @par Usage:
 	 * @code
@@ -144,15 +135,6 @@ class ResourceLoaderFileModule extends ResourceLoaderModule {
 	protected $hasGeneratedStyles = false;
 
 	/**
-	 * @var array Cache for mtime
-	 * @par Usage:
-	 * @code
-	 * array( [hash] => [mtime], [hash] => [mtime], ... )
-	 * @endcode
-	 */
-	protected $modifiedTime = array();
-
-	/**
 	 * @var array Place where readStyleFile() tracks file dependencies
 	 * @par Usage:
 	 * @code
@@ -160,6 +142,12 @@ class ResourceLoaderFileModule extends ResourceLoaderModule {
 	 * @endcode
 	 */
 	protected $localFileRefs = array();
+
+	/**
+	 * @var array Place where readStyleFile() tracks file dependencies for non-existent files.
+	 * Used in tests to detect missing dependencies.
+	 */
+	protected $missingLocalFileRefs = array();
 
 	/* Methods */
 
@@ -174,7 +162,7 @@ class ResourceLoaderFileModule extends ResourceLoaderModule {
 	 *     to $wgResourceBasePath
 	 *
 	 * Below is a description for the $options array:
-	 * @throws MWException
+	 * @throws InvalidArgumentException
 	 * @par Construction options:
 	 * @code
 	 *     array(
@@ -198,8 +186,6 @@ class ResourceLoaderFileModule extends ResourceLoaderModule {
 	 *         ),
 	 *         // Scripts to include in debug contexts
 	 *         'debugScripts' => [file path string or array of file path strings],
-	 *         // Scripts to include in the startup module
-	 *         'loaderScripts' => [file path string or array of file path strings],
 	 *         // Modules which must be loaded before this module
 	 *         'dependencies' => [module name string or array of module name strings],
 	 *         'templates' => array(
@@ -242,7 +228,6 @@ class ResourceLoaderFileModule extends ResourceLoaderModule {
 				// Lists of file paths
 				case 'scripts':
 				case 'debugScripts':
-				case 'loaderScripts':
 				case 'styles':
 					$this->{$member} = (array)$option;
 					break;
@@ -255,14 +240,14 @@ class ResourceLoaderFileModule extends ResourceLoaderModule {
 				case 'skinScripts':
 				case 'skinStyles':
 					if ( !is_array( $option ) ) {
-						throw new MWException(
+						throw new InvalidArgumentException(
 							"Invalid collated file path list error. " .
 							"'$option' given, array expected."
 						);
 					}
 					foreach ( $option as $key => $value ) {
 						if ( !is_string( $key ) ) {
-							throw new MWException(
+							throw new InvalidArgumentException(
 								"Invalid collated file path list key error. " .
 								"'$key' given, string expected."
 							);
@@ -281,8 +266,8 @@ class ResourceLoaderFileModule extends ResourceLoaderModule {
 					$this->{$member} = $option;
 					break;
 				// Single strings
-				case 'group':
 				case 'position':
+				case 'group':
 				case 'skipFunction':
 					$this->{$member} = (string)$option;
 					break;
@@ -295,6 +280,18 @@ class ResourceLoaderFileModule extends ResourceLoaderModule {
 		}
 		if ( $hasTemplates ) {
 			$this->dependencies[] = 'mediawiki.template';
+			// Ensure relevant template compiler module gets loaded
+			foreach ( $this->templates as $alias => $templatePath ) {
+				if ( is_int( $alias ) ) {
+					$alias = $templatePath;
+				}
+				$suffix = explode( '.', $alias );
+				$suffix = end( $suffix );
+				$compilerModule = 'mediawiki.template.' . $suffix;
+				if ( $suffix !== 'html' && !in_array( $compilerModule, $this->dependencies ) ) {
+					$this->dependencies[] = $compilerModule;
+				}
+			}
 		}
 	}
 
@@ -382,18 +379,6 @@ class ResourceLoaderFileModule extends ResourceLoaderModule {
 	}
 
 	/**
-	 * Get loader script.
-	 *
-	 * @return string|bool JavaScript code to be added to startup module
-	 */
-	public function getLoaderScript() {
-		if ( count( $this->loaderScripts ) === 0 ) {
-			return false;
-		}
-		return $this->readScriptFiles( $this->loaderScripts );
-	}
-
-	/**
 	 * Get all styles for a given context.
 	 *
 	 * @param ResourceLoaderContext $context
@@ -406,22 +391,8 @@ class ResourceLoaderFileModule extends ResourceLoaderModule {
 			$context
 		);
 		// Collect referenced files
-		$this->localFileRefs = array_unique( $this->localFileRefs );
-		// If the list has been modified since last time we cached it, update the cache
-		try {
-			if ( $this->localFileRefs !== $this->getFileDependencies( $context->getSkin() ) ) {
-				$dbw = wfGetDB( DB_MASTER );
-				$dbw->replace( 'module_deps',
-					array( array( 'md_module', 'md_skin' ) ), array(
-						'md_module' => $this->getName(),
-						'md_skin' => $context->getSkin(),
-						'md_deps' => FormatJson::encode( $this->localFileRefs ),
-					)
-				);
-			}
-		} catch ( Exception $e ) {
-			wfDebugLog( 'resourceloader', __METHOD__ . ": failed to update DB: $e" );
-		}
+		$this->saveFileDependencies( $context, $this->localFileRefs );
+
 		return $styles;
 	}
 
@@ -474,10 +445,10 @@ class ResourceLoaderFileModule extends ResourceLoaderModule {
 
 	/**
 	 * Gets list of names of modules this module depends on.
-	 *
+	 * @param ResourceLoaderContext context
 	 * @return array List of module names
 	 */
-	public function getDependencies() {
+	public function getDependencies( ResourceLoaderContext $context = null ) {
 		return $this->dependencies;
 	}
 
@@ -510,24 +481,28 @@ class ResourceLoaderFileModule extends ResourceLoaderModule {
 	}
 
 	/**
-	 * Get the last modified timestamp of this module.
+	 * Disable module content versioning.
 	 *
-	 * Last modified timestamps are calculated from the highest last modified
-	 * timestamp of this module's constituent files as well as the files it
-	 * depends on. This function is context-sensitive, only performing
-	 * calculations on files relevant to the given language, skin and debug
-	 * mode.
+	 * This class uses getDefinitionSummary() instead, to avoid filesystem overhead
+	 * involved with building the full module content inside a startup request.
 	 *
-	 * @param ResourceLoaderContext $context Context in which to calculate
-	 *     the modified time
-	 * @return int UNIX timestamp
-	 * @see ResourceLoaderModule::getFileDependencies
+	 * @return bool
 	 */
-	public function getModifiedTime( ResourceLoaderContext $context ) {
-		if ( isset( $this->modifiedTime[$context->getHash()] ) ) {
-			return $this->modifiedTime[$context->getHash()];
-		}
+	public function enableModuleContentVersion() {
+		return false;
+	}
 
+	/**
+	 * Helper method to gather file hashes for getDefinitionSummary.
+	 *
+	 * This function is context-sensitive, only computing hashes of files relevant to the
+	 * given language, skin, etc.
+	 *
+	 * @see ResourceLoaderModule::getFileDependencies
+	 * @param ResourceLoaderContext $context
+	 * @return array
+	 */
+	protected function getFileHashes( ResourceLoaderContext $context ) {
 		$files = array();
 
 		// Flatten style files into $files
@@ -552,32 +527,23 @@ class ResourceLoaderFileModule extends ResourceLoaderModule {
 			$this->templates,
 			$context->getDebug() ? $this->debugScripts : array(),
 			$this->getLanguageScripts( $context->getLanguage() ),
-			self::tryForKey( $this->skinScripts, $context->getSkin(), 'default' ),
-			$this->loaderScripts
+			self::tryForKey( $this->skinScripts, $context->getSkin(), 'default' )
 		);
 		if ( $this->skipFunction ) {
 			$files[] = $this->skipFunction;
 		}
 		$files = array_map( array( $this, 'getLocalPath' ), $files );
 		// File deps need to be treated separately because they're already prefixed
-		$files = array_merge( $files, $this->getFileDependencies( $context->getSkin() ) );
+		$files = array_merge( $files, $this->getFileDependencies( $context ) );
+		// Filter out any duplicates from getFileDependencies() and others.
+		// Most commonly introduced by compileLessFile(), which always includes the
+		// entry point Less file we already know about.
+		$files = array_values( array_unique( $files ) );
 
-		// If a module is nothing but a list of dependencies, we need to avoid
-		// giving max() an empty array
-		if ( count( $files ) === 0 ) {
-			$this->modifiedTime[$context->getHash()] = 1;
-			return $this->modifiedTime[$context->getHash()];
-		}
-
-		$filesMtime = max( array_map( array( __CLASS__, 'safeFilemtime' ), $files ) );
-
-		$this->modifiedTime[$context->getHash()] = max(
-			$filesMtime,
-			$this->getMsgBlobMtime( $context->getLanguage() ),
-			$this->getDefinitionMtime( $context )
-		);
-
-		return $this->modifiedTime[$context->getHash()];
+		// Don't include keys or file paths here, only the hashes. Including that would needlessly
+		// cause global cache invalidation when files move or if e.g. the MediaWiki path changes.
+		// Any significant ordering is already detected by the definition summary.
+		return array_map( array( __CLASS__, 'safeFileHash' ), $files );
 	}
 
 	/**
@@ -587,35 +553,40 @@ class ResourceLoaderFileModule extends ResourceLoaderModule {
 	 * @return array
 	 */
 	public function getDefinitionSummary( ResourceLoaderContext $context ) {
-		$summary = array(
-			'class' => get_class( $this ),
-		);
+		$summary = parent::getDefinitionSummary( $context );
+
+		$options = array();
 		foreach ( array(
+			// The following properties are omitted because they don't affect the module reponse:
+			// - localBasePath (Per T104950; Changes when absolute directory name changes. If
+			//    this affects 'scripts' and other file paths, getFileHashes accounts for that.)
+			// - remoteBasePath (Per T104950)
+			// - dependencies (provided via startup module)
+			// - targets
+			// - group (provided via startup module)
+			// - position (only used by OutputPage)
 			'scripts',
 			'debugScripts',
-			'loaderScripts',
 			'styles',
 			'languageScripts',
 			'skinScripts',
 			'skinStyles',
-			'dependencies',
 			'messages',
-			'targets',
 			'templates',
-			'group',
-			'position',
 			'skipFunction',
-			'localBasePath',
-			'remoteBasePath',
 			'debugRaw',
 			'raw',
 		) as $member ) {
-			$summary[$member] = $this->{$member};
+			$options[$member] = $this->{$member};
 		};
+
+		$summary[] = array(
+			'options' => $options,
+			'fileHashes' => $this->getFileHashes( $context ),
+			'msgBlobMtime' => $this->getMsgBlobMtime( $context->getLanguage() ),
+		);
 		return $summary;
 	}
-
-	/* Protected Methods */
 
 	/**
 	 * @param string|ResourceLoaderFilePath $path
@@ -855,13 +826,21 @@ class ResourceLoaderFileModule extends ResourceLoaderModule {
 	 * @param array $styles List of media type/list of file paths pairs, to read, remap and
 	 * concetenate
 	 * @param bool $flip
-	 * @param ResourceLoaderContext $context (optional)
+	 * @param ResourceLoaderContext $context
 	 *
 	 * @throws MWException
 	 * @return array List of concatenated and remapped CSS data from $styles,
 	 *     keyed by media type
+	 *
+	 * @since 1.27 Calling this method without a ResourceLoaderContext instance
+	 *   is deprecated.
 	 */
 	public function readStyleFiles( array $styles, $flip, $context = null ) {
+		if ( $context === null ) {
+			wfDeprecated( __METHOD__ . ' without a ResourceLoader context', '1.27' );
+			$context = ResourceLoaderContext::newDummyContext();
+		}
+
 		if ( empty( $styles ) ) {
 			return array();
 		}
@@ -883,12 +862,12 @@ class ResourceLoaderFileModule extends ResourceLoaderModule {
 	 *
 	 * @param string $path File path of style file to read
 	 * @param bool $flip
-	 * @param ResourceLoaderContext $context (optional)
+	 * @param ResourceLoaderContext $context
 	 *
 	 * @return string CSS data in script file
 	 * @throws MWException If the file doesn't exist
 	 */
-	protected function readStyleFile( $path, $flip, $context = null ) {
+	protected function readStyleFile( $path, $flip, $context ) {
 		$localPath = $this->getLocalPath( $path );
 		$remotePath = $this->getRemotePath( $path );
 		if ( !file_exists( $localPath ) ) {
@@ -898,8 +877,7 @@ class ResourceLoaderFileModule extends ResourceLoaderModule {
 		}
 
 		if ( $this->getStyleSheetLang( $localPath ) === 'less' ) {
-			$compiler = $this->getLessCompiler( $context );
-			$style = $this->compileLessFile( $localPath, $compiler );
+			$style = $this->compileLessFile( $localPath, $context );
 			$this->hasGeneratedStyles = true;
 		} else {
 			$style = file_get_contents( $localPath );
@@ -911,13 +889,16 @@ class ResourceLoaderFileModule extends ResourceLoaderModule {
 		$localDir = dirname( $localPath );
 		$remoteDir = dirname( $remotePath );
 		// Get and register local file references
-		$this->localFileRefs = array_merge(
-			$this->localFileRefs,
-			CSSMin::getLocalFileReferences( $style, $localDir )
-		);
-		return CSSMin::remap(
-			$style, $localDir, $remoteDir, true
-		);
+		$localFileRefs = CSSMin::getAllLocalFileReferences( $style, $localDir );
+		foreach ( $localFileRefs as $file ) {
+			if ( file_exists( $file ) ) {
+				$this->localFileRefs[] = $file;
+			} else {
+				$this->missingLocalFileRefs[] = $file;
+			}
+		}
+		return MemoizedCallable::call( 'CSSMin::remap',
+			array( $style, $localDir, $remoteDir, true ) );
 	}
 
 	/**
@@ -944,32 +925,50 @@ class ResourceLoaderFileModule extends ResourceLoaderModule {
 	 * Keeps track of all used files and adds them to localFileRefs.
 	 *
 	 * @since 1.22
-	 * @throws Exception If lessc encounters a parse error
+	 * @since 1.27 Added $context paramter.
+	 * @throws Exception If less.php encounters a parse error
 	 * @param string $fileName File path of LESS source
-	 * @param lessc $compiler Compiler to use, if not default
+	 * @param ResourceLoaderContext $context Context in which to generate script
 	 * @return string CSS source
 	 */
-	protected function compileLessFile( $fileName, $compiler = null ) {
-		if ( !$compiler ) {
-			$compiler = $this->getLessCompiler();
-		}
-		$result = $compiler->compileFile( $fileName );
-		$this->localFileRefs += array_keys( $compiler->allParsedFiles() );
-		return $result;
-	}
+	protected function compileLessFile( $fileName, ResourceLoaderContext $context ) {
+		static $cache;
 
-	/**
-	 * Get a LESS compiler instance for this module in given context.
-	 *
-	 * Just calls ResourceLoader::getLessCompiler() by default to get a global compiler.
-	 *
-	 * @param ResourceLoaderContext $context
-	 * @throws MWException
-	 * @since 1.24
-	 * @return lessc
-	 */
-	protected function getLessCompiler( ResourceLoaderContext $context = null ) {
-		return ResourceLoader::getLessCompiler( $this->getConfig() );
+		if ( !$cache ) {
+			$cache = ObjectCache::getLocalServerInstance( CACHE_ANYTHING );
+		}
+
+		// Construct a cache key from the LESS file name and a hash digest
+		// of the LESS variables used for compilation.
+		$vars = $this->getLessVars( $context );
+		ksort( $vars );
+		$varsHash = hash( 'md4', serialize( $vars ) );
+		$cacheKey = $cache->makeGlobalKey( 'LESS', $fileName, $varsHash );
+		$cachedCompile = $cache->get( $cacheKey );
+
+		// If we got a cached value, we have to validate it by getting a
+		// checksum of all the files that were loaded by the parser and
+		// ensuring it matches the cached entry's.
+		if ( isset( $cachedCompile['hash'] ) ) {
+			$contentHash = FileContentsHasher::getFileContentsHash( $cachedCompile['files'] );
+			if ( $contentHash === $cachedCompile['hash'] ) {
+				$this->localFileRefs = array_merge( $this->localFileRefs, $cachedCompile['files'] );
+				return $cachedCompile['css'];
+			}
+		}
+
+		$compiler = ResourceLoader::getLessCompiler( $this->getConfig(), $vars );
+		$css = $compiler->parseFile( $fileName )->getCss();
+		$files = $compiler->AllParsedFiles();
+		$this->localFileRefs = array_merge( $this->localFileRefs, $files );
+
+		$cache->set( $cacheKey, array(
+			'css'   => $css,
+			'files' => $files,
+			'hash'  => FileContentsHasher::getFileContentsHash( $files ),
+		), 60 * 60 * 24 );  // 86400 seconds, or 24 hours.
+
+		return $css;
 	}
 
 	/**

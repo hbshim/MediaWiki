@@ -20,12 +20,12 @@
  * @defgroup Maintenance Maintenance
  */
 
-// Make sure we're on PHP5.3.3 or better
-if ( !function_exists( 'version_compare' ) || version_compare( PHP_VERSION, '5.3.3' ) < 0 ) {
-	// We need to use dirname( __FILE__ ) here cause __DIR__ is PHP5.3+
-	require_once dirname( __FILE__ ) . '/../includes/PHPVersionError.php';
-	wfPHPVersionError( 'cli' );
-}
+// Bail on old versions of PHP, or if composer has not been run yet to install
+// dependencies. Using dirname( __FILE__ ) here because __DIR__ is PHP5.3+.
+// @codingStandardsIgnoreStart MediaWiki.Usage.DirUsage.FunctionFound
+require_once dirname( __FILE__ ) . '/../includes/PHPVersionCheck.php';
+// @codingStandardsIgnoreEnd
+wfEntryPointCheck( 'cli' );
 
 /**
  * @defgroup MaintenanceArchive Maintenance archives
@@ -37,6 +37,8 @@ define( 'RUN_MAINTENANCE_IF_MAIN', __DIR__ . '/doMaintenance.php' );
 define( 'DO_MAINTENANCE', RUN_MAINTENANCE_IF_MAIN ); // original name, harmless
 
 $maintClass = false;
+
+use MediaWiki\Logger\LoggerFactory;
 
 /**
  * Abstract maintenance class for quickly writing and churning out
@@ -460,7 +462,7 @@ abstract class Maintenance {
 		}
 
 		# Save additional script dependant options to display
-		# them separately in help
+		#  them separately in help
 		$this->mDependantParameters = array_diff_key( $this->mParams, $this->mGenericParameters );
 	}
 
@@ -601,17 +603,27 @@ abstract class Maintenance {
 	 * Activate the profiler (assuming $wgProfiler is set)
 	 */
 	protected function activateProfiler() {
-		global $wgProfiler;
+		global $wgProfiler, $wgProfileLimit, $wgTrxProfilerLimits;
 
 		$output = $this->getOption( 'profiler' );
-		if ( $output && is_array( $wgProfiler ) && isset( $wgProfiler['class'] ) ) {
+		if ( !$output ) {
+			return;
+		}
+
+		if ( is_array( $wgProfiler ) && isset( $wgProfiler['class'] ) ) {
 			$class = $wgProfiler['class'];
 			$profiler = new $class(
-				array( 'sampling' => 1, 'output' => $output ) + $wgProfiler
+				array( 'sampling' => 1, 'output' => array( $output ) )
+					+ $wgProfiler
+					+ array( 'threshold' => $wgProfileLimit )
 			);
 			$profiler->setTemplated( true );
 			Profiler::replaceStubInstance( $profiler );
 		}
+
+		$trxProfiler = Profiler::instance()->getTransactionProfiler();
+		$trxProfiler->setLogger( LoggerFactory::getInstance( 'DBPerformance' ) );
+		$trxProfiler->setExpectations( $wgTrxProfilerLimits['Maintenance'], __METHOD__ );
 	}
 
 	/**
@@ -696,6 +708,9 @@ abstract class Maintenance {
 					}
 					$options[$option] = $param;
 				}
+			} elseif ( $arg == '-' ) {
+				# Lonely "-", often used to indicate stdin or stdout.
+				$args[] = $arg;
 			} elseif ( substr( $arg, 0, 1 ) == '-' ) {
 				# Short options
 				$argLength = strlen( $arg );
@@ -944,10 +959,9 @@ abstract class Maintenance {
 
 		$wgShowSQLErrors = true;
 
-		// @codingStandardsIgnoreStart Allow error suppression. wfSuppressWarnings()
-		// is not available.
-		@set_time_limit( 0 );
-		// @codingStandardsIgnoreStart
+		MediaWiki\suppressWarnings();
+		set_time_limit( 0 );
+		MediaWiki\restoreWarnings();
 
 		$this->adjustMemoryLimit();
 	}
@@ -1096,7 +1110,15 @@ abstract class Maintenance {
 	 */
 	private function lockSearchindex( $db ) {
 		$write = array( 'searchindex' );
-		$read = array( 'page', 'revision', 'text', 'interwiki', 'l10n_cache', 'user' );
+		$read = array(
+			'page',
+			'revision',
+			'text',
+			'interwiki',
+			'l10n_cache',
+			'user',
+			'page_restrictions'
+		);
 		$db->lockTables( $read, $write, __CLASS__ . '::' . __METHOD__ );
 	}
 

@@ -61,6 +61,9 @@ class SpecialMergeHistory extends SpecialPage {
 	/** @var Title */
 	protected $mDestObj;
 
+	/** @var int[] */
+	public $prevId;
+
 	public function __construct() {
 		parent::__construct( 'MergeHistory', 'mergehistory' );
 	}
@@ -94,21 +97,11 @@ class SpecialMergeHistory extends SpecialPage {
 			$this->mTargetObj = null;
 			$this->mDestObj = null;
 		}
-		$this->preCacheMessages();
-	}
-
-	/**
-	 * As we use the same small set of messages in various methods and that
-	 * they are called often, we call them once and save them in $this->message
-	 */
-	function preCacheMessages() {
-		// Precache various messages
-		if ( !isset( $this->message ) ) {
-			$this->message['last'] = $this->msg( 'last' )->escaped();
-		}
 	}
 
 	public function execute( $par ) {
+		$this->useTransactionalTimeLimit();
+
 		$this->checkPermissions();
 		$this->checkReadOnly();
 
@@ -159,9 +152,10 @@ class SpecialMergeHistory extends SpecialPage {
 	}
 
 	function showMergeForm() {
-		$this->getOutput()->addWikiMsg( 'mergehistory-header' );
+		$out = $this->getOutput();
+		$out->addWikiMsg( 'mergehistory-header' );
 
-		$this->getOutput()->addHTML(
+		$out->addHTML(
 			Xml::openElement( 'form', array(
 				'method' => 'get',
 				'action' => wfScript() ) ) .
@@ -185,6 +179,8 @@ class SpecialMergeHistory extends SpecialPage {
 				'</fieldset>' .
 				'</form>'
 		);
+
+		$this->addHelpLink( 'Help:Merge history' );
 	}
 
 	private function showHistory() {
@@ -278,7 +274,7 @@ class SpecialMergeHistory extends SpecialPage {
 		$rev = new Revision( $row );
 
 		$stxt = '';
-		$last = $this->message['last'];
+		$last = $this->msg( 'last' )->escaped();
 
 		$ts = wfTimestamp( TS_MW, $row->rev_timestamp );
 		$checkBox = Xml::radio( 'mergepoint', $ts, ( $this->mTimestamp === $ts ) );
@@ -297,11 +293,11 @@ class SpecialMergeHistory extends SpecialPage {
 
 		# Last link
 		if ( !$rev->userCan( Revision::DELETED_TEXT, $user ) ) {
-			$last = $this->message['last'];
+			$last = $this->msg( 'last' )->escaped();
 		} elseif ( isset( $this->prevId[$row->rev_id] ) ) {
 			$last = Linker::linkKnown(
 				$rev->getTitle(),
-				$this->message['last'],
+				$this->msg( 'last' )->escaped(),
 				array(),
 				array(
 					'diff' => $row->rev_id,
@@ -480,10 +476,18 @@ class SpecialMergeHistory extends SpecialPage {
 		$logId = $logEntry->insert();
 		$logEntry->publish( $logId );
 
-		# @todo message should use redirect=no
-		$this->getOutput()->addWikiText( $this->msg( 'mergehistory-success',
-			$targetTitle->getPrefixedText(), $destTitle->getPrefixedText() )->numParams(
-			$count )->text() );
+		$targetLink = Linker::link(
+			$targetTitle,
+			$targetTitle->getPrefixedText(),
+			array(),
+			array( 'redirect' => 'no' )
+		);
+
+		$this->getOutput()->addWikiMsg( $this->msg( 'mergehistory-done' )
+			->rawParams( $targetLink )
+			->params( $destTitle->getPrefixedText() )
+			->numParams( $count )
+		);
 
 		Hooks::run( 'ArticleMergeComplete', array( $targetTitle, $destTitle ) );
 
@@ -496,13 +500,13 @@ class SpecialMergeHistory extends SpecialPage {
 }
 
 class MergeHistoryPager extends ReverseChronologicalPager {
-	/** @var IContextSource */
+	/** @var SpecialMergeHistory */
 	public $mForm;
 
 	/** @var array */
 	public $mConds;
 
-	function __construct( $form, $conds, $source, $dest ) {
+	function __construct( SpecialMergeHistory $form, $conds, Title $source, Title $dest ) {
 		$this->mForm = $form;
 		$this->mConds = $conds;
 		$this->title = $source;

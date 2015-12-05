@@ -346,12 +346,9 @@ class Sanitizer {
 				  ($space*=$space*
 					(?:
 					 # The attribute value: quoted or alone
-					  \"([^<\"]*)\"
-					 | '([^<']*)'
+					  \"([^<\"]*)(?:\"|\$)
+					 | '([^<']*)(?:'|\$)
 					 |  ([a-zA-Z0-9!#$%&()*,\\-.\\/:;<>?@[\\]^_`{|}~]+)
-					 |  (\#[0-9a-fA-F]+) # Technically wrong, but lots of
-										 # colors are specified like this.
-										 # We'll be normalizing it.
 					)
 				)?(?=$space|\$)/sx";
 		}
@@ -359,20 +356,13 @@ class Sanitizer {
 	}
 
 	/**
-	 * Cleans up HTML, removes dangerous tags and attributes, and
-	 * removes HTML comments
-	 * @param string $text
-	 * @param callable $processCallback Callback to do any variable or parameter
-	 *   replacements in HTML attribute values
-	 * @param array|bool $args Arguments for the processing callback
+	 * Return the various lists of recognized tags
 	 * @param array $extratags For any extra tags to include
 	 * @param array $removetags For any tags (default or extra) to exclude
-	 * @return string
+	 * @return array
 	 */
-	public static function removeHTMLtags( $text, $processCallback = null,
-		$args = array(), $extratags = array(), $removetags = array()
-	) {
-		global $wgUseTidy, $wgAllowMicrodataAttributes, $wgAllowImageTag;
+	public static function getRecognizedTagData( $extratags = array(), $removetags = array() ) {
+		global $wgAllowMicrodataAttributes, $wgAllowImageTag;
 
 		static $htmlpairsStatic, $htmlsingle, $htmlsingleonly, $htmlnest, $tabletags,
 			$htmllist, $listtags, $htmlsingleallowed, $htmlelementsStatic, $staticInitialised;
@@ -381,7 +371,6 @@ class Sanitizer {
 		// are changed (like in the screwed up test system) we will re-initialise the settings.
 		$globalContext = implode( '-', compact( 'wgAllowMicrodataAttributes', 'wgAllowImageTag' ) );
 		if ( !$staticInitialised || $staticInitialised != $globalContext ) {
-
 			$htmlpairsStatic = array( # Tags that must be closed
 				'b', 'bdi', 'del', 'i', 'ins', 'u', 'font', 'big', 'small', 'sub', 'sup', 'h1',
 				'h2', 'h3', 'h4', 'h5', 'h6', 'cite', 'code', 'em', 's',
@@ -431,17 +420,47 @@ class Sanitizer {
 			}
 			$staticInitialised = $globalContext;
 		}
+
 		# Populate $htmlpairs and $htmlelements with the $extratags and $removetags arrays
 		$extratags = array_flip( $extratags );
 		$removetags = array_flip( $removetags );
 		$htmlpairs = array_merge( $extratags, $htmlpairsStatic );
 		$htmlelements = array_diff_key( array_merge( $extratags, $htmlelementsStatic ), $removetags );
 
+		return array(
+			'htmlpairs' => $htmlpairs,
+			'htmlsingle' => $htmlsingle,
+			'htmlsingleonly' => $htmlsingleonly,
+			'htmlnest' => $htmlnest,
+			'tabletags' => $tabletags,
+			'htmllist' => $htmllist,
+			'listtags' => $listtags,
+			'htmlsingleallowed' => $htmlsingleallowed,
+			'htmlelements' => $htmlelements,
+		);
+	}
+
+	/**
+	 * Cleans up HTML, removes dangerous tags and attributes, and
+	 * removes HTML comments
+	 * @param string $text
+	 * @param callable $processCallback Callback to do any variable or parameter
+	 *   replacements in HTML attribute values
+	 * @param array|bool $args Arguments for the processing callback
+	 * @param array $extratags For any extra tags to include
+	 * @param array $removetags For any tags (default or extra) to exclude
+	 * @return string
+	 */
+	public static function removeHTMLtags( $text, $processCallback = null,
+		$args = array(), $extratags = array(), $removetags = array()
+	) {
+		extract( self::getRecognizedTagData( $extratags, $removetags ) );
+
 		# Remove HTML comments
 		$text = Sanitizer::removeHTMLcomments( $text );
 		$bits = explode( '<', $text );
 		$text = str_replace( '>', '&gt;', array_shift( $bits ) );
-		if ( !$wgUseTidy ) {
+		if ( !MWTidy::isEnabled() ) {
 			$tagstack = $tablestack = array();
 			foreach ( $bits as $x ) {
 				$regs = array();
@@ -457,15 +476,16 @@ class Sanitizer {
 				}
 
 				$badtag = false;
-				if ( isset( $htmlelements[$t = strtolower( $t )] ) ) {
+				$t = strtolower( $t );
+				if ( isset( $htmlelements[$t] ) ) {
 					# Check our stack
 					if ( $slash && isset( $htmlsingleonly[$t] ) ) {
 						$badtag = true;
 					} elseif ( $slash ) {
 						# Closing a tag... is it the one we just opened?
-						wfSuppressWarnings();
+						MediaWiki\suppressWarnings();
 						$ot = array_pop( $tagstack );
-						wfRestoreWarnings();
+						MediaWiki\restoreWarnings();
 
 						if ( $ot != $t ) {
 							if ( isset( $htmlsingleallowed[$ot] ) ) {
@@ -473,32 +493,32 @@ class Sanitizer {
 								# and see if we find a match below them
 								$optstack = array();
 								array_push( $optstack, $ot );
-								wfSuppressWarnings();
+								MediaWiki\suppressWarnings();
 								$ot = array_pop( $tagstack );
-								wfRestoreWarnings();
+								MediaWiki\restoreWarnings();
 								while ( $ot != $t && isset( $htmlsingleallowed[$ot] ) ) {
 									array_push( $optstack, $ot );
-									wfSuppressWarnings();
+									MediaWiki\suppressWarnings();
 									$ot = array_pop( $tagstack );
-									wfRestoreWarnings();
+									MediaWiki\restoreWarnings();
 								}
 								if ( $t != $ot ) {
 									# No match. Push the optional elements back again
 									$badtag = true;
-									wfSuppressWarnings();
+									MediaWiki\suppressWarnings();
 									$ot = array_pop( $optstack );
-									wfRestoreWarnings();
+									MediaWiki\restoreWarnings();
 									while ( $ot ) {
 										array_push( $tagstack, $ot );
-										wfSuppressWarnings();
+										MediaWiki\suppressWarnings();
 										$ot = array_pop( $optstack );
-										wfRestoreWarnings();
+										MediaWiki\restoreWarnings();
 									}
 								}
 							} else {
-								wfSuppressWarnings();
+								MediaWiki\suppressWarnings();
 								array_push( $tagstack, $ot );
-								wfRestoreWarnings();
+								MediaWiki\restoreWarnings();
 
 								# <li> can be nested in <ul> or <ol>, skip those cases:
 								if ( !isset( $htmllist[$ot] ) || !isset( $listtags[$t] ) ) {
@@ -517,7 +537,7 @@ class Sanitizer {
 							$badtag = true;
 						} elseif ( in_array( $t, $tagstack ) && !isset( $htmlnest[$t] ) ) {
 							$badtag = true;
-						# Is it a self closed htmlpair ? (bug 5487)
+						#  Is it a self closed htmlpair ? (bug 5487)
 						} elseif ( $brace == '/>' && isset( $htmlpairs[$t] ) ) {
 							$badtag = true;
 						} elseif ( isset( $htmlsingleonly[$t] ) ) {
@@ -573,27 +593,26 @@ class Sanitizer {
 		} else {
 			# this might be possible using tidy itself
 			foreach ( $bits as $x ) {
-				preg_match( self::ELEMENT_BITS_REGEX, $x, $regs );
+				if ( preg_match( self::ELEMENT_BITS_REGEX, $x, $regs ) ) {
+					list( /* $qbar */, $slash, $t, $params, $brace, $rest ) = $regs;
 
-				wfSuppressWarnings();
-				list( /* $qbar */, $slash, $t, $params, $brace, $rest ) = $regs;
-				wfRestoreWarnings();
+					$badtag = false;
+					$t = strtolower( $t );
+					if ( isset( $htmlelements[$t] ) ) {
+						if ( is_callable( $processCallback ) ) {
+							call_user_func_array( $processCallback, array( &$params, $args ) );
+						}
 
-				$badtag = false;
-				if ( isset( $htmlelements[$t = strtolower( $t )] ) ) {
-					if ( is_callable( $processCallback ) ) {
-						call_user_func_array( $processCallback, array( &$params, $args ) );
-					}
+						if ( !Sanitizer::validateTag( $params, $t ) ) {
+							$badtag = true;
+						}
 
-					if ( !Sanitizer::validateTag( $params, $t ) ) {
-						$badtag = true;
-					}
-
-					$newparams = Sanitizer::fixTagAttributes( $params, $t );
-					if ( !$badtag ) {
-						$rest = str_replace( '>', '&gt;', $rest );
-						$text .= "<$slash$t$newparams$brace$rest";
-						continue;
+						$newparams = Sanitizer::fixTagAttributes( $params, $t );
+						if ( !$badtag ) {
+							$rest = str_replace( '>', '&gt;', $rest );
+							$text .= "<$slash$t$newparams$brace$rest";
+							continue;
+						}
 					}
 				}
 				$text .= '&lt;' . str_replace( '>', '&gt;', $x );
@@ -721,7 +740,7 @@ class Sanitizer {
 
 		$out = array();
 		foreach ( $attribs as $attribute => $value ) {
-			#allow XML namespace declaration if RDFa is enabled
+			# allow XML namespace declaration if RDFa is enabled
 			if ( $wgAllowRdfaAttributes && preg_match( self::XMLNS_ATTRIBUTE_PATTERN, $attribute ) ) {
 				if ( !preg_match( self::EVIL_URI_PATTERN, $value ) ) {
 					$out[$attribute] = $value;
@@ -731,7 +750,7 @@ class Sanitizer {
 			}
 
 			# Allow any attribute beginning with "data-"
-			if ( !preg_match( '/^data-/i', $attribute ) && !isset( $whitelist[$attribute] ) ) {
+			if ( !preg_match( '/^data-(?!ooui)/i', $attribute ) && !isset( $whitelist[$attribute] ) ) {
 				continue;
 			}
 
@@ -767,7 +786,7 @@ class Sanitizer {
 				|| $attribute === 'itemref' || $attribute === 'itemscope'
 				|| $attribute === 'itemtype'
 			) {
-				//Paranoia. Allow "simple" values but suppress javascript
+				// Paranoia. Allow "simple" values but suppress javascript
 				if ( preg_match( self::EVIL_URI_PATTERN, $value ) ) {
 					continue;
 				}
@@ -777,7 +796,7 @@ class Sanitizer {
 			#       validation code that can be used by tag hook handlers, etc
 			if ( $attribute === 'href' || $attribute === 'src' ) {
 				if ( !preg_match( $hrefExp, $value ) ) {
-					continue; //drop any href or src attributes not using an allowed protocol.
+					continue; // drop any href or src attributes not using an allowed protocol.
 					// NOTE: this also drops all relative URLs
 				}
 			}
@@ -865,7 +884,7 @@ class Sanitizer {
 		$value = preg_replace_callback(
 			'/[！-［］-ｚ]/u', // U+FF01 to U+FF5A, excluding U+FF3C (bug 58088)
 			function ( $matches ) {
-				$cp = utf8ToCodepoint( $matches[0] );
+				$cp = UtfNormal\Utils::utf8ToCodepoint( $matches[0] );
 				if ( $cp === false ) {
 					return '';
 				}
@@ -944,7 +963,8 @@ class Sanitizer {
 		$value = self::normalizeCss( $value );
 
 		// Reject problematic keywords and control characters
-		if ( preg_match( '/[\000-\010\013\016-\037\177]/', $value ) ) {
+		if ( preg_match( '/[\000-\010\013\016-\037\177]/', $value ) ||
+			strpos( $value, UtfNormal\Constants::UTF8_REPLACEMENT ) !== false ) {
 			return '/* invalid control char */';
 		} elseif ( preg_match(
 			'! expression
@@ -971,7 +991,7 @@ class Sanitizer {
 			// Line continuation
 			return '';
 		} elseif ( $matches[2] !== '' ) {
-			$char = codepointToUtf8( hexdec( $matches[2] ) );
+			$char = UtfNormal\Utils::codepointToUtf8( hexdec( $matches[2] ) );
 		} elseif ( $matches[3] !== '' ) {
 			$char = $matches[3];
 		} else {
@@ -1241,10 +1261,7 @@ class Sanitizer {
 	 * @return string
 	 */
 	private static function getTagAttributeCallback( $set ) {
-		if ( isset( $set[6] ) ) {
-			# Illegal #XXXXXX color with no quotes.
-			return $set[6];
-		} elseif ( isset( $set[5] ) ) {
+		if ( isset( $set[5] ) ) {
 			# No quotes.
 			return $set[5];
 		} elseif ( isset( $set[4] ) ) {
@@ -1254,9 +1271,10 @@ class Sanitizer {
 			# Double-quoted
 			return $set[3];
 		} elseif ( !isset( $set[2] ) ) {
-			# In XHTML, attributes must have a value.
-			# For 'reduced' form, return explicitly the attribute name here.
-			return $set[1];
+			# In XHTML, attributes must have a value so return an empty string.
+			# See "Empty attribute syntax",
+			# http://www.w3.org/TR/html5/syntax.html#syntax-attribute-name
+			return "";
 		} else {
 			throw new MWException( "Tag conditions not met. This should never happen and is a bug." );
 		}
@@ -1376,15 +1394,19 @@ class Sanitizer {
 	}
 
 	/**
-	 * Returns true if a given Unicode codepoint is a valid character in XML.
+	 * Returns true if a given Unicode codepoint is a valid character in
+	 * both HTML5 and XML.
 	 * @param int $codepoint
 	 * @return bool
 	 */
 	private static function validateCodepoint( $codepoint ) {
+		# U+000C is valid in HTML5 but not allowed in XML.
+		# U+000D is valid in XML but not allowed in HTML5.
+		# U+007F - U+009F are disallowed in HTML5 (control characters).
 		return $codepoint == 0x09
 			|| $codepoint == 0x0a
-			|| $codepoint == 0x0d
-			|| ( $codepoint >= 0x20 && $codepoint <= 0xd7ff )
+			|| ( $codepoint >= 0x20 && $codepoint <= 0x7e )
+			|| ( $codepoint >= 0xa0 && $codepoint <= 0xd7ff )
 			|| ( $codepoint >= 0xe000 && $codepoint <= 0xfffd )
 			|| ( $codepoint >= 0x10000 && $codepoint <= 0x10ffff );
 	}
@@ -1452,9 +1474,9 @@ class Sanitizer {
 	 */
 	static function decodeChar( $codepoint ) {
 		if ( Sanitizer::validateCodepoint( $codepoint ) ) {
-			return codepointToUtf8( $codepoint );
+			return UtfNormal\Utils::codepointToUtf8( $codepoint );
 		} else {
-			return UTF8_REPLACEMENT;
+			return UtfNormal\Constants::UTF8_REPLACEMENT;
 		}
 	}
 
@@ -1471,7 +1493,7 @@ class Sanitizer {
 			$name = self::$htmlEntityAliases[$name];
 		}
 		if ( isset( self::$htmlEntities[$name] ) ) {
-			return codepointToUtf8( self::$htmlEntities[$name] );
+			return UtfNormal\Utils::codepointToUtf8( self::$htmlEntities[$name] );
 		} else {
 			return "&$name;";
 		}
@@ -1609,7 +1631,7 @@ class Sanitizer {
 
 			# 10.2
 			'ul'         => array_merge( $common, array( 'type' ) ),
-			'ol'         => array_merge( $common, array( 'type', 'start' ) ),
+			'ol'         => array_merge( $common, array( 'type', 'start', 'reversed' ) ),
 			'li'         => array_merge( $common, array( 'type', 'value' ) ),
 
 			# 10.3
@@ -1677,7 +1699,7 @@ class Sanitizer {
 			# rbc
 			'rb'         => $common,
 			'rp'         => $common,
-			'rt'         => $common, #array_merge( $common, array( 'rbspan' ) ),
+			'rt'         => $common, # array_merge( $common, array( 'rbspan' ) ),
 			'rtc'         => $common,
 
 			# MathML root element, where used for extensions
@@ -1785,6 +1807,13 @@ class Sanitizer {
 				/xuD";
 
 			$host = preg_replace( $strip, '', $host );
+
+			// IPv6 host names are bracketed with [].  Url-decode these.
+			if ( substr_compare( "//%5B", $host, 0, 5 ) === 0 &&
+				preg_match( '!^//%5B([0-9A-Fa-f:.]+)%5D((:\d+)?)$!', $host, $matches )
+			) {
+				$host = '//[' . $matches[1] . ']' . $matches[2];
+			}
 
 			// @todo FIXME: Validate hostnames here
 

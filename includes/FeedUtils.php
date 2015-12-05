@@ -30,18 +30,19 @@ class FeedUtils {
 
 	/**
 	 * Check whether feed's cache should be cleared; for changes feeds
-	 * If the feed should be purged; $timekey and $key will be removed from
-	 * $messageMemc
+	 * If the feed should be purged; $timekey and $key will be removed from cache
 	 *
 	 * @param string $timekey Cache key of the timestamp of the last item
 	 * @param string $key Cache key of feed's content
 	 */
 	public static function checkPurge( $timekey, $key ) {
-		global $wgRequest, $wgUser, $messageMemc;
+		global $wgRequest, $wgUser;
+
 		$purge = $wgRequest->getVal( 'action' ) === 'purge';
 		if ( $purge && $wgUser->isAllowed( 'purge' ) ) {
-			$messageMemc->delete( $timekey );
-			$messageMemc->delete( $key );
+			$cache = ObjectCache::getMainWANInstance();
+			$cache->delete( $timekey, 1 );
+			$cache->delete( $key, 1 );
 		}
 	}
 
@@ -128,11 +129,11 @@ class FeedUtils {
 
 		if ( $oldid ) {
 
-			#$diffText = $de->getDiff( wfMessage( 'revisionasof',
-			#	$wgLang->timeanddate( $timestamp ),
-			#	$wgLang->date( $timestamp ),
-			#	$wgLang->time( $timestamp ) )->text(),
-			#	wfMessage( 'currentrev' )->text() );
+			# $diffText = $de->getDiff( wfMessage( 'revisionasof',
+			# 	$wgLang->timeanddate( $timestamp ),
+			# 	$wgLang->date( $timestamp ),
+			# 	$wgLang->time( $timestamp ) )->text(),
+			# 	wfMessage( 'currentrev' )->text() );
 
 			$diffText = '';
 			// Don't bother generating the diff if we won't be able to show it
@@ -164,7 +165,7 @@ class FeedUtils {
 				$diffText = "<p>Can't load revision $newid</p>";
 			} else {
 				// Diff output fine, clean up any illegal UTF-8
-				$diffText = UtfNormal::cleanUp( $diffText );
+				$diffText = UtfNormal\Validator::cleanUp( $diffText );
 				$diffText = self::applyDiffStyle( $diffText );
 			}
 		} else {
@@ -185,10 +186,10 @@ class FeedUtils {
 					$html = nl2br( htmlspecialchars( $text ) );
 				}
 			} else {
-				//XXX: we could get an HTML representation of the content via getParserOutput, but that may
+				// XXX: we could get an HTML representation of the content via getParserOutput, but that may
 				//     contain JS magic and generally may not be suitable for inclusion in a feed.
 				//     Perhaps Content should have a getDescriptiveHtml method and/or a getSourceText method.
-				//Compare also ApiFeedContributions::feedItemDesc
+				// Compare also ApiFeedContributions::feedItemDesc
 				$html = null;
 			}
 

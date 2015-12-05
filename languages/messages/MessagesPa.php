@@ -128,7 +128,6 @@ $specialPageAliases = array(
 	'PageLanguage'              => array( 'ਸਫ਼ੇ_ਦੀ_ਭਾਸ਼ਾ' ),
 	'PasswordReset'             => array( 'ਪਾਸਵਰਡ_ਰੀਸੈੱਟ' ),
 	'PermanentLink'             => array( 'ਪੱਕਾ_ਲਿੰਕ', 'ਪੱਕੀ_ਕੜੀ' ),
-	'Popularpages'              => array( 'ਮਸ਼ਹੂਰ_ਸਫ਼ੇ' ),
 	'Preferences'               => array( 'ਪਸੰਦਾਂ' ),
 	'Prefixindex'               => array( 'ਅਗੇਤਰ_ਤਤਕਰਾ' ),
 	'Protectedpages'            => array( 'ਸੁਰੱਖਿਅਤ_ਸਫ਼ੇ' ),
@@ -180,18 +179,6 @@ $magicWords = array(
 	'pagesincategory_files'     => array( '0', 'ਫ਼ਾਈਲਾਂ', 'files' ),
 );
 
-$digitTransformTable = array(
-	'0' => '੦', # &#x0a66;
-	'1' => '੧', # &#x0a67;
-	'2' => '੨', # &#x0a68;
-	'3' => '੩', # &#x0a69;
-	'4' => '੪', # &#x0a6a;
-	'5' => '੫', # &#x0a6b;
-	'6' => '੬', # &#x0a6c;
-	'7' => '੭', # &#x0a6d;
-	'8' => '੮', # &#x0a6e;
-	'9' => '੯', # &#x0a6f;
-);
 $linkTrail = '/^([ਁਂਃਅਆਇਈਉਊਏਐਓਔਕਖਗਘਙਚਛਜਝਞਟਠਡਢਣਤਥਦਧਨਪਫਬਭਮਯਰਲਲ਼ਵਸ਼ਸਹ਼ਾਿੀੁੂੇੈੋੌ੍ਖ਼ਗ਼ਜ਼ੜਫ਼ੰੱੲੳa-z]+)(.*)$/sDu';
 
 $digitGroupingPattern = "##,##,###";

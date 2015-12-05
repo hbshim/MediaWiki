@@ -57,6 +57,10 @@ class SpecialRecentChanges extends ChangesListSpecialPage {
 			return;
 		}
 
+		$this->addHelpLink(
+			'//meta.wikimedia.org/wiki/Special:MyLanguage/Help:Recent_changes',
+			true
+		);
 		parent::execute( $subpage );
 	}
 
@@ -68,6 +72,7 @@ class SpecialRecentChanges extends ChangesListSpecialPage {
 	public function getDefaultOptions() {
 		$opts = parent::getDefaultOptions();
 		$user = $this->getUser();
+		$config = $this->getConfig();
 
 		$opts->add( 'days', $user->getIntOption( 'rcdays' ) );
 		$opts->add( 'limit', $user->getIntOption( 'rclimit' ) );
@@ -79,6 +84,10 @@ class SpecialRecentChanges extends ChangesListSpecialPage {
 		$opts->add( 'hideliu', false );
 		$opts->add( 'hidepatrolled', $user->getBoolOption( 'hidepatrolled' ) );
 		$opts->add( 'hidemyself', false );
+
+		if ( $config->get( 'RCWatchCategoryMembership' ) ) {
+			$opts->add( 'hidecategorization', $user->getBoolOption( 'hidecategorization' ) );
+		}
 
 		$opts->add( 'categories', '' );
 		$opts->add( 'categories_any', false );
@@ -133,6 +142,9 @@ class SpecialRecentChanges extends ChangesListSpecialPage {
 			}
 			if ( 'hidemyself' === $bit ) {
 				$opts['hidemyself'] = true;
+			}
+			if ( 'hidecategorization' === $bit ) {
+				$opts['hidecategorization'] = true;
 			}
 
 			if ( is_numeric( $bit ) ) {
@@ -233,14 +245,21 @@ class SpecialRecentChanges extends ChangesListSpecialPage {
 			return false;
 		}
 
-		// rc_new is not an ENUM, but adding a redundant rc_new IN (0,1) gives mysql enough
-		// knowledge to use an index merge if it wants (it may use some other index though).
+		// array_merge() is used intentionally here so that hooks can, should
+		// they so desire, override the ORDER BY / LIMIT condition(s); prior to
+		// MediaWiki 1.26 this used to use the plus operator instead, which meant
+		// that extensions weren't able to change these conditions
+		$query_options = array_merge( array(
+			'ORDER BY' => 'rc_timestamp DESC',
+			'LIMIT' => $opts['limit'] ), $query_options );
 		$rows = $dbr->select(
 			$tables,
 			$fields,
+			// rc_new is not an ENUM, but adding a redundant rc_new IN (0,1) gives mysql enough
+			// knowledge to use an index merge if it wants (it may use some other index though).
 			$conds + array( 'rc_new' => array( 0, 1 ) ),
 			__METHOD__,
-			array( 'ORDER BY' => 'rc_timestamp DESC', 'LIMIT' => $opts['limit'] ) + $query_options,
+			$query_options,
 			$join_conds
 		);
 
@@ -252,13 +271,19 @@ class SpecialRecentChanges extends ChangesListSpecialPage {
 		return $rows;
 	}
 
-	protected function runMainQueryHook( &$tables, &$fields, &$conds, &$query_options, &$join_conds, $opts ) {
+	protected function runMainQueryHook( &$tables, &$fields, &$conds,
+		&$query_options, &$join_conds, $opts
+	) {
 		return parent::runMainQueryHook( $tables, $fields, $conds, $query_options, $join_conds, $opts )
 			&& Hooks::run(
 				'SpecialRecentChangesQuery',
 				array( &$conds, &$tables, &$join_conds, $opts, &$query_options, &$fields ),
 				'1.23'
 			);
+	}
+
+	protected function getDB() {
+		return wfGetDB( DB_SLAVE, 'recentchanges' );
 	}
 
 	public function outputFeedLinks() {
@@ -270,7 +295,7 @@ class SpecialRecentChanges extends ChangesListSpecialPage {
 	 *
 	 * @return array
 	 */
-	private function getFeedQuery() {
+	protected function getFeedQuery() {
 		$query = array_filter( $this->getOptions()->getAllValues(), function ( $value ) {
 			// API handles empty parameters in a different way
 			return $value !== '';
@@ -311,7 +336,9 @@ class SpecialRecentChanges extends ChangesListSpecialPage {
 			$rc = RecentChange::newFromRow( $obj );
 			$rc->counter = $counter++;
 			# Check if the page has been updated since the last visit
-			if ( $this->getConfig()->get( 'ShowUpdatedMarker' ) && !empty( $obj->wl_notificationtimestamp ) ) {
+			if ( $this->getConfig()->get( 'ShowUpdatedMarker' )
+				&& !empty( $obj->wl_notificationtimestamp )
+			) {
 				$rc->notificationtimestamp = ( $obj->rc_timestamp >= $obj->wl_notificationtimestamp );
 			} else {
 				$rc->notificationtimestamp = false; // Default
@@ -658,6 +685,7 @@ class SpecialRecentChanges extends ChangesListSpecialPage {
 
 		$lang = $this->getLanguage();
 		$user = $this->getUser();
+		$config = $this->getConfig();
 		if ( $options['from'] ) {
 			$note .= $this->msg( 'rcnotefrom' )
 				->numParams( $options['limit'] )
@@ -671,12 +699,12 @@ class SpecialRecentChanges extends ChangesListSpecialPage {
 		}
 
 		# Sort data for display and make sure it's unique after we've added user data.
-		$linkLimits = $this->getConfig()->get( 'RCLinkLimits' );
+		$linkLimits = $config->get( 'RCLinkLimits' );
 		$linkLimits[] = $options['limit'];
 		sort( $linkLimits );
 		$linkLimits = array_unique( $linkLimits );
 
-		$linkDays = $this->getConfig()->get( 'RCLinkDays' );
+		$linkDays = $config->get( 'RCLinkDays' );
 		$linkDays[] = $options['days'];
 		sort( $linkDays );
 		$linkDays = array_unique( $linkDays );
@@ -707,6 +735,10 @@ class SpecialRecentChanges extends ChangesListSpecialPage {
 			'hidemyself' => 'rcshowhidemine'
 		);
 
+		if ( $config->get( 'RCWatchCategoryMembership' ) ) {
+			$filters['hidecategorization'] = 'rcshowhidecategorization';
+		}
+
 		$showhide = array( 'show', 'hide' );
 
 		foreach ( $this->getCustomFilters() as $key => $params ) {
@@ -722,7 +754,8 @@ class SpecialRecentChanges extends ChangesListSpecialPage {
 			// The following messages are used here:
 			// rcshowhideminor-show, rcshowhideminor-hide, rcshowhidebots-show, rcshowhidebots-hide,
 			// rcshowhideanons-show, rcshowhideanons-hide, rcshowhideliu-show, rcshowhideliu-hide,
-			// rcshowhidepatr-show, rcshowhidepatr-hide, rcshowhidemine-show, rcshowhidemine-hide.
+			// rcshowhidepatr-show, rcshowhidepatr-hide, rcshowhidemine-show, rcshowhidemine-hide,
+			// rcshowhidecategorization-show, rcshowhidecategorization-hide.
 			$linkMessage = $this->msg( $msg . '-' . $showhide[1 - $options[$key]] );
 			// Extensions can define additional filters, but don't need to define the corresponding
 			// messages. If they don't exist, just fall back to 'show' and 'hide'.
@@ -732,7 +765,8 @@ class SpecialRecentChanges extends ChangesListSpecialPage {
 
 			$link = $this->makeOptionsLink( $linkMessage->text(),
 				array( $key => 1 - $options[$key] ), $nondefaults );
-			$links[] = "<span class=\"$msg rcshowhideoption\">" . $this->msg( $msg )->rawParams( $link )->escaped() . '</span>';
+			$links[] = "<span class=\"$msg rcshowhideoption\">"
+				. $this->msg( $msg )->rawParams( $link )->escaped() . '</span>';
 		}
 
 		// show from this onward link

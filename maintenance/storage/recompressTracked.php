@@ -22,6 +22,8 @@
  * @ingroup Maintenance ExternalStorage
  */
 
+use MediaWiki\Logger\LegacyLogger;
+
 $optionsWithArgs = RecompressTracked::getOptionsWithArgs();
 require __DIR__ . '/../commandLine.inc';
 
@@ -141,7 +143,7 @@ class RecompressTracked {
 			$header .= "({$this->slaveId})";
 		}
 		$header .= ' ' . wfWikiID();
-		MWLoggerLegacyLogger::emit( sprintf( "%-50s %s\n", $header, $msg ), $file );
+		LegacyLogger::emit( sprintf( "%-50s %s\n", $header, $msg ), $file );
 	}
 
 	/**
@@ -232,9 +234,9 @@ class RecompressTracked {
 				array( 'file', 'php://stdout', 'w' ),
 				array( 'file', 'php://stderr', 'w' )
 			);
-			wfSuppressWarnings();
+			MediaWiki\suppressWarnings();
 			$proc = proc_open( "$cmd --slave-id $i", $spec, $pipes );
-			wfRestoreWarnings();
+			MediaWiki\restoreWarnings();
 			if ( !$proc ) {
 				$this->critical( "Error opening slave process: $cmd" );
 				exit( 1 );
@@ -363,7 +365,7 @@ class RecompressTracked {
 		if ( $current == $end || $this->numBatches >= $this->reportingInterval ) {
 			$this->numBatches = 0;
 			$this->info( "$label: $current / $end" );
-			$this->waitForSlaves();
+			wfWaitForSlaves();
 		}
 	}
 
@@ -461,7 +463,7 @@ class RecompressTracked {
 				case 'quit':
 					return;
 			}
-			$this->waitForSlaves();
+			wfWaitForSlaves();
 		}
 	}
 
@@ -528,7 +530,7 @@ class RecompressTracked {
 					$this->debug( "$titleText: committing blob with " . $trx->getSize() . " items" );
 					$trx->commit();
 					$trx = new CgzCopyTransaction( $this, $this->pageBlobClass );
-					$this->waitForSlaves();
+					wfWaitForSlaves();
 				}
 			}
 			$startId = $row->bt_text_id;
@@ -611,7 +613,7 @@ class RecompressTracked {
 			foreach ( $res as $row ) {
 				$this->moveTextRow( $row->bt_text_id, $row->bt_new_url );
 				if ( $row->bt_text_id % 10 == 0 ) {
-					$this->waitForSlaves();
+					wfWaitForSlaves();
 				}
 			}
 			$startId = $row->bt_text_id;
@@ -679,25 +681,11 @@ class RecompressTracked {
 				$this->debug( "[orphan]: committing blob with " . $trx->getSize() . " rows" );
 				$trx->commit();
 				$trx = new CgzCopyTransaction( $this, $this->orphanBlobClass );
-				$this->waitForSlaves();
+				wfWaitForSlaves();
 			}
 		}
 		$this->debug( "[orphan]: committing blob with " . $trx->getSize() . " rows" );
 		$trx->commit();
-	}
-
-	/**
-	 * Wait for slaves (quietly)
-	 */
-	function waitForSlaves() {
-		$lb = wfGetLB();
-		while ( true ) {
-			list( $host, $maxLag ) = $lb->getMaxLag();
-			if ( $maxLag < 2 ) {
-				break;
-			}
-			sleep( 5 );
-		}
 	}
 }
 
@@ -769,13 +757,14 @@ class CgzCopyTransaction {
 			return;
 		}
 
-		// Check to see if the target text_ids have been moved already.
-		//
-		// We originally read from the slave, so this can happen when a single
-		// text_id is shared between multiple pages. It's rare, but possible
-		// if a delete/move/undelete cycle splits up a null edit.
-		//
-		// We do a locking read to prevent closer-run race conditions.
+		/* Check to see if the target text_ids have been moved already.
+		 *
+		 * We originally read from the slave, so this can happen when a single
+		 * text_id is shared between multiple pages. It's rare, but possible
+		 * if a delete/move/undelete cycle splits up a null edit.
+		 *
+		 * We do a locking read to prevent closer-run race conditions.
+		 */
 		$dbw = wfGetDB( DB_MASTER );
 		$dbw->begin( __METHOD__ );
 		$res = $dbw->select( 'blob_tracking',

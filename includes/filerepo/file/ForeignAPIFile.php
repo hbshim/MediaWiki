@@ -219,11 +219,15 @@ class ForeignAPIFile extends File {
 	}
 
 	/**
-	 * @param string $method
+	 * @param string $type
 	 * @return int|null|string
 	 */
-	public function getUser( $method = 'text' ) {
-		return isset( $this->mInfo['user'] ) ? strval( $this->mInfo['user'] ) : null;
+	public function getUser( $type = 'text' ) {
+		if ( $type == 'text' ) {
+			return isset( $this->mInfo['user'] ) ? strval( $this->mInfo['user'] ) : null;
+		} elseif ( $type == 'id' ) {
+			return 0; // What makes sense here, for a remote user?
+		}
 	}
 
 	/**
@@ -240,7 +244,7 @@ class ForeignAPIFile extends File {
 	 */
 	function getSha1() {
 		return isset( $this->mInfo['sha1'] )
-			? wfBaseConvert( strval( $this->mInfo['sha1'] ), 16, 36, 31 )
+			? Wikimedia\base_convert( strval( $this->mInfo['sha1'] ), 16, 36, 31 )
 			: null;
 	}
 
@@ -330,22 +334,20 @@ class ForeignAPIFile extends File {
 	}
 
 	function purgeDescriptionPage() {
-		global $wgMemc, $wgContLang;
+		global $wgContLang;
 
 		$url = $this->repo->getDescriptionRenderUrl( $this->getName(), $wgContLang->getCode() );
 		$key = $this->repo->getLocalCacheKey( 'RemoteFileDescription', 'url', md5( $url ) );
 
-		$wgMemc->delete( $key );
+		ObjectCache::getMainWANInstance()->delete( $key );
 	}
 
 	/**
 	 * @param array $options
 	 */
 	function purgeThumbnails( $options = array() ) {
-		global $wgMemc;
-
 		$key = $this->repo->getLocalCacheKey( 'ForeignAPIRepo', 'ThumbUrl', $this->getName() );
-		$wgMemc->delete( $key );
+		ObjectCache::getMainWANInstance()->delete( $key );
 
 		$files = $this->getThumbnails();
 		// Give media handler a chance to filter the purge list
@@ -364,5 +366,14 @@ class ForeignAPIFile extends File {
 		$this->repo->quickPurgeBatch( $purgeList );
 		# Clear out the thumbnail directory if empty
 		$this->repo->quickCleanDir( $dir );
+	}
+
+	/**
+	 * The thumbnail is created on the foreign server and fetched over internet
+	 * @since 1.25
+	 * @return bool
+	 */
+	public function isTransformedLocally() {
+		return false;
 	}
 }

@@ -114,7 +114,7 @@ class ApiQueryFilearchive extends ApiQueryBase {
 				if ( !$this->validateSha1Hash( $sha1 ) ) {
 					$this->dieUsage( 'The SHA1 hash provided is not valid', 'invalidsha1hash' );
 				}
-				$sha1 = wfBaseConvert( $sha1, 16, 36, 31 );
+				$sha1 = Wikimedia\base_convert( $sha1, 16, 36, 31 );
 			} elseif ( $sha1base36Set ) {
 				$sha1 = strtolower( $params['sha1base36'] );
 				if ( !$this->validateSha1Base36Hash( $sha1 ) ) {
@@ -162,7 +162,7 @@ class ApiQueryFilearchive extends ApiQueryBase {
 			}
 
 			$file = array();
-			$file['id'] = $row->fa_id;
+			$file['id'] = (int)$row->fa_id;
 			$file['name'] = $row->fa_name;
 			$title = Title::makeTitle( NS_FILE, $row->fa_name );
 			self::addTitleInfo( $file, $title );
@@ -179,11 +179,11 @@ class ApiQueryFilearchive extends ApiQueryBase {
 			if ( $fld_user &&
 				Revision::userCanBitfield( $row->fa_deleted, File::DELETED_USER, $user )
 			) {
-				$file['userid'] = $row->fa_user;
+				$file['userid'] = (int)$row->fa_user;
 				$file['user'] = $row->fa_user_text;
 			}
 			if ( $fld_sha1 ) {
-				$file['sha1'] = wfBaseConvert( $row->fa_sha1, 36, 16, 40 );
+				$file['sha1'] = Wikimedia\base_convert( $row->fa_sha1, 36, 16, 40 );
 			}
 			if ( $fld_timestamp ) {
 				$file['timestamp'] = wfTimestamp( TS_ISO_8601, $row->fa_timestamp );
@@ -218,17 +218,17 @@ class ApiQueryFilearchive extends ApiQueryBase {
 			}
 
 			if ( $row->fa_deleted & File::DELETED_FILE ) {
-				$file['filehidden'] = '';
+				$file['filehidden'] = true;
 			}
 			if ( $row->fa_deleted & File::DELETED_COMMENT ) {
-				$file['commenthidden'] = '';
+				$file['commenthidden'] = true;
 			}
 			if ( $row->fa_deleted & File::DELETED_USER ) {
-				$file['userhidden'] = '';
+				$file['userhidden'] = true;
 			}
 			if ( $row->fa_deleted & File::DELETED_RESTRICTED ) {
 				// This file is deleted for normal admins
-				$file['suppressed'] = '';
+				$file['suppressed'] = true;
 			}
 
 			$fit = $result->addValue( array( 'query', $this->getModuleName() ), null, $file );
@@ -240,7 +240,7 @@ class ApiQueryFilearchive extends ApiQueryBase {
 			}
 		}
 
-		$result->setIndexedTagName_internal( array( 'query', $this->getModuleName() ), 'fa' );
+		$result->addIndexedTagName( array( 'query', $this->getModuleName() ), 'fa' );
 	}
 
 	public function getAllowedParams() {
@@ -274,6 +274,7 @@ class ApiQueryFilearchive extends ApiQueryBase {
 					'bitdepth',
 					'archivename',
 				),
+				ApiBase::PARAM_HELP_MSG_PER_VALUE => array(),
 			),
 			'limit' => array(
 				ApiBase::PARAM_DFLT => 10,

@@ -25,12 +25,15 @@
 /**
  * @ingroup Database
  */
-class DatabaseSqlite extends DatabaseBase {
+class DatabaseSqlite extends Database {
 	/** @var bool Whether full text is enabled */
 	private static $fulltextEnabled = null;
 
+	/** @var string Directory */
+	protected $dbDir;
+
 	/** @var string File name for SQLite database file */
-	public $mDatabaseFile;
+	protected $dbPath;
 
 	/** @var string Transaction mode */
 	protected $trxMode;
@@ -49,30 +52,63 @@ class DatabaseSqlite extends DatabaseBase {
 
 	/**
 	 * Additional params include:
-	 *   - trxMode : one of (deferred, immediate, exclusive)
+	 *   - dbDirectory : directory containing the DB and the lock file directory
+	 *                   [defaults to $wgSQLiteDataDir]
+	 *   - dbFilePath  : use this to force the path of the DB file
+	 *   - trxMode     : one of (deferred, immediate, exclusive)
 	 * @param array $p
 	 */
 	function __construct( array $p ) {
 		global $wgSharedDB, $wgSQLiteDataDir;
 
-		$this->mDBname = $p['dbname'];
-		parent::__construct( $p );
-		// parent doesn't open when $user is false, but we can work with $dbName
-		if ( $p['dbname'] && !$this->isOpen() ) {
-			if ( $this->open( $p['host'], $p['user'], $p['password'], $p['dbname'] ) ) {
-				if ( $wgSharedDB ) {
-					$this->attachDatabase( $wgSharedDB );
+		$this->dbDir = isset( $p['dbDirectory'] ) ? $p['dbDirectory'] : $wgSQLiteDataDir;
+
+		if ( isset( $p['dbFilePath'] ) ) {
+			parent::__construct( $p );
+			// Standalone .sqlite file mode.
+			// Super doesn't open when $user is false, but we can work with $dbName,
+			// which is derived from the file path in this case.
+			$this->openFile( $p['dbFilePath'] );
+		} else {
+			$this->mDBname = $p['dbname'];
+			// Stock wiki mode using standard file names per DB.
+			parent::__construct( $p );
+			// Super doesn't open when $user is false, but we can work with $dbName
+			if ( $p['dbname'] && !$this->isOpen() ) {
+				if ( $this->open( $p['host'], $p['user'], $p['password'], $p['dbname'] ) ) {
+					if ( $wgSharedDB ) {
+						$this->attachDatabase( $wgSharedDB );
+					}
 				}
 			}
 		}
 
 		$this->trxMode = isset( $p['trxMode'] ) ? strtoupper( $p['trxMode'] ) : null;
-		if ( $this->trxMode && !in_array( $this->trxMode, array( 'IMMEDIATE', 'EXCLUSIVE' ) ) ) {
+		if ( $this->trxMode &&
+			!in_array( $this->trxMode, array( 'DEFERRED', 'IMMEDIATE', 'EXCLUSIVE' ) )
+		) {
 			$this->trxMode = null;
 			wfWarn( "Invalid SQLite transaction mode provided." );
 		}
 
-		$this->lockMgr = new FSLockManager( array( 'lockDirectory' => "$wgSQLiteDataDir/locks" ) );
+		$this->lockMgr = new FSLockManager( array( 'lockDirectory' => "{$this->dbDir}/locks" ) );
+	}
+
+	/**
+	 * @param string $filename
+	 * @param array $p Options map; supports:
+	 *   - flags       : (same as __construct counterpart)
+	 *   - trxMode     : (same as __construct counterpart)
+	 *   - dbDirectory : (same as __construct counterpart)
+	 * @return DatabaseSqlite
+	 * @since 1.25
+	 */
+	public static function newStandaloneInstance( $filename, array $p = array() ) {
+		$p['dbFilePath'] = $filename;
+		$p['schema'] = false;
+		$p['tablePrefix'] = '';
+
+		return DatabaseBase::factory( 'sqlite', $p );
 	}
 
 	/**
@@ -103,10 +139,8 @@ class DatabaseSqlite extends DatabaseBase {
 	 * @return PDO
 	 */
 	function open( $server, $user, $pass, $dbName ) {
-		global $wgSQLiteDataDir;
-
 		$this->close();
-		$fileName = self::generateFileName( $wgSQLiteDataDir, $dbName );
+		$fileName = self::generateFileName( $this->dbDir, $dbName );
 		if ( !is_readable( $fileName ) ) {
 			$this->mConn = false;
 			throw new DBConnectionError( $this, "SQLite database not accessible" );
@@ -123,10 +157,10 @@ class DatabaseSqlite extends DatabaseBase {
 	 * @throws DBConnectionError
 	 * @return PDO|bool SQL connection or false if failed
 	 */
-	function openFile( $fileName ) {
+	protected function openFile( $fileName ) {
 		$err = false;
 
-		$this->mDatabaseFile = $fileName;
+		$this->dbPath = $fileName;
 		try {
 			if ( $this->mFlags & DBO_PERSISTENT ) {
 				$this->mConn = new PDO( "sqlite:$fileName", '', '',
@@ -154,6 +188,14 @@ class DatabaseSqlite extends DatabaseBase {
 		}
 
 		return false;
+	}
+
+	/**
+	 * @return string SQLite DB file path
+	 * @since 1.25
+	 */
+	public function getDbFilePath() {
+		return $this->dbPath;
 	}
 
 	/**
@@ -206,8 +248,7 @@ class DatabaseSqlite extends DatabaseBase {
 		$cachedResult = false;
 		$table = 'dummy_search_test';
 
-		$db = new DatabaseSqliteStandalone( ':memory:' );
-
+		$db = self::newStandaloneInstance( ':memory:' );
 		if ( $db->query( "CREATE VIRTUAL TABLE $table USING FTS3(dummy_field)", __METHOD__, true ) ) {
 			$cachedResult = 'FTS3';
 		}
@@ -223,14 +264,13 @@ class DatabaseSqlite extends DatabaseBase {
 	 * @param string $name Database name to be used in queries like
 	 *   SELECT foo FROM dbname.table
 	 * @param bool|string $file Database file name. If omitted, will be generated
-	 *   using $name and $wgSQLiteDataDir
+	 *   using $name and configured data directory
 	 * @param string $fname Calling function name
 	 * @return ResultWrapper
 	 */
 	function attachDatabase( $name, $file = false, $fname = __METHOD__ ) {
-		global $wgSQLiteDataDir;
 		if ( !$file ) {
-			$file = self::generateFileName( $wgSQLiteDataDir, $name );
+			$file = self::generateFileName( $this->dbDir, $name );
 		}
 		$file = $this->addQuotes( $file );
 
@@ -244,7 +284,7 @@ class DatabaseSqlite extends DatabaseBase {
 	 * @return bool
 	 */
 	function isWriteQuery( $sql ) {
-		return parent::isWriteQuery( $sql ) && !preg_match( '/^ATTACH\b/i', $sql );
+		return parent::isWriteQuery( $sql ) && !preg_match( '/^(ATTACH|PRAGMA)\b/i', $sql );
 	}
 
 	/**
@@ -759,15 +799,21 @@ class DatabaseSqlite extends DatabaseBase {
 			return (int)$s;
 		} elseif ( strpos( $s, "\0" ) !== false ) {
 			// SQLite doesn't support \0 in strings, so use the hex representation as a workaround.
-			// This is a known limitation of SQLite's mprintf function which PDO should work around,
-			// but doesn't. I have reported this to php.net as bug #63419:
+			// This is a known limitation of SQLite's mprintf function which PDO
+			// should work around, but doesn't. I have reported this to php.net as bug #63419:
 			// https://bugs.php.net/bug.php?id=63419
 			// There was already a similar report for SQLite3::escapeString, bug #62361:
 			// https://bugs.php.net/bug.php?id=62361
 			// There is an additional bug regarding sorting this data after insert
 			// on older versions of sqlite shipped with ubuntu 12.04
-			// https://bugzilla.wikimedia.org/show_bug.cgi?id=72367
-			wfDebugLog( __CLASS__, __FUNCTION__ . ': Quoting value containing null byte. For consistency all binary data should have been first processed with self::encodeBlob()' );
+			// https://phabricator.wikimedia.org/T74367
+			wfDebugLog(
+				__CLASS__,
+				__FUNCTION__ .
+					': Quoting value containing null byte. ' .
+					'For consistency all binary data should have been ' .
+					'first processed with self::encodeBlob()'
+			);
 			return "x'" . bin2hex( $s ) . "'";
 		} else {
 			return $this->mConn->quote( $s );
@@ -863,11 +909,9 @@ class DatabaseSqlite extends DatabaseBase {
 	}
 
 	public function lock( $lockName, $method, $timeout = 5 ) {
-		global $wgSQLiteDataDir;
-
-		if ( !is_dir( "$wgSQLiteDataDir/locks" ) ) { // create dir as needed
-			if ( !is_writable( $wgSQLiteDataDir ) || !mkdir( "$wgSQLiteDataDir/locks" ) ) {
-				throw new DBError( "Cannot create directory \"$wgSQLiteDataDir/locks\"." );
+		if ( !is_dir( "{$this->dbDir}/locks" ) ) { // create dir as needed
+			if ( !is_writable( $this->dbDir ) || !mkdir( "{$this->dbDir}/locks" ) ) {
+				throw new DBError( "Cannot create directory \"{$this->dbDir}/locks\"." );
 			}
 		}
 
@@ -926,7 +970,36 @@ class DatabaseSqlite extends DatabaseBase {
 			}
 		}
 
-		return $this->query( $sql, $fname );
+		$res = $this->query( $sql, $fname );
+
+		// Take over indexes
+		$indexList = $this->query( 'PRAGMA INDEX_LIST(' . $this->addQuotes( $oldName ) . ')' );
+		foreach ( $indexList as $index ) {
+			if ( strpos( $index->name, 'sqlite_autoindex' ) === 0 ) {
+				continue;
+			}
+
+			if ( $index->unique ) {
+				$sql = 'CREATE UNIQUE INDEX';
+			} else {
+				$sql = 'CREATE INDEX';
+			}
+			// Try to come up with a new index name, given indexes have database scope in SQLite
+			$indexName = $newName . '_' . $index->name;
+			$sql .= ' ' . $indexName . ' ON ' . $newName;
+
+			$indexInfo = $this->query( 'PRAGMA INDEX_INFO(' . $this->addQuotes( $index->name ) . ')' );
+			$fields = array();
+			foreach ( $indexInfo as $indexInfoRow ) {
+				$fields[$indexInfoRow->seqno] = $indexInfoRow->name;
+			}
+
+			$sql .= '(' . implode( ',', $fields ) . ')';
+
+			$this->query( $sql );
+		}
+
+		return $res;
 	}
 
 	/**
@@ -959,24 +1032,15 @@ class DatabaseSqlite extends DatabaseBase {
 
 		return $endArray;
 	}
-} // end DatabaseSqlite class
 
-/**
- * This class allows simple acccess to a SQLite database independently from main database settings
- * @ingroup Database
- */
-class DatabaseSqliteStandalone extends DatabaseSqlite {
-	public function __construct( $fileName, $flags = 0 ) {
-		global $wgSQLiteDataDir;
-
-		$this->mTrxAtomicLevels = new SplStack;
-		$this->lockMgr = new FSLockManager( array( 'lockDirectory' => "$wgSQLiteDataDir/locks" ) );
-
-		$this->mFlags = $flags;
-		$this->tablePrefix( null );
-		$this->openFile( $fileName );
+	/**
+	 * @return string
+	 */
+	public function __toString() {
+		return 'SQLite ' . (string)$this->mConn->getAttribute( PDO::ATTR_SERVER_VERSION );
 	}
-}
+
+} // end DatabaseSqlite class
 
 /**
  * @ingroup Database

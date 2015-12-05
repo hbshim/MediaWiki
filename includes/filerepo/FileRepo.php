@@ -49,6 +49,12 @@ class FileRepo {
 	/** @var int */
 	public $descriptionCacheExpiry;
 
+	/** @var bool */
+	protected $hasSha1Storage = false;
+
+	/** @var bool */
+	protected $supportsSha1URLs = false;
+
 	/** @var FileBackend */
 	protected $backend;
 
@@ -63,7 +69,7 @@ class FileRepo {
 	protected $transformVia404;
 
 	/** @var string URL of image description pages, e.g.
-	 *    http://en.wikipedia.org/wiki/File:
+	 *    https://en.wikipedia.org/wiki/File:
 	 */
 	protected $descBaseUrl;
 
@@ -73,10 +79,10 @@ class FileRepo {
 	protected $scriptDirUrl;
 
 	/** @var string Script extension of the MediaWiki installation, equivalent
-	 *    to $wgScriptExtension, e.g. .php5 defaults to .php */
+	 *    to the old $wgScriptExtension, e.g. .php5 defaults to .php */
 	protected $scriptExtension;
 
-	/** @var string Equivalent to $wgArticlePath, e.g. http://en.wikipedia.org/wiki/$1 */
+	/** @var string Equivalent to $wgArticlePath, e.g. https://en.wikipedia.org/wiki/$1 */
 	protected $articleUrl;
 
 	/** @var bool Equivalent to $wgCapitalLinks (or $wgCapitalLinkOverrides[NS_FILE],
@@ -197,6 +203,8 @@ class FileRepo {
 				$this->zones[$zone]['urlsByExt'] = array();
 			}
 		}
+
+		$this->supportsSha1URLs = !empty( $info['supportsSha1URLs'] );
 	}
 
 	/**
@@ -406,6 +414,7 @@ class FileRepo {
 	 *   private:        If true, return restricted (deleted) files if the current
 	 *                   user is allowed to view them. Otherwise, such files will not
 	 *                   be found. If a User object, use that user instead of the current.
+	 *   latest:         If true, load from the latest available data into File objects
 	 * @return File|bool False on failure
 	 */
 	public function findFile( $title, $options = array() ) {
@@ -413,27 +422,35 @@ class FileRepo {
 		if ( !$title ) {
 			return false;
 		}
+		if ( isset( $options['bypassCache'] ) ) {
+			$options['latest'] = $options['bypassCache']; // b/c
+		}
 		$time = isset( $options['time'] ) ? $options['time'] : false;
+		$flags = !empty( $options['latest'] ) ? File::READ_LATEST : 0;
 		# First try the current version of the file to see if it precedes the timestamp
 		$img = $this->newFile( $title );
 		if ( !$img ) {
 			return false;
 		}
+		$img->load( $flags );
 		if ( $img->exists() && ( !$time || $img->getTimestamp() == $time ) ) {
 			return $img;
 		}
 		# Now try an old version of the file
 		if ( $time !== false ) {
 			$img = $this->newFile( $title, $time );
-			if ( $img && $img->exists() ) {
-				if ( !$img->isDeleted( File::DELETED_FILE ) ) {
-					return $img; // always OK
-				} elseif ( !empty( $options['private'] ) &&
-					$img->userCan( File::DELETED_FILE,
-						$options['private'] instanceof User ? $options['private'] : null
-					)
-				) {
-					return $img;
+			if ( $img ) {
+				$img->load( $flags );
+				if ( $img->exists() ) {
+					if ( !$img->isDeleted( File::DELETED_FILE ) ) {
+						return $img; // always OK
+					} elseif ( !empty( $options['private'] ) &&
+						$img->userCan( File::DELETED_FILE,
+							$options['private'] instanceof User ? $options['private'] : null
+						)
+					) {
+						return $img;
+					}
 				}
 			}
 		}
@@ -448,6 +465,7 @@ class FileRepo {
 			if ( !$img ) {
 				return false;
 			}
+			$img->load( $flags );
 			if ( $img->exists() ) {
 				$img->redirectedFrom( $title->getDBkey() );
 
@@ -740,7 +758,6 @@ class FileRepo {
 		}
 		if ( !is_null( $this->articleUrl ) ) {
 			# "http://example.com/wiki/$1"
-			#
 			# We use "Image:" as the canonical namespace for
 			# compatibility across all MediaWiki versions.
 			return str_replace( '$1',
@@ -748,7 +765,6 @@ class FileRepo {
 		}
 		if ( !is_null( $this->scriptDirUrl ) ) {
 			# "http://example.com/w"
-			#
 			# We use "Image:" as the canonical namespace for
 			# compatibility across all MediaWiki versions,
 			# and just sort of hope index.php is right. ;)
@@ -899,9 +915,9 @@ class FileRepo {
 		$status->merge( $backend->doOperations( $operations, $opts ) );
 		// Cleanup for disk source files...
 		foreach ( $sourceFSFilesToDelete as $file ) {
-			wfSuppressWarnings();
+			MediaWiki\suppressWarnings();
 			unlink( $file ); // FS cleanup
-			wfRestoreWarnings();
+			MediaWiki\restoreWarnings();
 		}
 
 		return $status;
@@ -1287,9 +1303,9 @@ class FileRepo {
 		}
 		// Cleanup for disk source files...
 		foreach ( $sourceFSFilesToDelete as $file ) {
-			wfSuppressWarnings();
+			MediaWiki\suppressWarnings();
 			unlink( $file ); // FS cleanup
-			wfRestoreWarnings();
+			MediaWiki\restoreWarnings();
 		}
 
 		return $status;
@@ -1579,13 +1595,26 @@ class FileRepo {
 	 *
 	 * @param string $virtualUrl
 	 * @param array $headers Additional HTTP headers to send on success
-	 * @return bool Success
+	 * @return Status
+	 * @since 1.27
 	 */
-	public function streamFile( $virtualUrl, $headers = array() ) {
+	public function streamFileWithStatus( $virtualUrl, $headers = array() ) {
 		$path = $this->resolveToStoragePath( $virtualUrl );
 		$params = array( 'src' => $path, 'headers' => $headers );
 
-		return $this->backend->streamFile( $params )->isOK();
+		return $this->backend->streamFile( $params );
+	}
+
+	/**
+	 * Attempt to stream a file with the given virtual URL/storage path
+	 *
+	 * @deprecated since 1.26, use streamFileWithStatus
+	 * @param string $virtualUrl
+	 * @param array $headers Additional HTTP headers to send on success
+	 * @return bool Success
+	 */
+	public function streamFile( $virtualUrl, $headers = array() ) {
+		return $this->streamFileWithStatus( $virtualUrl, $headers )->isOK();
 	}
 
 	/**
@@ -1874,6 +1903,22 @@ class FileRepo {
 		}
 
 		return $ret;
+	}
+
+	/**
+	 * Returns whether or not storage is SHA-1 based
+	 * @return boolean
+	 */
+	public function hasSha1Storage() {
+		return $this->hasSha1Storage;
+	}
+
+	/**
+	 * Returns whether or not repo supports having originals SHA-1s in the thumb URLs
+	 * @return boolean
+	 */
+	public function supportsSha1URLs() {
+		return $this->supportsSha1URLs;
 	}
 }
 

@@ -4,7 +4,6 @@
 // instead of the MaintenanceFixup hack below. However, we cannot do
 // without changing the visibility and without working around hacks in
 // Maintenance.php
-//
 // For the same reason, we cannot just use FakeMaintenance.
 
 /**
@@ -816,7 +815,10 @@ class MaintenanceTest extends MediaWikiTestCase {
 	 */
 	public function testGetConfig() {
 		$this->assertInstanceOf( 'Config', $this->m->getConfig() );
-		$this->assertSame( ConfigFactory::getDefaultInstance()->makeConfig( 'main' ), $this->m->getConfig() );
+		$this->assertSame(
+			ConfigFactory::getDefaultInstance()->makeConfig( 'main' ),
+			$this->m->getConfig()
+		);
 	}
 
 	/**

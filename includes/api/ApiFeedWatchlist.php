@@ -112,17 +112,22 @@ class ApiFeedWatchlist extends ApiBase {
 			$module = new ApiMain( $fauxReq );
 			$module->execute();
 
-			// Get data array
-			$data = $module->getResultData();
-
+			$data = $module->getResult()->getResultData( array( 'query', 'watchlist' ) );
 			$feedItems = array();
-			foreach ( (array)$data['query']['watchlist'] as $info ) {
-				$feedItems[] = $this->createFeedItem( $info );
+			foreach ( (array)$data as $key => $info ) {
+				if ( ApiResult::isMetadataKey( $key ) ) {
+					continue;
+				}
+				$feedItem = $this->createFeedItem( $info );
+				if ( $feedItem ) {
+					$feedItems[] = $feedItem;
+				}
 			}
 
 			$msg = wfMessage( 'watchlist' )->inContentLanguage()->text();
 
-			$feedTitle = $this->getConfig()->get( 'Sitename' ) . ' - ' . $msg . ' [' . $this->getConfig()->get( 'LanguageCode' ) . ']';
+			$feedTitle = $this->getConfig()->get( 'Sitename' ) . ' - ' . $msg .
+				' [' . $this->getConfig()->get( 'LanguageCode' ) . ']';
 			$feedUrl = SpecialPage::getTitleFor( 'Watchlist' )->getFullURL();
 
 			$feed = new $feedClasses[$params['feedformat']] (
@@ -164,12 +169,29 @@ class ApiFeedWatchlist extends ApiBase {
 	 * @return FeedItem
 	 */
 	private function createFeedItem( $info ) {
+		if ( !isset( $info['title'] ) ) {
+			// Probably a revdeled log entry, skip it.
+			return null;
+		}
+
 		$titleStr = $info['title'];
 		$title = Title::newFromText( $titleStr );
+		$curidParam = array();
+		if ( !$title || $title->isExternal() ) {
+			// Probably a formerly-valid title that's now conflicting with an
+			// interwiki prefix or the like.
+			if ( isset( $info['pageid'] ) ) {
+				$title = Title::newFromID( $info['pageid'] );
+				$curidParam = array( 'curid' => $info['pageid'] );
+			}
+			if ( !$title || $title->isExternal() ) {
+				return null;
+			}
+		}
 		if ( isset( $info['revid'] ) ) {
 			$titleUrl = $title->getFullURL( array( 'diff' => $info['revid'] ) );
 		} else {
-			$titleUrl = $title->getFullURL();
+			$titleUrl = $title->getFullURL( $curidParam );
 		}
 		$comment = isset( $info['comment'] ) ? $info['comment'] : null;
 
@@ -188,9 +210,14 @@ class ApiFeedWatchlist extends ApiBase {
 		}
 
 		$timestamp = $info['timestamp'];
-		$user = $info['user'];
 
-		$completeText = "$comment ($user)";
+		if ( isset( $info['user'] ) ) {
+			$user = $info['user'];
+			$completeText = "$comment ($user)";
+		} else {
+			$user = '';
+			$completeText = (string)$comment;
+		}
 
 		return new FeedItem( $titleStr, $completeText, $titleUrl, $timestamp, $user );
 	}
@@ -237,6 +264,15 @@ class ApiFeedWatchlist extends ApiBase {
 				}
 				if ( !isset( $p[ApiBase::PARAM_HELP_MSG] ) ) {
 					$p[ApiBase::PARAM_HELP_MSG] = "apihelp-query+watchlist-param-$from";
+				}
+				if ( isset( $p[ApiBase::PARAM_TYPE] ) && is_array( $p[ApiBase::PARAM_TYPE] ) &&
+					isset( $p[ApiBase::PARAM_HELP_MSG_PER_VALUE] )
+				) {
+					foreach ( $p[ApiBase::PARAM_TYPE] as $v ) {
+						if ( !isset( $p[ApiBase::PARAM_HELP_MSG_PER_VALUE][$v] ) ) {
+							$p[ApiBase::PARAM_HELP_MSG_PER_VALUE][$v] = "apihelp-query+watchlist-paramvalue-$from-$v";
+						}
+					}
 				}
 				$ret[$to] = $p;
 			}

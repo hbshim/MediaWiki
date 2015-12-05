@@ -119,7 +119,8 @@ TEXT;
 
 	private function getNsIndex( $namespace ) {
 		global $wgContLang;
-		if ( ( $result = $wgContLang->getNsIndex( $namespace ) ) !== false ) {
+		$result = $wgContLang->getNsIndex( $namespace );
+		if ( $result !== false ) {
 			return $result;
 		}
 		$ns = intval( $namespace );
@@ -235,8 +236,6 @@ TEXT;
 			}
 		}
 		wfWaitForSlaves();
-		// XXX: Don't let deferred jobs array get absurdly large (bug 24375)
-		DeferredUpdates::doUpdates( 'commit' );
 	}
 
 	function progress( $string ) {

@@ -150,8 +150,8 @@ class ApiQueryCategories extends ApiQueryGeneratorBase {
 				if ( isset( $prop['timestamp'] ) ) {
 					$vals['timestamp'] = wfTimestamp( TS_ISO_8601, $row->cl_timestamp );
 				}
-				if ( isset( $prop['hidden'] ) && !is_null( $row->pp_propname ) ) {
-					$vals['hidden'] = '';
+				if ( isset( $prop['hidden'] ) ) {
+					$vals['hidden'] = !is_null( $row->pp_propname );
 				}
 
 				$fit = $this->addPageSubItem( $row->cl_from, $vals );
@@ -184,7 +184,8 @@ class ApiQueryCategories extends ApiQueryGeneratorBase {
 					'sortkey',
 					'timestamp',
 					'hidden',
-				)
+				),
+				ApiBase::PARAM_HELP_MSG_PER_VALUE => array(),
 			),
 			'show' => array(
 				ApiBase::PARAM_ISMULTI => true,
@@ -226,6 +227,6 @@ class ApiQueryCategories extends ApiQueryGeneratorBase {
 	}
 
 	public function getHelpUrls() {
-		return 'https://www.mediawiki.org/wiki/API:Properties#categories_.2F_cl';
+		return 'https://www.mediawiki.org/wiki/API:Categories';
 	}
 }

@@ -29,17 +29,6 @@
  * @ingroup SpecialPage
  */
 class SpecialLog extends SpecialPage {
-	/**
-	 * List log type for which the target is a user
-	 * Thus if the given target is in NS_MAIN we can alter it to be an NS_USER
-	 * Title user instead.
-	 */
-	private $typeOnUser = array(
-		'block',
-		'newusers',
-		'rights',
-	);
-
 	public function __construct() {
 		parent::__construct( 'Log' );
 	}
@@ -97,14 +86,16 @@ class SpecialLog extends SpecialPage {
 			}
 		} else {
 			// Allow extensions to add relations to their search types
-			Hooks::run( 'SpecialLogAddLogSearchRelations', array( $opts->getValue( 'type' ), $this->getRequest(), &$qc ) );
+			Hooks::run(
+				'SpecialLogAddLogSearchRelations',
+				array( $opts->getValue( 'type' ), $this->getRequest(), &$qc )
+			);
 		}
 
 		# Some log types are only for a 'User:' title but we might have been given
 		# only the username instead of the full title 'User:username'. This part try
 		# to lookup for a user by that name and eventually fix user input. See bug 1697.
-		Hooks::run( 'GetLogTypesOnUser', array( &$this->typeOnUser ) );
-		if ( in_array( $opts->getValue( 'type' ), $this->typeOnUser ) ) {
+		if ( in_array( $opts->getValue( 'type' ), self::getLogTypesOnUser() ) ) {
 			# ok we have a type of log which expect a user title.
 			$target = Title::newFromText( $opts->getValue( 'page' ) );
 			if ( $target && $target->getNamespace() === NS_MAIN ) {
@@ -116,6 +107,29 @@ class SpecialLog extends SpecialPage {
 		}
 
 		$this->show( $opts, $qc );
+	}
+
+	/**
+	 * List log type for which the target is a user
+	 * Thus if the given target is in NS_MAIN we can alter it to be an NS_USER
+	 * Title user instead.
+	 *
+	 * @since 1.25
+	 * @return array
+	 */
+	public static function getLogTypesOnUser() {
+		static $types = null;
+		if ( $types !== null ) {
+			return $types;
+		}
+		$types = array(
+			'block',
+			'newusers',
+			'rights',
+		);
+
+		Hooks::run( 'GetLogTypesOnUser', array( &$types ) );
+		return $types;
 	}
 
 	/**
@@ -151,7 +165,7 @@ class SpecialLog extends SpecialPage {
 		$loglist = new LogEventsList(
 			$this->getContext(),
 			null,
-			LogEventsList::USE_REVDEL_CHECKBOXES
+			LogEventsList::USE_CHECKBOXES
 		);
 		$pager = new LogPager(
 			$loglist,
@@ -189,7 +203,7 @@ class SpecialLog extends SpecialPage {
 		if ( $logBody ) {
 			$this->getOutput()->addHTML(
 				$pager->getNavigationBar() .
-					$this->getRevisionButton(
+					$this->getActionButtons(
 						$loglist->beginLogEventsList() .
 							$logBody .
 							$loglist->endLogEventsList()
@@ -201,30 +215,50 @@ class SpecialLog extends SpecialPage {
 		}
 	}
 
-	private function getRevisionButton( $formcontents ) {
-		# If the user doesn't have the ability to delete log entries,
-		# don't bother showing them the button.
-		if ( !$this->getUser()->isAllowedAll( 'deletedhistory', 'deletelogentry' ) ) {
+	private function getActionButtons( $formcontents ) {
+		$user = $this->getUser();
+		$canRevDelete = $user->isAllowedAll( 'deletedhistory', 'deletelogentry' );
+		$showTagEditUI = ChangeTags::showTagEditingUI( $user );
+		# If the user doesn't have the ability to delete log entries nor edit tags,
+		# don't bother showing them the button(s).
+		if ( !$canRevDelete && !$showTagEditUI ) {
 			return $formcontents;
 		}
 
-		# Show button to hide log entries
+		# Show button to hide log entries and/or edit change tags
 		$s = Html::openElement(
 			'form',
 			array( 'action' => wfScript(), 'id' => 'mw-log-deleterevision-submit' )
 		) . "\n";
-		$s .= Html::hidden( 'title', SpecialPage::getTitleFor( 'Revisiondelete' ) ) . "\n";
-		$s .= Html::hidden( 'target', SpecialPage::getTitleFor( 'Log' ) ) . "\n";
+		$s .= Html::hidden( 'action', 'historysubmit' ) . "\n";
 		$s .= Html::hidden( 'type', 'logging' ) . "\n";
-		$button = Html::element(
-			'button',
-			array(
-				'type' => 'submit',
-				'class' => "deleterevision-log-submit mw-log-deleterevision-button"
-			),
-			$this->msg( 'showhideselectedlogentries' )->text()
-		) . "\n";
-		$s .= $button . $formcontents . $button;
+
+		$buttons = '';
+		if ( $canRevDelete ) {
+			$buttons .= Html::element(
+				'button',
+				array(
+					'type' => 'submit',
+					'name' => 'revisiondelete',
+					'value' => '1',
+					'class' => "deleterevision-log-submit mw-log-deleterevision-button"
+				),
+				$this->msg( 'showhideselectedlogentries' )->text()
+			) . "\n";
+		}
+		if ( $showTagEditUI ) {
+			$buttons .= Html::element(
+				'button',
+				array(
+					'type' => 'submit',
+					'name' => 'editchangetags',
+					'value' => '1',
+					'class' => "editchangetags-log-submit mw-log-editchangetags-button"
+				),
+				$this->msg( 'log-edit-tags' )->text()
+			) . "\n";
+		}
+		$s .= $buttons . $formcontents . $buttons;
 		$s .= Html::closeElement( 'form' );
 
 		return $s;

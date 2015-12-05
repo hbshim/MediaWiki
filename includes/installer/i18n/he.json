@@ -6,7 +6,8 @@
 			"ערן",
 			"아라",
 			"Inkbug",
-			"Yona b"
+			"Yona b",
+			"Rotemliss"
 		]
 	},
 	"config-desc": "תכנית ההתקנה של מדיה־ויקי",
@@ -52,7 +53,6 @@
 	"config-env-bad": "הסביבה שלכם נבדקה.\nאי־אפשר להתקין מדיה־ויקי.",
 	"config-env-php": "מותקנת <span dir=\"ltr\">PHP $1</span>.",
 	"config-env-hhvm": "מותקנת <span dir=\"ltr\">HHVM $1</span>.",
-	"config-unicode-using-utf8": "משתמש ב־utf8_normalize.so של בריון ויבר לנרמול יוניקוד.",
 	"config-unicode-using-intl": "משתמש ב[http://pecl.php.net/intl הרחבת intl PECL] לנרמול יוניקוד.",
 	"config-unicode-pure-php-warning": "'''אזהרה''': [http://pecl.php.net/intl הרחבת intl PECL] אינה זמינה לטיפול בנרמול יוניקוד. משתמש ביישום PHP טהור ואטי יותר.\nאם זהו אתר בעל תעבורה גבוהה, כדאי לקרוא את המסמך הבא: [//www.mediawiki.org/wiki/Special:MyLanguage/Unicode_normalization_considerations Unicode normalization].",
 	"config-unicode-update-warning": "'''אזהרה''': הגרסה המותקנת של מעטפת נרמול יוניקוד משתמשת בגרסה ישנה של הספרייה של [http://site.icu-project.org/ פרויקט ICU].\nכדאי [//www.mediawiki.org/wiki/Special:MyLanguage/Unicode_normalization_considerations לעדכן] אם הטיפול ביוניקוד חשוב לך.",
@@ -65,7 +65,7 @@
 	"config-magic-quotes-sybase": "'''שגיאה סופנית''': האפשרות [http://www.php.net/manual/en/ref.info.php#ini.magic-quotes-sybase magic_quotes_sybase] פעילה!'''\nהאפשרות הזאת מעוותת את נתוני הקלט באופן בלתי־צפוי.\nלא ניתן להתקין את מדיה־ויקי או להשתמש בה אלא אם האפשרות הזאת תכובה.",
 	"config-mbstring": "'''שגיאה סופנית''': האפשרות [http://www.php.net/manual/en/ref.mbstring.php#mbstring.overload mbstring.func_overload] פעילה!'''\nהאפשרות הזאת גורמת לשגיאות ומעוותת את נתוני הקלט באופן בלתי־צפוי.\nלא ניתן להתקין את מדיה־ויקי או להשתמש בה אלא אם האפשרות הזאת תכובה.",
 	"config-safe-mode": "'''אזהרה:''' האפשרות [http://www.php.net/features.safe-mode safe mode] של PHP פעילה.\nהיא יכולה לגרום לבעיות, במיוחד אם אתם משתמשים בהעלאת קבצים או ב־<code>math</code>.",
-	"config-xml-bad": "מודול XML של PHP חסר.\nמדיה־ויקי דורשת פונקציות של המודול ולא תעבוד עם הגדרות כאלו.\nאם מערכת ההפעלה שלהם היא Mandrake, התקינו את החבילה php-xml.",
+	"config-xml-bad": "מודול XML של PHP חסר.\nמדיה־ויקי דורשת פונקציות של המודול ולא תעבוד עם הגדרות כאלו.\nייתכן שצריך להתקין באמצעות RPM את חבילת php-xml.",
 	"config-pcre-old": "<strong>שגיאה סופנית:</strong> חובה להתקין PCRE מגרסה $1 או גרסה חדשה יותר.\nקובץ הרצת ה־PHP שלך מקושר עם PCRE מגרסה $2.\n[https://www.mediawiki.org/wiki/Manual:Errors_and_symptoms/PCRE מידע נוסף].",
 	"config-pcre-no-utf8": "'''שגיאה סופנית''': נראה שמודול PCRE של PHP מקומפל ללא תמיכה ב־PCRE_UTF8.\nמדיה־ויקי דורשת תמיכה ב־UTF-8 לפעילות נכונה.",
 	"config-memory-raised": "ערך האפשרות <code>memory_limit</code> של PHP הוא $1, הועלה ל־$2.",
@@ -105,8 +105,6 @@
 	"config-db-install-account": "חשבון משתמש להתקנה",
 	"config-db-username": "שם המשתמש במסד הנתונים:",
 	"config-db-password": "הססמה במסד הנתונים:",
-	"config-db-password-empty": "נא להזין ססמה למשתמש מסד הנתונים החדש: $1.\nאף־על־פי שאפשר ליצור חשבונות ללא ססמה, זה לא מאובטח.",
-	"config-db-username-empty": "יש להזין ערך עבור \"{{int:config-db-username}}\".",
 	"config-db-install-username": "יש להכניס שם משתמש שישמש לחיבור למסד נתונים במהלך ההתקנה.\nזהו לא שם משתמש לחשבון במדיה־ויקי; זהו שם משתמש בשרת מסד נתונים.",
 	"config-db-install-password": "יש להקליד ססמה שתשמש אותך לצורך חיבור למסד נתונים במהלך ההתקנה.\nזוהי לא ססמה של חשבון במדיה־ויקי; זוהי ססמה לשרת מסד נתונים.",
 	"config-db-install-help": "יש להקליד את שם המשתמש ואת הססמה להתחברות למסד הנתונים במהלך ההתקנה.",
@@ -326,5 +324,5 @@
 	"config-nofile": "הקובץ \"$1\" לא נמצא. האם הוא נמחק?",
 	"config-extension-link": "הידעת שמדיה־ויקי תומכת ב־[//www.mediawiki.org/wiki/Special:MyLanguage/Manual:Extensions הרחבות]?\n\nבאפשרותך לעיין ב־[//www.mediawiki.org/wiki/Special:MyLanguage/Category:Extensions_by_category הרחבות לפי קטגוריה].",
 	"mainpagetext": "'''תוכנת מדיה־ויקי הותקנה בהצלחה.'''",
-	"mainpagedocfooter": "היעזרו ב[//meta.wikimedia.org/wiki/Help:Contents מדריך למשתמש] למידע על שימוש בתוכנת הוויקי.\n\n== קישורים שימושיים ==\n* [//www.mediawiki.org/wiki/Special:MyLanguage/Manual:Configuration_settings רשימת ההגדרות]\n* [//www.mediawiki.org/wiki/Special:MyLanguage/Manual:FAQ שאלות ותשובות על מדיה־ויקי]\n* [https://lists.wikimedia.org/mailman/listinfo/mediawiki-announce רשימת התפוצה על השקת גרסאות]\n* [//www.mediawiki.org/wiki/Special:MyLanguage/Localisation#Translation_resources תרגום מדיה־ויקי לשפה שלך]"
+	"mainpagedocfooter": "היעזרו ב[//meta.wikimedia.org/wiki/Help:Contents מדריך למשתמש] למידע על שימוש בתוכנת הוויקי.\n\n== קישורים שימושיים ==\n* [//www.mediawiki.org/wiki/Special:MyLanguage/Manual:Configuration_settings רשימת ההגדרות]\n* [//www.mediawiki.org/wiki/Special:MyLanguage/Manual:FAQ שאלות ותשובות על מדיה־ויקי]\n* [https://lists.wikimedia.org/mailman/listinfo/mediawiki-announce רשימת התפוצה על השקת גרסאות]\n* [//www.mediawiki.org/wiki/Special:MyLanguage/Localisation#Translation_resources תרגום מדיה־ויקי לשפה שלך]\n* [//www.mediawiki.org/wiki/Special:MyLanguage/Manual:Combating_spam איך להיאבק נגד ספאם באתר הוויקי שלך]"
 }

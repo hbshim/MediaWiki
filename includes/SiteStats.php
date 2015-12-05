@@ -68,6 +68,8 @@ class SiteStats {
 	 * @return bool|ResultWrapper
 	 */
 	static function loadAndLazyInit() {
+		global $wgMiserMode;
+
 		wfDebug( __METHOD__ . ": reading site_stats from slave\n" );
 		$row = self::doLoad( wfGetDB( DB_SLAVE ) );
 
@@ -77,7 +79,7 @@ class SiteStats {
 			$row = self::doLoad( wfGetDB( DB_MASTER ) );
 		}
 
-		if ( !self::isSane( $row ) ) {
+		if ( !$wgMiserMode && !self::isSane( $row ) ) {
 			// Normally the site_stats table is initialized at install time.
 			// Some manual construction scenarios may leave the table empty or
 			// broken, however, for instance when importing from a dump into a
@@ -96,7 +98,7 @@ class SiteStats {
 	}
 
 	/**
-	 * @param DatabaseBase $db
+	 * @param IDatabase $db
 	 * @return bool|ResultWrapper
 	 */
 	static function doLoad( $db ) {
@@ -178,23 +180,24 @@ class SiteStats {
 	 * @return int
 	 */
 	static function numberingroup( $group ) {
-		if ( !isset( self::$groupMemberCounts[$group] ) ) {
-			global $wgMemc;
-			$key = wfMemcKey( 'SiteStats', 'groupcounts', $group );
-			$hit = $wgMemc->get( $key );
-			if ( !$hit ) {
+		$cache = ObjectCache::getMainWANInstance();
+		return $cache->getWithSetCallback(
+			wfMemcKey( 'SiteStats', 'groupcounts', $group ),
+			$cache::TTL_HOUR,
+			function ( $oldValue, &$ttl, array &$setOpts ) use ( $group ) {
 				$dbr = wfGetDB( DB_SLAVE );
-				$hit = $dbr->selectField(
+
+				$setOpts += Database::getCacheSetOptions( $dbr );
+
+				return $dbr->selectField(
 					'user_groups',
 					'COUNT(*)',
 					array( 'ug_group' => $group ),
 					__METHOD__
 				);
-				$wgMemc->set( $key, $hit, 3600 );
-			}
-			self::$groupMemberCounts[$group] = $hit;
-		}
-		return self::$groupMemberCounts[$group];
+			},
+			array( 'pcTTL' => 10 )
+		);
 	}
 
 	/**
@@ -279,12 +282,12 @@ class SiteStatsInit {
 
 	/**
 	 * Constructor
-	 * @param bool|DatabaseBase $database
-	 * - Boolean: whether to use the master DB
-	 * - DatabaseBase: database connection to use
+	 * @param bool|IDatabase $database
+	 * - boolean: Whether to use the master DB
+	 * - IDatabase: Database connection to use
 	 */
 	public function __construct( $database = false ) {
-		if ( $database instanceof DatabaseBase ) {
+		if ( $database instanceof IDatabase ) {
 			$this->db = $database;
 		} else {
 			$this->db = wfGetDB( $database ? DB_MASTER : DB_SLAVE );
@@ -362,11 +365,11 @@ class SiteStatsInit {
 	 * Do all updates and commit them. More or less a replacement
 	 * for the original initStats, but without output.
 	 *
-	 * @param DatabaseBase|bool $database
-	 * - Boolean: whether to use the master DB
-	 * - DatabaseBase: database connection to use
+	 * @param IDatabase|bool $database
+	 * - boolean: Whether to use the master DB
+	 * - IDatabase: Database connection to use
 	 * @param array $options Array of options, may contain the following values
-	 * - activeUsers Boolean: whether to update the number of active users (default: false)
+	 * - activeUsers boolean: Whether to update the number of active users (default: false)
 	 */
 	public static function doAllAndCommit( $database, array $options = array() ) {
 		$options += array( 'update' => false, 'activeUsers' => false );

@@ -31,9 +31,10 @@
 class JobQueueAggregatorRedis extends JobQueueAggregator {
 	/** @var RedisConnectionPool */
 	protected $redisPool;
-
 	/** @var array List of Redis server addresses */
 	protected $servers;
+	/** @var bool */
+	protected $registeredQueue = false;
 
 	/**
 	 * @param array $params Possible keys:
@@ -44,7 +45,7 @@ class JobQueueAggregatorRedis extends JobQueueAggregator {
 	 *                    If a hostname is specified but no port, the standard port number
 	 *                    6379 will be used. Required.
 	 */
-	protected function __construct( array $params ) {
+	public function __construct( array $params ) {
 		parent::__construct( $params );
 		$this->servers = isset( $params['redisServers'] )
 			? $params['redisServers']
@@ -76,9 +77,15 @@ class JobQueueAggregatorRedis extends JobQueueAggregator {
 		}
 		try {
 			$conn->multi( Redis::PIPELINE );
-			$conn->hSetNx( $this->getQueueTypesKey(), $type, 'enabled' );
+			if ( !$this->registeredQueue ) {
+				// Make sure the queue is registered as existing
+				$conn->hSetNx( $this->getQueueTypesKey(), $type, 'enabled' );
+				$conn->sAdd( $this->getWikiSetKey(), $wiki );
+			}
 			$conn->hSet( $this->getReadyQueueKey(), $this->encQueueName( $type, $wiki ), time() );
 			$conn->exec();
+
+			$this->registeredQueue = true;
 
 			return true;
 		} catch ( RedisException $e ) {
@@ -195,6 +202,13 @@ class JobQueueAggregatorRedis extends JobQueueAggregator {
 	 */
 	private function getQueueTypesKey() {
 		return "jobqueue:aggregator:h-queue-types:v2"; // global
+	}
+
+	/**
+	 * @return string
+	 */
+	private function getWikiSetKey() {
+		return "jobqueue:aggregator:s-wikis:v2"; // global
 	}
 
 	/**

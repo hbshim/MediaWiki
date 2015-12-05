@@ -29,7 +29,7 @@
  */
 class SpecialAllMessages extends SpecialPage {
 	/**
-	 * @var AllmessagesTablePager
+	 * @var AllMessagesTablePager
 	 */
 	protected $table;
 
@@ -59,8 +59,9 @@ class SpecialAllMessages extends SpecialPage {
 
 		$this->outputHeader( 'allmessagestext' );
 		$out->addModuleStyles( 'mediawiki.special' );
+		$this->addHelpLink( 'Help:System message' );
 
-		$this->table = new AllmessagesTablePager(
+		$this->table = new AllMessagesTablePager(
 			$this,
 			array(),
 			wfGetLangObj( $request->getVal( 'lang', $par ) )
@@ -129,7 +130,7 @@ class AllMessagesTablePager extends TablePager {
 
 		if ( $prefix !== null ) {
 			$this->displayPrefix = $prefix->getDBkey();
-			$this->prefix = '/^' . preg_quote( $this->displayPrefix ) . '/i';
+			$this->prefix = '/^' . preg_quote( $this->displayPrefix, '/' ) . '/i';
 		} else {
 			$this->displayPrefix = false;
 			$this->prefix = false;
@@ -205,7 +206,7 @@ class AllMessagesTablePager extends TablePager {
 			Xml::label( $this->msg( 'table_pager_limit_label' )->text(), 'mw-table_pager_limit_label' ) .
 			'</td>
 			<td class="mw-input">' .
-			$this->getLimitSelect() .
+			$this->getLimitSelect( array( 'id' => 'mw-table_pager_limit_label' ) ) .
 			'</td>
 			<tr>
 				<td></td>
@@ -391,10 +392,10 @@ class AllMessagesTablePager extends TablePager {
 					);
 				}
 
-				return $title . ' '
-				. $this->msg( 'parentheses' )->rawParams( $talk )->escaped()
-				. ' '
-				. $this->msg( 'parentheses' )->rawParams( $translation )->escaped();
+				return $title . ' ' .
+					$this->msg( 'parentheses' )->rawParams( $talk )->escaped() .
+					' ' .
+					$this->msg( 'parentheses' )->rawParams( $translation )->escaped();
 
 			case 'am_default' :
 			case 'am_actual' :
@@ -444,7 +445,11 @@ class AllMessagesTablePager extends TablePager {
 		} elseif ( $field === 'am_title' ) {
 			return array( 'class' => $field );
 		} else {
-			return array( 'lang' => $this->langcode, 'dir' => $this->lang->getDir(), 'class' => $field );
+			return array(
+				'lang' => $this->lang->getHtmlCode(),
+				'dir' => $this->lang->getDir(),
+				'class' => $field
+			);
 		}
 	}
 

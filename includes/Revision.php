@@ -121,8 +121,6 @@ class Revision implements IDBAccessObject {
 		if ( $id ) {
 			// Use the specified ID
 			$conds['rev_id'] = $id;
-			// This uses slave->master fallback with READ_NORMAL. Assuming revdelete,
-			// moves, and merges are rare, callers can use this to reduce master queries.
 			return self::newFromConds( $conds, $flags );
 		} else {
 			// Use a join to get the latest revision
@@ -150,8 +148,6 @@ class Revision implements IDBAccessObject {
 		$conds = array( 'page_id' => $pageId );
 		if ( $revId ) {
 			$conds['rev_id'] = $revId;
-			// This uses slave->master fallback with READ_NORMAL. Assuming revdelete
-			// and merges are rare, callers can use this to reduce master queries.
 			return self::newFromConds( $conds, $flags );
 		} else {
 			// Use a join to get the latest revision
@@ -198,8 +194,8 @@ class Revision implements IDBAccessObject {
 
 		if ( !isset( $attribs['title'] )
 			&& isset( $row->ar_namespace )
-			&& isset( $row->ar_title ) ) {
-
+			&& isset( $row->ar_title )
+		) {
 			$attribs['title'] = Title::makeTitle( $row->ar_namespace, $row->ar_title );
 		}
 
@@ -227,7 +223,7 @@ class Revision implements IDBAccessObject {
 	 * Load a page revision from a given revision ID number.
 	 * Returns null if no such revision can be found.
 	 *
-	 * @param DatabaseBase $db
+	 * @param IDatabase $db
 	 * @param int $id
 	 * @return Revision|null
 	 */
@@ -240,7 +236,7 @@ class Revision implements IDBAccessObject {
 	 * that's attached to a given page. If not attached
 	 * to that page, will return null.
 	 *
-	 * @param DatabaseBase $db
+	 * @param IDatabase $db
 	 * @param int $pageid
 	 * @param int $id
 	 * @return Revision|null
@@ -260,7 +256,7 @@ class Revision implements IDBAccessObject {
 	 * that's attached to a given page. If not attached
 	 * to that page, will return null.
 	 *
-	 * @param DatabaseBase $db
+	 * @param IDatabase $db
 	 * @param Title $title
 	 * @param int $id
 	 * @return Revision|null
@@ -285,7 +281,7 @@ class Revision implements IDBAccessObject {
 	 * WARNING: Timestamps may in some circumstances not be unique,
 	 * so this isn't the best key to use.
 	 *
-	 * @param DatabaseBase $db
+	 * @param IDatabase $db
 	 * @param Title $title
 	 * @param string $timestamp
 	 * @return Revision|null
@@ -301,7 +297,10 @@ class Revision implements IDBAccessObject {
 	}
 
 	/**
-	 * Given a set of conditions, fetch a revision.
+	 * Given a set of conditions, fetch a revision
+	 *
+	 * This method is used then a revision ID is qualified and
+	 * will incorporate some basic slave/master fallback logic
 	 *
 	 * @param array $conditions
 	 * @param int $flags (optional)
@@ -309,16 +308,24 @@ class Revision implements IDBAccessObject {
 	 */
 	private static function newFromConds( $conditions, $flags = 0 ) {
 		$db = wfGetDB( ( $flags & self::READ_LATEST ) ? DB_MASTER : DB_SLAVE );
+
 		$rev = self::loadFromConds( $db, $conditions, $flags );
-		if ( $rev === null && wfGetLB()->getServerCount() > 1 ) {
-			if ( !( $flags & self::READ_LATEST ) ) {
-				$dbw = wfGetDB( DB_MASTER );
-				$rev = self::loadFromConds( $dbw, $conditions, $flags );
-			}
+		// Make sure new pending/committed revision are visibile later on
+		// within web requests to certain avoid bugs like T93866 and T94407.
+		if ( !$rev
+			&& !( $flags & self::READ_LATEST )
+			&& wfGetLB()->getServerCount() > 1
+			&& wfGetLB()->hasOrMadeRecentMasterChanges()
+		) {
+			$flags = self::READ_LATEST;
+			$db = wfGetDB( DB_MASTER );
+			$rev = self::loadFromConds( $db, $conditions, $flags );
 		}
+
 		if ( $rev ) {
 			$rev->mQueryFlags = $flags;
 		}
+
 		return $rev;
 	}
 
@@ -326,7 +333,7 @@ class Revision implements IDBAccessObject {
 	 * Given a set of conditions, fetch a revision from
 	 * the given database connection.
 	 *
-	 * @param DatabaseBase $db
+	 * @param IDatabase $db
 	 * @param array $conditions
 	 * @param int $flags (optional)
 	 * @return Revision|null
@@ -368,7 +375,7 @@ class Revision implements IDBAccessObject {
 	 * which will return matching database rows with the
 	 * fields necessary to build Revision objects.
 	 *
-	 * @param DatabaseBase $db
+	 * @param IDatabase $db
 	 * @param array $conditions
 	 * @param int $flags (optional)
 	 * @return ResultWrapper
@@ -512,7 +519,7 @@ class Revision implements IDBAccessObject {
 
 	/**
 	 * Do a batched query to get the parent revision lengths
-	 * @param DatabaseBase $db
+	 * @param IDatabase $db
 	 * @param array $revIds
 	 * @return array
 	 */
@@ -766,7 +773,7 @@ class Revision implements IDBAccessObject {
 		if ( $this->mTitle !== null ) {
 			return $this->mTitle;
 		}
-		//rev_id is defined as NOT NULL, but this revision may not yet have been inserted.
+		// rev_id is defined as NOT NULL, but this revision may not yet have been inserted.
 		if ( $this->mId !== null ) {
 			$dbr = wfGetDB( DB_SLAVE );
 			$row = $dbr->selectRow(
@@ -941,18 +948,25 @@ class Revision implements IDBAccessObject {
 	/**
 	 * Get the RC object belonging to the current revision, if there's one
 	 *
+	 * @param int $flags (optional) $flags include:
+	 *      Revision::READ_LATEST  : Select the data from the master
+	 *
 	 * @since 1.22
 	 * @return RecentChange|null
 	 */
-	public function getRecentChange() {
+	public function getRecentChange( $flags = 0 ) {
 		$dbr = wfGetDB( DB_SLAVE );
+
+		list( $dbType, ) = DBAccessObjectUtils::getDBOptions( $flags );
+
 		return RecentChange::newFromConds(
 			array(
 				'rc_user_text' => $this->getUserText( Revision::RAW ),
 				'rc_timestamp' => $dbr->timestamp( $this->getTimestamp() ),
 				'rc_this_oldid' => $this->getId()
 			),
-			__METHOD__
+			__METHOD__,
+			$dbType
 		);
 	}
 
@@ -1080,7 +1094,7 @@ class Revision implements IDBAccessObject {
 	/**
 	 * Returns the content model for this revision.
 	 *
-	 * If no content model was stored in the database, $this->getTitle()->getContentModel() is
+	 * If no content model was stored in the database, the default content model for the title is
 	 * used to determine the content model to use. If no title is know, CONTENT_MODEL_WIKITEXT
 	 * is used as a last resort.
 	 *
@@ -1090,7 +1104,11 @@ class Revision implements IDBAccessObject {
 	public function getContentModel() {
 		if ( !$this->mContentModel ) {
 			$title = $this->getTitle();
-			$this->mContentModel = ( $title ? $title->getContentModel() : CONTENT_MODEL_WIKITEXT );
+			if ( $title ) {
+				$this->mContentModel = ContentHandler::getDefaultModelFor( $title );
+			} else {
+				$this->mContentModel = CONTENT_MODEL_WIKITEXT;
+			}
 
 			assert( !empty( $this->mContentModel ) );
 		}
@@ -1188,7 +1206,7 @@ class Revision implements IDBAccessObject {
 	 * Get previous revision Id for this page_id
 	 * This is used to populate rev_parent_id on save
 	 *
-	 * @param DatabaseBase $db
+	 * @param IDatabase $db
 	 * @return int
 	 */
 	private function getPreviousRevisionId( $db ) {
@@ -1277,8 +1295,14 @@ class Revision implements IDBAccessObject {
 
 		if ( $wgCompressRevisions ) {
 			if ( function_exists( 'gzdeflate' ) ) {
-				$text = gzdeflate( $text );
-				$flags[] = 'gzip';
+				$deflated = gzdeflate( $text );
+
+				if ( $deflated === false ) {
+					wfLogWarning( __METHOD__ . ': gzdeflate() failed' );
+				} else {
+					$text = $deflated;
+					$flags[] = 'gzip';
+				}
 			} else {
 				wfDebug( __METHOD__ . " -- no zlib support, not compressing\n" );
 			}
@@ -1299,6 +1323,11 @@ class Revision implements IDBAccessObject {
 			# This can be done periodically via maintenance/compressOld.php, and
 			# as pages are saved if $wgCompressRevisions is set.
 			$text = gzinflate( $text );
+
+			if ( $text === false ) {
+				wfLogWarning( __METHOD__ . ': gzinflate() failed' );
+				return false;
+			}
 		}
 
 		if ( in_array( 'object', $flags ) ) {
@@ -1330,7 +1359,7 @@ class Revision implements IDBAccessObject {
 	 * Insert a new revision into the database, returning the new revision ID
 	 * number on success and dies horribly on failure.
 	 *
-	 * @param DatabaseBase $dbw (master connection)
+	 * @param IDatabase $dbw (master connection)
 	 * @throws MWException
 	 * @return int
 	 */
@@ -1396,8 +1425,8 @@ class Revision implements IDBAccessObject {
 		);
 
 		if ( $wgContentHandlerUseDB ) {
-			//NOTE: Store null for the default model and format, to save space.
-			//XXX: Makes the DB sensitive to changed defaults.
+			// NOTE: Store null for the default model and format, to save space.
+			// XXX: Makes the DB sensitive to changed defaults.
 			// Make this behavior optional? Only in miser mode?
 
 			$model = $this->getContentModel();
@@ -1421,6 +1450,14 @@ class Revision implements IDBAccessObject {
 
 		$this->mId = $rev_id !== null ? $rev_id : $dbw->insertId();
 
+		// Assertion to try to catch T92046
+		if ( (int)$this->mId === 0 ) {
+			throw new UnexpectedValueException(
+				'After insert, Revision mId is ' . var_export( $this->mId, 1 ) . ': ' .
+					var_export( $row, 1 )
+			);
+		}
+
 		Hooks::run( 'RevisionInsertComplete', array( &$this, $data, $flags ) );
 
 		return $this->mId;
@@ -1429,7 +1466,8 @@ class Revision implements IDBAccessObject {
 	protected function checkContentModel() {
 		global $wgContentHandlerUseDB;
 
-		$title = $this->getTitle(); //note: may return null for revisions that have not yet been inserted.
+		// Note: may return null for revisions that have not yet been inserted
+		$title = $this->getTitle();
 
 		$model = $this->getContentModel();
 		$format = $this->getContentFormat();
@@ -1467,11 +1505,18 @@ class Revision implements IDBAccessObject {
 		}
 
 		$content = $this->getContent( Revision::RAW );
+		$prefixedDBkey = $title->getPrefixedDBkey();
+		$revId = $this->mId;
 
-		if ( !$content || !$content->isValid() ) {
-			$t = $title->getPrefixedDBkey();
-
-			throw new MWException( "Content of $t is not valid! Content model is $model" );
+		if ( !$content ) {
+			throw new MWException(
+				"Content of revision $revId ($prefixedDBkey) could not be loaded for validation!"
+			);
+		}
+		if ( !$content->isValid() ) {
+			throw new MWException(
+				"Content of revision $revId ($prefixedDBkey) is not valid! Content model is $model"
+			);
 		}
 	}
 
@@ -1481,7 +1526,7 @@ class Revision implements IDBAccessObject {
 	 * @return string
 	 */
 	public static function base36Sha1( $text ) {
-		return wfBaseConvert( sha1( $text ), 16, 36, 31 );
+		return Wikimedia\base_convert( sha1( $text ), 16, 36, 31 );
 	}
 
 	/**
@@ -1491,13 +1536,14 @@ class Revision implements IDBAccessObject {
 	 * @return string|bool The revision's text, or false on failure
 	 */
 	protected function loadText() {
-
 		// Caching may be beneficial for massive use of external storage
-		global $wgRevisionCacheExpiry, $wgMemc;
+		global $wgRevisionCacheExpiry;
+
+		$cache = ObjectCache::getMainWANInstance();
 		$textId = $this->getTextId();
 		$key = wfMemcKey( 'revisiontext', 'textid', $textId );
 		if ( $wgRevisionCacheExpiry ) {
-			$text = $wgMemc->get( $key );
+			$text = $cache->get( $key );
 			if ( is_string( $text ) ) {
 				wfDebug( __METHOD__ . ": got id $textId from cache\n" );
 				return $text;
@@ -1544,7 +1590,7 @@ class Revision implements IDBAccessObject {
 
 		# No negative caching -- negative hits on text rows may be due to corrupted slave servers
 		if ( $wgRevisionCacheExpiry && $text !== false ) {
-			$wgMemc->set( $key, $text, $wgRevisionCacheExpiry );
+			$cache->set( $key, $text, $wgRevisionCacheExpiry );
 		}
 
 		return $text;
@@ -1558,7 +1604,7 @@ class Revision implements IDBAccessObject {
 	 * Such revisions can for instance identify page rename
 	 * operations and other such meta-modifications.
 	 *
-	 * @param DatabaseBase $dbw
+	 * @param IDatabase $dbw
 	 * @param int $pageId ID number of the page to read from
 	 * @param string $summary Revision's summary
 	 * @param bool $minor Whether the revision should be considered as minor
@@ -1566,7 +1612,7 @@ class Revision implements IDBAccessObject {
 	 * @return Revision|null Revision or null on error
 	 */
 	public static function newNullRevision( $dbw, $pageId, $summary, $minor, $user = null ) {
-		global $wgContentHandlerUseDB;
+		global $wgContentHandlerUseDB, $wgContLang;
 
 		$fields = array( 'page_latest', 'page_namespace', 'page_title',
 						'rev_text_id', 'rev_len', 'rev_sha1' );
@@ -1591,6 +1637,9 @@ class Revision implements IDBAccessObject {
 				$user = $wgUser;
 			}
 
+			// Truncate for whole multibyte characters
+			$summary = $wgContLang->truncate( $summary, 255 );
+
 			$row = array(
 				'page'       => $pageId,
 				'user_text'  => $user->getName(),
@@ -1608,8 +1657,9 @@ class Revision implements IDBAccessObject {
 				$row['content_format'] = $current->rev_content_format;
 			}
 
+			$row['title'] = Title::makeTitle( $current->page_namespace, $current->page_title );
+
 			$revision = new Revision( $row );
-			$revision->setTitle( Title::makeTitle( $current->page_namespace, $current->page_title ) );
 		} else {
 			$revision = null;
 		}
@@ -1684,29 +1734,27 @@ class Revision implements IDBAccessObject {
 	 *
 	 * @param Title $title
 	 * @param int $id
-	 * @return string
+	 * @return string|bool False if not found
 	 */
-	static function getTimestampFromId( $title, $id ) {
-		$dbr = wfGetDB( DB_SLAVE );
+	static function getTimestampFromId( $title, $id, $flags = 0 ) {
+		$db = ( $flags & self::READ_LATEST )
+			? wfGetDB( DB_MASTER )
+			: wfGetDB( DB_SLAVE );
 		// Casting fix for databases that can't take '' for rev_id
 		if ( $id == '' ) {
 			$id = 0;
 		}
 		$conds = array( 'rev_id' => $id );
 		$conds['rev_page'] = $title->getArticleID();
-		$timestamp = $dbr->selectField( 'revision', 'rev_timestamp', $conds, __METHOD__ );
-		if ( $timestamp === false && wfGetLB()->getServerCount() > 1 ) {
-			# Not in slave, try master
-			$dbw = wfGetDB( DB_MASTER );
-			$timestamp = $dbw->selectField( 'revision', 'rev_timestamp', $conds, __METHOD__ );
-		}
-		return wfTimestamp( TS_MW, $timestamp );
+		$timestamp = $db->selectField( 'revision', 'rev_timestamp', $conds, __METHOD__ );
+
+		return ( $timestamp !== false ) ? wfTimestamp( TS_MW, $timestamp ) : false;
 	}
 
 	/**
 	 * Get count of revisions per page...not very efficient
 	 *
-	 * @param DatabaseBase $db
+	 * @param IDatabase $db
 	 * @param int $id Page id
 	 * @return int
 	 */
@@ -1722,7 +1770,7 @@ class Revision implements IDBAccessObject {
 	/**
 	 * Get count of revisions per page...not very efficient
 	 *
-	 * @param DatabaseBase $db
+	 * @param IDatabase $db
 	 * @param Title $title
 	 * @return int
 	 */
@@ -1742,7 +1790,7 @@ class Revision implements IDBAccessObject {
 	 * @since 1.20
 	 * @deprecated since 1.24
 	 *
-	 * @param DatabaseBase|int $db The Database to perform the check on. May be given as a
+	 * @param IDatabase|int $db The Database to perform the check on. May be given as a
 	 *        Database object or a database identifier usable with wfGetDB.
 	 * @param int $pageId The ID of the page in question
 	 * @param int $userId The ID of the user in question

@@ -114,7 +114,7 @@ class RepoGroup {
 	 *   private:        If true, return restricted (deleted) files if the current
 	 *                   user is allowed to view them. Otherwise, such files will not
 	 *                   be found.
-	 *   bypassCache:    If true, do not use the process-local cache of File objects
+	 *   latest:         If true, load from the latest available data into File objects
 	 * @return File|bool False if title is not found
 	 */
 	function findFile( $title, $options = array() ) {
@@ -122,6 +122,10 @@ class RepoGroup {
 			// MW 1.15 compat
 			$options = array( 'time' => $options );
 		}
+		if ( isset( $options['bypassCache'] ) ) {
+			$options['latest'] = $options['bypassCache']; // b/c
+		}
+
 		if ( !$this->reposInitialised ) {
 			$this->initialiseRepos();
 		}
@@ -300,7 +304,7 @@ class RepoGroup {
 		foreach ( $this->foreignRepos as $repo ) {
 			$result = array_merge_recursive( $result, $repo->findBySha1s( $hashes ) );
 		}
-		//sort the merged (and presorted) sublist of each hash
+		// sort the merged (and presorted) sublist of each hash
 		foreach ( $result as $hash => $files ) {
 			usort( $result[$hash], 'File::compare' );
 		}

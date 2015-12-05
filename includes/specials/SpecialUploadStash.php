@@ -36,22 +36,20 @@ class SpecialUploadStash extends UnlistedSpecialPage {
 	// UploadStash
 	private $stash;
 
-	// Since we are directly writing the file to STDOUT,
-	// we should not be reading in really big files and serving them out.
-	//
-	// We also don't want people using this as a file drop, even if they
-	// share credentials.
-	//
-	// This service is really for thumbnails and other such previews while
-	// uploading.
+	/**
+	 * Since we are directly writing the file to STDOUT,
+	 * we should not be reading in really big files and serving them out.
+	 *
+	 * We also don't want people using this as a file drop, even if they
+	 * share credentials.
+	 *
+	 * This service is really for thumbnails and other such previews while
+	 * uploading.
+	 */
 	const MAX_SERVE_BYTES = 1048576; // 1MB
 
 	public function __construct() {
 		parent::__construct( 'UploadStash', 'upload' );
-		try {
-			$this->stash = RepoGroup::singleton()->getLocalRepo()->getUploadStash( $this->getUser() );
-		} catch ( UploadStashNotAvailableException $e ) {
-		}
 	}
 
 	/**
@@ -62,6 +60,9 @@ class SpecialUploadStash extends UnlistedSpecialPage {
 	 * @return bool Success
 	 */
 	public function execute( $subPage ) {
+		$this->useTransactionalTimeLimit();
+
+		$this->stash = RepoGroup::singleton()->getLocalRepo()->getUploadStash( $this->getUser() );
 		$this->checkPermissions();
 
 		if ( $subPage === null || $subPage === '' ) {
@@ -229,7 +230,7 @@ class SpecialUploadStash extends UnlistedSpecialPage {
 	 */
 	private function outputRemoteScaledThumb( $file, $params, $flags ) {
 		// This option probably looks something like
-		// 'http://upload.wikimedia.org/wikipedia/test/thumb/temp'. Do not use
+		// '//upload.wikimedia.org/wikipedia/test/thumb/temp'. Do not use
 		// trailing slash.
 		$scalerBaseUrl = $this->getConfig()->get( 'UploadStashScalerBaseUrl' );
 
@@ -250,9 +251,9 @@ class SpecialUploadStash extends UnlistedSpecialPage {
 		// make a curl call to the scaler to create a thumbnail
 		$httpOptions = array(
 			'method' => 'GET',
-			'timeout' => 'default'
+			'timeout' => 5 // T90599 attempt to time out cleanly
 		);
-		$req = MWHttpRequest::factory( $scalerThumbUrl, $httpOptions );
+		$req = MWHttpRequest::factory( $scalerThumbUrl, $httpOptions, __METHOD__ );
 		$status = $req->execute();
 		if ( !$status->isOK() ) {
 			$errors = $status->getErrorsArray();

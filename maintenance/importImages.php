@@ -70,9 +70,9 @@ $files = findFiles( $dir, $extensions, isset( $options['search-recursively'] ) )
 # Initialise the user for this operation
 $user = isset( $options['user'] )
 	? User::newFromName( $options['user'] )
-	: User::newFromName( 'Maintenance script' );
+	: User::newSystemUser( 'Maintenance script', array( 'steal' => true ) );
 if ( !$user instanceof User ) {
-	$user = User::newFromName( 'Maintenance script' );
+	$user = User::newSystemUser( 'Maintenance script', array( 'steal' => true ) );
 }
 $wgUser = $user;
 
@@ -88,23 +88,23 @@ if ( isset( $options['check-userblock'] ) ) {
 }
 
 # Get --from
-wfSuppressWarnings();
+MediaWiki\suppressWarnings();
 $from = $options['from'];
-wfRestoreWarnings();
+MediaWiki\restoreWarnings();
 
 # Get sleep time.
-wfSuppressWarnings();
+MediaWiki\suppressWarnings();
 $sleep = $options['sleep'];
-wfRestoreWarnings();
+MediaWiki\restoreWarnings();
 
 if ( $sleep ) {
 	$sleep = (int)$sleep;
 }
 
 # Get limit number
-wfSuppressWarnings();
+MediaWiki\suppressWarnings();
 $limit = $options['limit'];
-wfRestoreWarnings();
+MediaWiki\restoreWarnings();
 
 if ( $limit ) {
 	$limit = (int)$limit;

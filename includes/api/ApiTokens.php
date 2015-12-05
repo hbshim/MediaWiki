@@ -37,7 +37,9 @@ class ApiTokens extends ApiBase {
 		$this->logFeatureUsage( "action=tokens" );
 
 		$params = $this->extractRequestParams();
-		$res = array();
+		$res = array(
+			ApiResult::META_TYPE => 'assoc',
+		);
 
 		$types = $this->getTokenTypes();
 		foreach ( $params['type'] as $type ) {
@@ -54,8 +56,9 @@ class ApiTokens extends ApiBase {
 	}
 
 	private function getTokenTypes() {
-		// If we're in JSON callback mode, no tokens can be obtained
-		if ( !is_null( $this->getMain()->getRequest()->getVal( 'callback' ) ) ) {
+		// If we're in a mode that breaks the same-origin policy, no tokens can
+		// be obtained
+		if ( $this->lacksSameOriginSecurity() ) {
 			return array();
 		}
 
@@ -70,6 +73,19 @@ class ApiTokens extends ApiBase {
 			$types[$name] = array( 'ApiQueryInfo', 'get' . ucfirst( $name ) . 'Token' );
 		}
 		Hooks::run( 'ApiTokensGetTokenTypes', array( &$types ) );
+
+		// For forwards-compat, copy any token types from ApiQueryTokens that
+		// we don't already have something for.
+		$user = $this->getUser();
+		$request = $this->getRequest();
+		foreach ( ApiQueryTokens::getTokenTypeSalts() as $name => $salt ) {
+			if ( !isset( $types[$name] ) ) {
+				$types[$name] = function () use ( $salt, $user, $request ) {
+					return $user->getEditToken( $salt, $request );
+				};
+			}
+		}
+
 		ksort( $types );
 
 		return $types;

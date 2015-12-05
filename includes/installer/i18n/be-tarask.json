@@ -52,7 +52,6 @@
 	"config-env-bad": "Асяродзьдзе было праверанае.\nУсталяваньне MediaWiki немагчымае.",
 	"config-env-php": "Усталяваны PHP $1.",
 	"config-env-hhvm": "HHVM $1 усталяваная.",
-	"config-unicode-using-utf8": "Выкарыстоўваецца бібліятэка Unicode-нармалізацыі Браяна Вібэра",
 	"config-unicode-using-intl": "Выкарыстоўваецца [http://pecl.php.net/intl intl пашырэньне з PECL] для Unicode-нармалізацыі",
 	"config-unicode-pure-php-warning": "'''Папярэджаньне''': [http://pecl.php.net/intl Пашырэньне intl з PECL] — ня слушнае для Unicode-нармалізацыі, цяпер выкарыстоўваецца марудная PHP-рэалізацыя.\nКалі ў Вас сайт з высокай наведваемасьцю, раім пачытаць пра [//www.mediawiki.org/wiki/Special:MyLanguage/Unicode_normalization_considerations Unicode-нармалізацыю].",
 	"config-unicode-update-warning": "'''Папярэджаньне''': усталяваная вэрсія бібліятэкі для Unicode-нармалізацыі выкарыстоўвае састарэлую вэрсію бібліятэкі з [http://site.icu-project.org/ праекту ICU].\nРаім [//www.mediawiki.org/wiki/Special:MyLanguage/Unicode_normalization_considerations абнавіць], калі ваш сайт будзе працаваць зь Unicode.",
@@ -65,7 +64,7 @@
 	"config-magic-quotes-sybase": "'''Фатальная памылка: рэжым [http://www.php.net/manual/en/ref.info.php#ini.magic-quotes-sybase magic_quotes_sybase] уключаны!'''\nГэты рэжым шкодзіць уваходныя зьвесткі непрадказальным чынам.\nПрацяг усталяваньня альбо выкарыстаньне MediaWiki немагчымыя, пакуль рэжым ня будзе выключаны.",
 	"config-mbstring": "'''Фатальная памылка: рэжым [http://www.php.net/manual/en/ref.info.php#mbstring.overload mbstring.func_overload] уключаны!'''\nГэты рэжым выклікае памылкі і можа шкодзіць зьвесткі непрадказальным чынам.\nПрацяг усталяваньня альбо выкарыстаньне MediaWiki немагчымыя, пакуль рэжым ня будзе выключаны.",
 	"config-safe-mode": "'''Папярэджаньне:''' [http://www.php.net/features.safe-mode бясьпечны рэжым] PHP уключаны.\nГэта можа выклікаць праблемы, галоўным чынам падчас загрузак файлаў і ў падтрымцы <code>math</code>.",
-	"config-xml-bad": "Ня знойдзены модуль XML для PHP.\nMediaWiki патрэбныя функцыі з гэтага модулю, таму MediaWiki ня будзе працаваць у гэтай канфігурацыі.\nКалі Вы выкарыстоўваеце Mandrake, усталюйце пакет php-xml.",
+	"config-xml-bad": "Ня знойдзены модуль XML для PHP.\nMediaWiki патрэбныя функцыі з гэтага модулю, таму MediaWiki ня будзе працаваць у гэтай канфігурацыі.\nМагчыма, вам трэба ўсталяваць RPM-пакет php-xml.",
 	"config-pcre-old": "<strong>Крытычная памылка:</strong> патрэбны PCRE вэрсіі $1 або пазьнейшай.\nPHP-файл, які выконваецца, зьвязаны з PCRE вэрсіі $2.\n[https://www.mediawiki.org/wiki/Manual:Errors_and_symptoms/PCRE Больш інфармацыі].",
 	"config-pcre-no-utf8": "'''Фатальная памылка''': модуль PCRE для PHP скампіляваны без падтрымкі PCRE_UTF8.\nMediaWiki патрабуе падтрымкі UTF-8 для слушнай працы.",
 	"config-memory-raised": "Абмежаваньне на даступную для PHP памяць <code>memory_limit</code> было падвышанае з $1 да $2.",
@@ -105,8 +104,6 @@
 	"config-db-install-account": "Імя карыстальніка для ўсталяваньня",
 	"config-db-username": "Імя карыстальніка базы зьвестак:",
 	"config-db-password": "Пароль базы зьвестак:",
-	"config-db-password-empty": "Калі ласка, увядзіце пароль для новага карыстальніка базы зьвестак: $1.\nМагчыма стварыць карыстальніка без паролю, але гэта небясьпечна.",
-	"config-db-username-empty": "Вы мусіце ўвесьці значэньне парамэтру «{{int:config-db-username}}»",
 	"config-db-install-username": "Увядзіце імя карыстальніка, якое будзе выкарыстоўвацца для злучэньня з базай зьвестак падчас усталяваньня. Гэта не назва рахунку MediaWiki; гэта імя карыстальніка Вашай базы зьвестак.",
 	"config-db-install-password": "Увядзіце пароль, які будзе выкарыстоўвацца для злучэньня з базай зьвестак падчас усталяваньня. Гэта не пароль рахунку MediaWiki; гэта пароль Вашай базы зьвестак.",
 	"config-db-install-help": "Увядзіце імя карыстальніка і пароль, якія будуць выкарыстаныя для далучэньня да базы зьвестак падчас працэсу ўсталяваньня.",
@@ -329,5 +326,5 @@
 	"config-nofile": "Файл «$1» ня знойдзены. Ці быў ён выдалены?",
 	"config-extension-link": "Ці ведаеце вы, што вашая вікі падтрымлівае [//www.mediawiki.org/wiki/Special:MyLanguage/Manual:Extensions пашырэньні]?\n\nВы можаце праглядзець [//www.mediawiki.org/wiki/Special:MyLanguage/Category:Extensions_by_category пашырэньні паводле катэгорыяў].",
 	"mainpagetext": "'''MediaWiki пасьпяхова ўсталяваная.'''",
-	"mainpagedocfooter": "Глядзіце [//meta.wikimedia.org/wiki/Help:Contents дапаможнік карыстальніка] для атрыманьня інфармацыі па карыстаньні вікі-праграмамі.\n\n== З чаго пачаць ==\n* [//www.mediawiki.org/wiki/Special:MyLanguage/Manual:Configuration_settings Сьпіс парамэтраў канфігурацыі]\n* [//www.mediawiki.org/wiki/Special:MyLanguage/Manual:FAQ Частыя пытаньні MediaWiki]\n* [https://lists.wikimedia.org/mailman/listinfo/mediawiki-announce Рассылка паведамленьняў пра зьяўленьне новых вэрсіяў MediaWiki]\n* [//www.mediawiki.org/wiki/Special:MyLanguage/Localisation#Translation_resources Пераклад MediaWiki на вашую мову]"
+	"mainpagedocfooter": "Глядзіце [//meta.wikimedia.org/wiki/Help:Contents дапаможнік карыстальніка] для атрыманьня інфармацыі па карыстаньні вікі-праграмамі.\n\n== З чаго пачаць ==\n* [//www.mediawiki.org/wiki/Special:MyLanguage/Manual:Configuration_settings Сьпіс парамэтраў канфігурацыі]\n* [//www.mediawiki.org/wiki/Special:MyLanguage/Manual:FAQ Частыя пытаньні MediaWiki]\n* [https://lists.wikimedia.org/mailman/listinfo/mediawiki-announce Рассылка паведамленьняў пра зьяўленьне новых вэрсіяў MediaWiki]\n* [//www.mediawiki.org/wiki/Special:MyLanguage/Localisation#Translation_resources Пераклад MediaWiki на вашую мову]\n* [//www.mediawiki.org/wiki/Special:MyLanguage/Manual:Combating_spam Даведайцеся, як змагацца з спамам у вашай вікі]"
 }

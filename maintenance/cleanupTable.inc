@@ -37,7 +37,6 @@ class TableCleanup extends Maintenance {
 	);
 
 	protected $dryrun = false;
-	protected $maxLag = 10; # if slaves are lagged more than 10 secs, wait
 	public $batchSize = 100;
 	public $reportInterval = 100;
 
@@ -50,11 +49,12 @@ class TableCleanup extends Maintenance {
 
 	public function execute() {
 		global $wgUser;
-		$wgUser = User::newFromName( 'Conversion script' );
 		$this->dryrun = $this->hasOption( 'dry-run' );
 		if ( $this->dryrun ) {
+			$wgUser = User::newFromName( 'Conversion script' );
 			$this->output( "Checking for bad titles...\n" );
 		} else {
+			$wgUser = User::newSystemUser( 'Conversion script', array( 'steal' => true ) );
 			$this->output( "Checking and fixing bad titles...\n" );
 		}
 		$this->runTable( $this->defaultParams );

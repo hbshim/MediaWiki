@@ -38,12 +38,10 @@
  * of memory.
  *
  * Introduced by r47317
- *
- * @internal documentation reviewed on 18 Mar 2011 by hashar
  */
 class BacklinkCache {
-	/** @var ProcessCacheLRU */
-	protected static $cache;
+	/** @var BacklinkCache */
+	protected static $instance;
 
 	/**
 	 * Multi dimensions array representing batches. Keys are:
@@ -55,6 +53,7 @@ class BacklinkCache {
 	 * @see BacklinkCache::partitionResult()
 	 *
 	 * Cleared with BacklinkCache::clear()
+	 * @var array[]
 	 */
 	protected $partitionCache = array();
 
@@ -64,6 +63,7 @@ class BacklinkCache {
 	 *
 	 * Initialized with BacklinkCache::getLinks()
 	 * Cleared with BacklinkCache::clear()
+	 * @var ResultWrapper[]
 	 */
 	protected $fullResultCache = array();
 
@@ -101,15 +101,10 @@ class BacklinkCache {
 	 * @return BacklinkCache
 	 */
 	public static function get( Title $title ) {
-		if ( !self::$cache ) { // init cache
-			self::$cache = new ProcessCacheLRU( 1 );
+		if ( !self::$instance || !self::$instance->title->equals( $title ) ) {
+			self::$instance = new self( $title );
 		}
-		$dbKey = $title->getPrefixedDBkey();
-		if ( !self::$cache->has( $dbKey, 'obj', 3600 ) ) {
-			self::$cache->set( $dbKey, 'obj', new self( $title ) );
-		}
-
-		return self::$cache->get( $dbKey, 'obj' );
+		return self::$instance;
 	}
 
 	/**
@@ -135,7 +130,7 @@ class BacklinkCache {
 	/**
 	 * Set the Database object to use
 	 *
-	 * @param DatabaseBase $db
+	 * @param IDatabase $db
 	 */
 	public function setDB( $db ) {
 		$this->db = $db;
@@ -159,7 +154,7 @@ class BacklinkCache {
 	 * @param string $table
 	 * @param int|bool $startId
 	 * @param int|bool $endId
-	 * @param int|INF $max
+	 * @param int $max
 	 * @return TitleArrayFromResult
 	 */
 	public function getLinks( $table, $startId = false, $endId = false, $max = INF ) {
@@ -171,7 +166,7 @@ class BacklinkCache {
 	 * @param string $table
 	 * @param int|bool $startId
 	 * @param int|bool $endId
-	 * @param int|INF $max
+	 * @param int $max
 	 * @param string $select 'all' or 'ids'
 	 * @return ResultWrapper
 	 */
@@ -321,12 +316,13 @@ class BacklinkCache {
 	/**
 	 * Get the approximate number of backlinks
 	 * @param string $table
-	 * @param int|INF $max Only count up to this many backlinks
+	 * @param int $max Only count up to this many backlinks
 	 * @return int
 	 */
 	public function getNumLinks( $table, $max = INF ) {
-		global $wgMemc, $wgUpdateRowsPerJob;
+		global $wgUpdateRowsPerJob;
 
+		$cache = ObjectCache::getMainWANInstance();
 		// 1) try partition cache ...
 		if ( isset( $this->partitionCache[$table] ) ) {
 			$entry = reset( $this->partitionCache[$table] );
@@ -342,7 +338,7 @@ class BacklinkCache {
 		$memcKey = wfMemcKey( 'numbacklinks', md5( $this->title->getPrefixedDBkey() ), $table );
 
 		// 3) ... fallback to memcached ...
-		$count = $wgMemc->get( $memcKey );
+		$count = $cache->get( $memcKey );
 		if ( $count ) {
 			return min( $max, $count );
 		}
@@ -357,7 +353,7 @@ class BacklinkCache {
 			// Fetch the full title info, since the caller will likely need it next
 			$count = $this->getLinks( $table, false, false, $max )->count();
 			if ( $count < $max ) { // full count
-				$wgMemc->set( $memcKey, $count, self::CACHE_EXPIRY );
+				$cache->set( $memcKey, $count, self::CACHE_EXPIRY );
 			}
 		}
 
@@ -374,8 +370,6 @@ class BacklinkCache {
 	 * @return array
 	 */
 	public function partition( $table, $batchSize ) {
-		global $wgMemc;
-
 		// 1) try partition cache ...
 		if ( isset( $this->partitionCache[$table][$batchSize] ) ) {
 			wfDebug( __METHOD__ . ": got from partition cache\n" );
@@ -383,6 +377,7 @@ class BacklinkCache {
 			return $this->partitionCache[$table][$batchSize]['batches'];
 		}
 
+		$cache = ObjectCache::getMainWANInstance();
 		$this->partitionCache[$table][$batchSize] = false;
 		$cacheEntry =& $this->partitionCache[$table][$batchSize];
 
@@ -402,7 +397,7 @@ class BacklinkCache {
 		);
 
 		// 3) ... fallback to memcached ...
-		$memcValue = $wgMemc->get( $memcKey );
+		$memcValue = $cache->get( $memcKey );
 		if ( is_array( $memcValue ) ) {
 			$cacheEntry = $memcValue;
 			wfDebug( __METHOD__ . ": got from memcached $memcKey\n" );
@@ -434,11 +429,11 @@ class BacklinkCache {
 		}
 
 		// Save partitions to memcached
-		$wgMemc->set( $memcKey, $cacheEntry, self::CACHE_EXPIRY );
+		$cache->set( $memcKey, $cacheEntry, self::CACHE_EXPIRY );
 
 		// Save backlink count to memcached
 		$memcKey = wfMemcKey( 'numbacklinks', md5( $this->title->getPrefixedDBkey() ), $table );
-		$wgMemc->set( $memcKey, $cacheEntry['numRows'], self::CACHE_EXPIRY );
+		$cache->set( $memcKey, $cacheEntry['numRows'], self::CACHE_EXPIRY );
 
 		wfDebug( __METHOD__ . ": got from database\n" );
 

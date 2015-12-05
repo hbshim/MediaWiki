@@ -29,6 +29,8 @@
  */
 class ApiProtect extends ApiBase {
 	public function execute() {
+		global $wgContLang;
+
 		$params = $this->extractRequestParams();
 
 		$pageObj = $this->getTitleOrPageId( $params, 'fromdbmaster' );
@@ -54,7 +56,6 @@ class ApiProtect extends ApiBase {
 		}
 
 		$restrictionTypes = $titleObj->getRestrictionTypes();
-		$db = $this->getDB();
 
 		$protections = array();
 		$expiryarray = array();
@@ -77,8 +78,8 @@ class ApiProtect extends ApiBase {
 				$this->dieUsageMsg( array( 'protect-invalidlevel', $p[1] ) );
 			}
 
-			if ( in_array( $expiry[$i], array( 'infinite', 'indefinite', 'infinity', 'never' ) ) ) {
-				$expiryarray[$p[0]] = $db->getInfinity();
+			if ( wfIsInfinity( $expiry[$i] ) ) {
+				$expiryarray[$p[0]] = 'infinity';
 			} else {
 				$exp = strtotime( $expiry[$i] );
 				if ( $exp < 0 || !$exp ) {
@@ -93,18 +94,12 @@ class ApiProtect extends ApiBase {
 			}
 			$resultProtections[] = array(
 				$p[0] => $protections[$p[0]],
-				'expiry' => ( $expiryarray[$p[0]] == $db->getInfinity()
-					? 'infinite'
-					: wfTimestamp( TS_ISO_8601, $expiryarray[$p[0]] )
-				)
+				'expiry' => $wgContLang->formatExpiry( $expiryarray[$p[0]], TS_ISO_8601, 'infinite' ),
 			);
 		}
 
 		$cascade = $params['cascade'];
 
-		if ( $params['watch'] ) {
-			$this->logFeatureUsage( 'action=protect&watch' );
-		}
 		$watch = $params['watch'] ? 'watch' : $params['watchlist'];
 		$this->setWatch( $watch, $titleObj, 'watchdefault' );
 
@@ -124,11 +119,11 @@ class ApiProtect extends ApiBase {
 			'reason' => $params['reason']
 		);
 		if ( $cascade ) {
-			$res['cascade'] = '';
+			$res['cascade'] = true;
 		}
 		$res['protections'] = $resultProtections;
 		$result = $this->getResult();
-		$result->setIndexedTagName( $res['protections'], 'protection' );
+		ApiResult::setIndexedTagName( $res['protections'], 'protection' );
 		$result->addValue( null, $this->getModuleName(), $res );
 	}
 

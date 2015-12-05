@@ -41,7 +41,7 @@ class TemplateParser {
 	 * @param boolean $forceRecompile
 	 */
 	public function __construct( $templateDir = null, $forceRecompile = false ) {
-		$this->templateDir = $templateDir ? $templateDir : __DIR__ . '/templates';
+		$this->templateDir = $templateDir ?: __DIR__ . '/templates';
 		$this->forceRecompile = $forceRecompile;
 	}
 
@@ -49,9 +49,9 @@ class TemplateParser {
 	 * Constructs the location of the the source Mustache template
 	 * @param string $templateName The name of the template
 	 * @return string
-	 * @throws Exception Disallows upwards directory traversal via $templateName
+	 * @throws UnexpectedValueException If $templateName attempts upwards directory traversal
 	 */
-	public function getTemplateFilename( $templateName ) {
+	protected function getTemplateFilename( $templateName ) {
 		// Prevent upwards directory traversal using same methods as Title::secureAndSplit
 		if (
 			strpos( $templateName, '.' ) !== false &&
@@ -65,7 +65,7 @@ class TemplateParser {
 				substr( $templateName, -3 ) === '/..'
 			)
 		) {
-			throw new Exception( "Malformed \$templateName: $templateName" );
+			throw new UnexpectedValueException( "Malformed \$templateName: $templateName" );
 		}
 
 		return "{$this->templateDir}/{$templateName}.mustache";
@@ -74,19 +74,21 @@ class TemplateParser {
 	/**
 	 * Returns a given template function if found, otherwise throws an exception.
 	 * @param string $templateName The name of the template (without file suffix)
-	 * @return Function
-	 * @throws Exception
+	 * @return callable
+	 * @throws RuntimeException
 	 */
-	public function getTemplate( $templateName ) {
+	protected function getTemplate( $templateName ) {
 		// If a renderer has already been defined for this template, reuse it
-		if ( isset( $this->renderers[$templateName] ) ) {
+		if ( isset( $this->renderers[$templateName] ) &&
+			is_callable( $this->renderers[$templateName] )
+		) {
 			return $this->renderers[$templateName];
 		}
 
 		$filename = $this->getTemplateFilename( $templateName );
 
 		if ( !file_exists( $filename ) ) {
-			throw new Exception( "Could not locate template: {$filename}" );
+			throw new RuntimeException( "Could not locate template: {$filename}" );
 		}
 
 		// Read the template file
@@ -99,67 +101,81 @@ class TemplateParser {
 		$config = ConfigFactory::getDefaultInstance()->makeConfig( 'main' );
 		$secretKey = $config->get( 'SecretKey' );
 
-		// See if the compiled PHP code is stored in cache.
-		// CACHE_ACCEL throws an exception if no suitable object cache is present, so fall
-		// back to CACHE_ANYTHING.
-		try {
-			$cache = wfGetCache( CACHE_ACCEL );
-		} catch ( Exception $e ) {
-			$cache = wfGetCache( CACHE_ANYTHING );
-		}
-		$key = wfMemcKey( 'template', $templateName, $fastHash );
-		$code = $this->forceRecompile ? null : $cache->get( $key );
-
-		if ( !$code ) {
-			// Compile the template into PHP code
-			$code = self::compile( $fileContents );
+		if ( $secretKey ) {
+			// See if the compiled PHP code is stored in cache.
+			$cache = ObjectCache::getLocalServerInstance( CACHE_ANYTHING );
+			$key = $cache->makeKey( 'template', $templateName, $fastHash );
+			$code = $this->forceRecompile ? null : $cache->get( $key );
 
 			if ( !$code ) {
-				throw new Exception( "Could not compile template: {$filename}" );
-			}
+				$code = $this->compileForEval( $fileContents, $filename );
 
-			// Strip the "<?php" added by lightncandy so that it can be eval()ed
-			if ( substr( $code, 0, 5 ) === '<?php' ) {
-				$code = substr( $code, 5 );
-			}
-
-			$renderer = eval( $code );
-
-			// Prefix the code with a keyed hash (64 hex chars) as an integrity check
-			$code = hash_hmac( 'sha256', $code, $secretKey ) . $code;
-
-			// Cache the compiled PHP code
-			$cache->set( $key, $code );
-		} else {
-			// Verify the integrity of the cached PHP code
-			$keyedHash = substr( $code, 0, 64 );
-			$code = substr( $code, 64 );
-			if ( $keyedHash === hash_hmac( 'sha256', $code, $secretKey ) ) {
-				$renderer = eval( $code );
+				// Prefix the cached code with a keyed hash (64 hex chars) as an integrity check
+				$cache->set( $key, hash_hmac( 'sha256', $code, $secretKey ) . $code );
 			} else {
-				throw new Exception( "Template failed integrity check: {$filename}" );
+				// Verify the integrity of the cached PHP code
+				$keyedHash = substr( $code, 0, 64 );
+				$code = substr( $code, 64 );
+				if ( $keyedHash !== hash_hmac( 'sha256', $code, $secretKey ) ) {
+					// Generate a notice if integrity check fails
+					trigger_error( "Template failed integrity check: {$filename}" );
+				}
 			}
+		// If there is no secret key available, don't use cache
+		} else {
+			$code = $this->compileForEval( $fileContents, $filename );
 		}
 
-		return $this->renderers[$templateName] = $renderer;
+		$renderer = eval( $code );
+		if ( !is_callable( $renderer ) ) {
+			throw new RuntimeException( "Requested template, {$templateName}, is not callable" );
+		}
+		$this->renderers[$templateName] = $renderer;
+		return $renderer;
+	}
+
+	/**
+	 * Wrapper for compile() function that verifies successful compilation and strips
+	 * out the '<?php' part so that the code is ready for eval()
+	 * @param string $fileContents Mustache code
+	 * @param string $filename Name of the template
+	 * @return string PHP code (without '<?php')
+	 * @throws RuntimeException
+	 */
+	protected function compileForEval( $fileContents, $filename ) {
+		// Compile the template into PHP code
+		$code = $this->compile( $fileContents );
+
+		if ( !$code ) {
+			throw new RuntimeException( "Could not compile template: {$filename}" );
+		}
+
+		// Strip the "<?php" added by lightncandy so that it can be eval()ed
+		if ( substr( $code, 0, 5 ) === '<?php' ) {
+			$code = substr( $code, 5 );
+		}
+
+		return $code;
 	}
 
 	/**
 	 * Compile the Mustache code into PHP code using LightnCandy
 	 * @param string $code Mustache code
-	 * @return string PHP code
-	 * @throws Exception
+	 * @return string PHP code (with '<?php')
+	 * @throws RuntimeException
 	 */
-	public static function compile( $code ) {
+	protected function compile( $code ) {
 		if ( !class_exists( 'LightnCandy' ) ) {
-			throw new Exception( 'LightnCandy class not defined' );
+			throw new RuntimeException( 'LightnCandy class not defined' );
 		}
 		return LightnCandy::compile(
 			$code,
 			array(
 				// Do not add more flags here without discussion.
 				// If you do add more flags, be sure to update unit tests as well.
-				'flags' => LightnCandy::FLAG_ERROR_EXCEPTION
+				'flags' => LightnCandy::FLAG_ERROR_EXCEPTION,
+				'basedir' => $this->templateDir,
+				'fileext' => '.mustache',
 			)
 		);
 	}

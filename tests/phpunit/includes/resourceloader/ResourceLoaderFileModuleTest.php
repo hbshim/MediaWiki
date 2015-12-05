@@ -1,6 +1,7 @@
 <?php
 
 /**
+ * @group Database
  * @group ResourceLoader
  */
 class ResourceLoaderFileModuleTest extends ResourceLoaderTestCase {
@@ -18,9 +19,9 @@ class ResourceLoaderFileModuleTest extends ResourceLoaderTestCase {
 		);
 	}
 
-	public static function getModules() {
+	private static function getModules() {
 		$base = array(
-			'localBasePath' => realpath( dirname( __FILE__ ) ),
+			'localBasePath' => realpath( __DIR__ ),
 		);
 
 		return array(
@@ -45,10 +46,16 @@ class ResourceLoaderFileModuleTest extends ResourceLoaderTestCase {
 					'templates/template_awesome.handlebars',
 				),
 			),
+
+			'aliasFooFromBar' => $base + array(
+				'templates' => array(
+					'foo.foo' => 'templates/template.bar',
+				),
+			),
 		);
 	}
 
-	public static function providerGetTemplates() {
+	public static function providerTemplateDependencies() {
 		$modules = self::getModules();
 
 		return array(
@@ -57,39 +64,42 @@ class ResourceLoaderFileModuleTest extends ResourceLoaderTestCase {
 				array(),
 			),
 			array(
-				$modules['templateModuleHandlebars'],
-				array(
-					'templates/template_awesome.handlebars' => "wow\n",
-				),
-			),
-			array(
 				$modules['htmlTemplateModule'],
 				array(
-					'templates/template.html' => "<strong>hello</strong>\n",
-					'templates/template2.html' => "<div>goodbye</div>\n",
+					'mediawiki.template',
 				),
 			),
 			array(
-				$modules['aliasedHtmlTemplateModule'],
+				$modules['templateModuleHandlebars'],
 				array(
-					'foo.html' => "<strong>hello</strong>\n",
-					'bar.html' => "<div>goodbye</div>\n",
+					'mediawiki.template',
+					'mediawiki.template.handlebars',
 				),
 			),
-		);
-	}
-
-	public static function providerGetModifiedTime() {
-		$modules = self::getModules();
-
-		return array(
-			// Check the default value when no templates present in module is 1
-			array( $modules['noTemplateModule'], 1 ),
+			array(
+				$modules['aliasFooFromBar'],
+				array(
+					'mediawiki.template',
+					'mediawiki.template.foo',
+				),
+			),
 		);
 	}
 
 	/**
+	 * @dataProvider providerTemplateDependencies
+	 * @covers ResourceLoaderFileModule::__construct
+	 * @covers ResourceLoaderFileModule::getDependencies
+	 */
+	public function testTemplateDependencies( $module, $expected ) {
+		$rl = new ResourceLoaderFileModule( $module );
+		$this->assertEquals( $rl->getDependencies(), $expected );
+	}
+
+	/**
+	 * @covers ResourceLoaderFileModule::getAllStyleFiles
 	 * @covers ResourceLoaderFileModule::getAllSkinStyleFiles
+	 * @covers ResourceLoaderFileModule::getSkinStyleFiles
 	 */
 	public function testGetAllSkinStyleFiles() {
 		$baseParams = array(
@@ -133,6 +143,81 @@ class ResourceLoaderFileModuleTest extends ResourceLoaderTestCase {
 	}
 
 	/**
+	 * Strip @noflip annotations from CSS code.
+	 * @param string $css
+	 * @return string
+	 */
+	private static function stripNoflip( $css ) {
+		return str_replace( '/*@noflip*/ ', '', $css );
+	}
+
+	/**
+	 * What happens when you mix @embed and @noflip?
+	 * This really is an integration test, but oh well.
+	 *
+	 * @covers ResourceLoaderFileModule::getStyles
+	 * @covers ResourceLoaderFileModule::getStyleFiles
+	 */
+	public function testMixedCssAnnotations() {
+		$basePath = __DIR__ . '/../../data/css';
+		$testModule = new ResourceLoaderFileModule( array(
+			'localBasePath' => $basePath,
+			'styles' => array( 'test.css' ),
+		) );
+		$expectedModule = new ResourceLoaderFileModule( array(
+			'localBasePath' => $basePath,
+			'styles' => array( 'expected.css' ),
+		) );
+
+		$contextLtr = $this->getResourceLoaderContext( 'en', 'ltr' );
+		$contextRtl = $this->getResourceLoaderContext( 'he', 'rtl' );
+
+		// Since we want to compare the effect of @noflip+@embed against the effect of just @embed, and
+		// the @noflip annotations are always preserved, we need to strip them first.
+		$this->assertEquals(
+			$expectedModule->getStyles( $contextLtr ),
+			self::stripNoflip( $testModule->getStyles( $contextLtr ) ),
+			"/*@noflip*/ with /*@embed*/ gives correct results in LTR mode"
+		);
+		$this->assertEquals(
+			$expectedModule->getStyles( $contextLtr ),
+			self::stripNoflip( $testModule->getStyles( $contextRtl ) ),
+			"/*@noflip*/ with /*@embed*/ gives correct results in RTL mode"
+		);
+	}
+
+	public static function providerGetTemplates() {
+		$modules = self::getModules();
+
+		return array(
+			array(
+				$modules['noTemplateModule'],
+				array(),
+			),
+			array(
+				$modules['templateModuleHandlebars'],
+				array(
+					'templates/template_awesome.handlebars' => "wow\n",
+				),
+			),
+			array(
+				$modules['htmlTemplateModule'],
+				array(
+					'templates/template.html' => "<strong>hello</strong>\n",
+					'templates/template2.html' => "<div>goodbye</div>\n",
+				),
+			),
+			array(
+				$modules['aliasedHtmlTemplateModule'],
+				array(
+					'foo.html' => "<strong>hello</strong>\n",
+					'bar.html' => "<div>goodbye</div>\n",
+				),
+			),
+		);
+	}
+
+	/**
 	 * @dataProvider providerGetTemplates
 	 * @covers ResourceLoaderFileModule::getTemplates
 	 */
@@ -140,15 +225,5 @@ class ResourceLoaderFileModuleTest extends ResourceLoaderTestCase {
 		$rl = new ResourceLoaderFileModule( $module );
 
 		$this->assertEquals( $rl->getTemplates(), $expected );
-	}
-
-	/**
-	 * @dataProvider providerGetModifiedTime
-	 * @covers ResourceLoaderFileModule::getModifiedTime
-	 */
-	public function testGetModifiedTime( $module, $expected ) {
-		$rl = new ResourceLoaderFileModule( $module );
-		$ts = $rl->getModifiedTime( $this->getResourceLoaderContext() );
-		$this->assertEquals( $ts, $expected );
 	}
 }

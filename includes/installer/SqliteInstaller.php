@@ -55,7 +55,7 @@ class SqliteInstaller extends DatabaseInstaller {
 	public function checkPrerequisites() {
 		$result = Status::newGood();
 		// Bail out if SQLite is too old
-		$db = new DatabaseSqliteStandalone( ':memory:' );
+		$db = DatabaseSqlite::newStandaloneInstance( ':memory:' );
 		if ( version_compare( $db->getServerVersion(), self::MINIMUM_VERSION, '<' ) ) {
 			$result->fatal( 'config-outdated-sqlite', $db->getServerVersion(), self::MINIMUM_VERSION );
 		}
@@ -157,9 +157,9 @@ class SqliteInstaller extends DatabaseInstaller {
 			# Called early on in the installer, later we just want to sanity check
 			# if it's still writable
 			if ( $create ) {
-				wfSuppressWarnings();
+				MediaWiki\suppressWarnings();
 				$ok = wfMkdirParents( $dir, 0700, __METHOD__ );
-				wfRestoreWarnings();
+				MediaWiki\restoreWarnings();
 				if ( !$ok ) {
 					return Status::newFatal( 'config-sqlite-mkdir-error', $dir );
 				}

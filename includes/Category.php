@@ -304,31 +304,15 @@ class Category {
 			return false;
 		}
 
-		# Note, we must use names for this, since categorylinks does.
-		if ( $this->mName === null ) {
-			if ( !$this->initialize() ) {
-				return false;
-			}
+		# If we have just a category name, find out whether there is an
+		# existing row. Or if we have just an ID, get the name, because
+		# that's what categorylinks uses.
+		if ( !$this->initialize() ) {
+			return false;
 		}
 
 		$dbw = wfGetDB( DB_MASTER );
 		$dbw->startAtomic( __METHOD__ );
-
-		# Insert the row if it doesn't exist yet (e.g., this is being run via
-		# update.php from a pre-1.16 schema).  TODO: This will cause lots and
-		# lots of gaps on some non-MySQL DBMSes if you run populateCategory.php
-		# repeatedly.  Plus it's an extra query that's unneeded almost all the
-		# time.  This should be rewritten somehow, probably.
-		$seqVal = $dbw->nextSequenceValue( 'category_cat_id_seq' );
-		$dbw->insert(
-			'category',
-			array(
-				'cat_id' => $seqVal,
-				'cat_title' => $this->mName
-			),
-			__METHOD__,
-			'IGNORE'
-		);
 
 		$cond1 = $dbw->conditional( array( 'page_namespace' => NS_CATEGORY ), 1, 'NULL' );
 		$cond2 = $dbw->conditional( array( 'page_namespace' => NS_FILE ), 1, 'NULL' );
@@ -342,16 +326,40 @@ class Category {
 			__METHOD__,
 			array( 'LOCK IN SHARE MODE' )
 		);
-		$ret = $dbw->update(
-			'category',
-			array(
-				'cat_pages' => $result->pages,
-				'cat_subcats' => $result->subcats,
-				'cat_files' => $result->files
-			),
-			array( 'cat_title' => $this->mName ),
-			__METHOD__
-		);
+
+		if ( $this->mID ) {
+			# The category row already exists, so do a plain UPDATE instead
+			# of INSERT...ON DUPLICATE KEY UPDATE to avoid creating a gap
+			# in the cat_id sequence. The row may or may not be "affected".
+			$dbw->update(
+				'category',
+				array(
+					'cat_pages' => $result->pages,
+					'cat_subcats' => $result->subcats,
+					'cat_files' => $result->files
+				),
+				array( 'cat_title' => $this->mName ),
+				__METHOD__
+			);
+		} else {
+			$dbw->upsert(
+				'category',
+				array(
+					'cat_title' => $this->mName,
+					'cat_pages' => $result->pages,
+					'cat_subcats' => $result->subcats,
+					'cat_files' => $result->files
+				),
+				array( 'cat_title' ),
+				array(
+					'cat_pages' => $result->pages,
+					'cat_subcats' => $result->subcats,
+					'cat_files' => $result->files
+				),
+				__METHOD__
+			);
+		}
+
 		$dbw->endAtomic( __METHOD__ );
 
 		# Now we should update our local counts.
@@ -359,6 +367,6 @@ class Category {
 		$this->mSubcats = $result->subcats;
 		$this->mFiles = $result->files;
 
-		return $ret;
+		return true;
 	}
 }

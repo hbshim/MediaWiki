@@ -46,7 +46,6 @@ class ApiQueryDeletedRevisions extends ApiQueryRevisionsBase {
 			);
 		}
 
-		$result = $this->getResult();
 		$pageSet = $this->getPageSet();
 		$pageMap = $pageSet->getGoodAndMissingTitlesByNamespace();
 		$pageCount = count( $pageSet->getGoodAndMissingTitles() );
@@ -234,8 +233,10 @@ class ApiQueryDeletedRevisions extends ApiQueryRevisionsBase {
 					}
 				}
 				if ( !isset( $pageMap[$row->ar_namespace][$row->ar_title] ) ) {
-					ApiBase::dieDebug( "Found row in archive (ar_id={$row->ar_id}) that didn't " .
-						"get processed by ApiPageSet" );
+					ApiBase::dieDebug(
+						__METHOD__,
+						"Found row in archive (ar_id={$row->ar_id}) that didn't get processed by ApiPageSet"
+					);
 				}
 
 				$fit = $this->addPageSubItem(
@@ -299,6 +300,6 @@ class ApiQueryDeletedRevisions extends ApiQueryRevisionsBase {
 	}
 
 	public function getHelpUrls() {
-		return 'https://www.mediawiki.org/wiki/API:Properties#deletedrevisions_.2F_drv';
+		return 'https://www.mediawiki.org/wiki/API:Deletedrevisions';
 	}
 }

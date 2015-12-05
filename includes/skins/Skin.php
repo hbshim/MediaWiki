@@ -180,8 +180,7 @@ abstract class Skin extends ContextSource {
 	 * @return array Array of modules with helper keys for easy overriding
 	 */
 	public function getDefaultModules() {
-		global $wgIncludeLegacyJavaScript, $wgPreloadJavaScriptMwUtil, $wgUseAjax,
-			$wgAjaxWatch, $wgEnableAPI, $wgEnableWriteAPI;
+		global $wgUseAjax, $wgEnableAPI, $wgEnableWriteAPI;
 
 		$out = $this->getOutput();
 		$user = $out->getUser();
@@ -191,7 +190,7 @@ abstract class Skin extends ContextSource {
 				'mediawiki.page.ready',
 			),
 			// modules that exist for legacy reasons
-			'legacy' => array(),
+			'legacy' => ResourceLoaderStartUpModule::getLegacyModules(),
 			// modules relating to search functionality
 			'search' => array(),
 			// modules relating to functionality relating to watching an article
@@ -199,27 +198,17 @@ abstract class Skin extends ContextSource {
 			// modules which relate to the current users preferences
 			'user' => array(),
 		);
-		if ( $wgIncludeLegacyJavaScript ) {
-			$modules['legacy'][] = 'mediawiki.legacy.wikibits';
-		}
-
-		if ( $wgPreloadJavaScriptMwUtil ) {
-			$modules['legacy'][] = 'mediawiki.util';
-		}
 
 		// Add various resources if required
-		if ( $wgUseAjax ) {
-			$modules['legacy'][] = 'mediawiki.legacy.ajax';
-
-			if ( $wgEnableAPI ) {
-				if ( $wgEnableWriteAPI && $wgAjaxWatch && $user->isLoggedIn()
-					&& $user->isAllowed( 'writeapi' )
-				) {
-					$modules['watch'][] = 'mediawiki.page.watch.ajax';
-				}
-
-				$modules['search'][] = 'mediawiki.searchSuggest';
+		if ( $wgUseAjax && $wgEnableAPI ) {
+			if ( $wgEnableWriteAPI && $user->isLoggedIn()
+				&& $user->isAllowedAll( 'writeapi', 'viewmywatchlist', 'editmywatchlist' )
+				&& $this->getRelevantTitle()->canExist()
+			) {
+				$modules['watch'][] = 'mediawiki.page.watch.ajax';
 			}
+
+			$modules['search'][] = 'mediawiki.searchSuggest';
 		}
 
 		if ( $user->getBoolOption( 'editsectiononrightclick' ) ) {
@@ -243,13 +232,13 @@ abstract class Skin extends ContextSource {
 		$title = $this->getRelevantTitle();
 
 		// User/talk link
-		if ( $user->isLoggedIn() || $this->showIPinHeader() ) {
+		if ( $user->isLoggedIn() ) {
 			$titles[] = $user->getUserPage();
 			$titles[] = $user->getTalkPage();
 		}
 
-		// Other tab link
-		if ( $title->isSpecialPage() ) {
+		// Check, if the page can hold some kind of content, otherwise do nothing
+		if ( !$title->canExist() ) {
 			// nothing
 		} elseif ( $title->isTalkPage() ) {
 			$titles[] = $title->getSubjectPage();
@@ -339,8 +328,13 @@ abstract class Skin extends ContextSource {
 				$this->mRelevantUser = User::newFromName( $rootUser, false );
 			} else {
 				$user = User::newFromName( $rootUser, false );
-				if ( $user && $user->isLoggedIn() ) {
-					$this->mRelevantUser = $user;
+
+				if ( $user ) {
+					$user->load( User::READ_NORMAL );
+
+					if ( $user->isLoggedIn() ) {
+						$this->mRelevantUser = $user;
+					}
 				}
 			}
 			return $this->mRelevantUser;
@@ -360,8 +354,8 @@ abstract class Skin extends ContextSource {
 	 */
 	static function makeVariablesScript( $data ) {
 		if ( $data ) {
-			return Html::inlineScript(
-				ResourceLoader::makeLoaderConditionalScript( ResourceLoader::makeConfigSetScript( $data ) )
+			return ResourceLoader::makeInlineScript(
+				ResourceLoader::makeConfigSetScript( $data )
 			);
 		} else {
 			return '';
@@ -645,7 +639,7 @@ abstract class Skin extends ContextSource {
 		}
 
 		return $this->msg( 'retrievedfrom' )
-			->rawParams( '<a dir="ltr" href="' . $url. '">' . $url . '</a>' )
+			->rawParams( '<a dir="ltr" href="' . $url . '">' . $url . '</a>' )
 			->parse();
 	}
 
@@ -731,12 +725,12 @@ abstract class Skin extends ContextSource {
 	}
 
 	/**
-	 * Returns true if the IP should be shown in the header
-	 * @return bool
+	 * @deprecated since 1.27, feature removed
+	 * @return bool Always false
 	 */
 	function showIPinHeader() {
-		global $wgShowIPinHeader;
-		return $wgShowIPinHeader && session_id() != '';
+		wfDeprecated( __METHOD__, '1.27' );
+		return false;
 	}
 
 	/**
@@ -837,9 +831,15 @@ abstract class Skin extends ContextSource {
 	function getPoweredBy() {
 		global $wgResourceBasePath;
 
-		$url1 = htmlspecialchars( "$wgResourceBasePath/resources/assets/poweredby_mediawiki_88x31.png" );
-		$url1_5 = htmlspecialchars( "$wgResourceBasePath/resources/assets/poweredby_mediawiki_132x47.png" );
-		$url2 = htmlspecialchars( "$wgResourceBasePath/resources/assets/poweredby_mediawiki_176x62.png" );
+		$url1 = htmlspecialchars(
+			"$wgResourceBasePath/resources/assets/poweredby_mediawiki_88x31.png"
+		);
+		$url1_5 = htmlspecialchars(
+			"$wgResourceBasePath/resources/assets/poweredby_mediawiki_132x47.png"
+		);
+		$url2 = htmlspecialchars(
+			"$wgResourceBasePath/resources/assets/poweredby_mediawiki_176x62.png"
+		);
 		$text = '<a href="//www.mediawiki.org/"><img src="' . $url1
 			. '" srcset="' . $url1_5 . ' 1.5x, ' . $url2 . ' 2x" '
 			. 'height="31" width="88" alt="Powered by MediaWiki" /></a>';
@@ -1223,30 +1223,33 @@ abstract class Skin extends ContextSource {
 	 * @return array
 	 */
 	function buildSidebar() {
-		global $wgMemc, $wgEnableSidebarCache, $wgSidebarCacheExpiry;
+		global $wgEnableSidebarCache, $wgSidebarCacheExpiry;
 
-		$key = wfMemcKey( 'sidebar', $this->getLanguage()->getCode() );
+		$that = $this;
+		$callback = function () use ( $that ) {
+			$bar = array();
+			$that->addToSidebar( $bar, 'sidebar' );
+			Hooks::run( 'SkinBuildSidebar', array( $that, &$bar ) );
+
+			return $bar;
+		};
 
 		if ( $wgEnableSidebarCache ) {
-			$cachedsidebar = $wgMemc->get( $key );
-			if ( $cachedsidebar ) {
-				Hooks::run( 'SidebarBeforeOutput', array( $this, &$cachedsidebar ) );
-
-				return $cachedsidebar;
-			}
+			$cache = ObjectCache::getMainWANInstance();
+			$sidebar = $cache->getWithSetCallback(
+				$cache->makeKey( 'sidebar', $this->getLanguage()->getCode() ),
+				$wgSidebarCacheExpiry,
+				$callback,
+				array( 'lockTSE' => 30 )
+			);
+		} else {
+			$sidebar = $callback();
 		}
 
-		$bar = array();
-		$this->addToSidebar( $bar, 'sidebar' );
+		// Apply post-processing to the cached value
+		Hooks::run( 'SidebarBeforeOutput', array( $this, &$sidebar ) );
 
-		Hooks::run( 'SkinBuildSidebar', array( $this, &$bar ) );
-		if ( $wgEnableSidebarCache ) {
-			$wgMemc->set( $key, $bar, $wgSidebarCacheExpiry );
-		}
-
-		Hooks::run( 'SidebarBeforeOutput', array( $this, &$bar ) );
-
-		return $bar;
+		return $sidebar;
 	}
 
 	/**
@@ -1258,7 +1261,7 @@ abstract class Skin extends ContextSource {
 	 * @param array $bar
 	 * @param string $message
 	 */
-	function addToSidebar( &$bar, $message ) {
+	public function addToSidebar( &$bar, $message ) {
 		$this->addToSidebarPlain( $bar, wfMessage( $message )->inContentLanguage()->plain() );
 	}
 
@@ -1466,7 +1469,8 @@ abstract class Skin extends ContextSource {
 	 * Get a cached notice
 	 *
 	 * @param string $name Message name, or 'default' for $wgSiteNotice
-	 * @return string HTML fragment
+	 * @return string|bool HTML fragment, or false to indicate that the caller
+	 *   should fall back to the next notice in its sequence
 	 */
 	private function getCachedNotice( $name ) {
 		global $wgRenderHashAppend, $parserMemc, $wgContLang;
@@ -1482,7 +1486,9 @@ abstract class Skin extends ContextSource {
 			}
 		} else {
 			$msg = $this->msg( $name )->inContentLanguage();
-			if ( $msg->isDisabled() ) {
+			if ( $msg->isBlank() ) {
+				return '';
+			} elseif ( $msg->isDisabled() ) {
 				return false;
 			}
 			$notice = $msg->plain();
@@ -1543,13 +1549,13 @@ abstract class Skin extends ContextSource {
 				$siteNotice = $this->getCachedNotice( 'sitenotice' );
 			} else {
 				$anonNotice = $this->getCachedNotice( 'anonnotice' );
-				if ( !$anonNotice ) {
+				if ( $anonNotice === false ) {
 					$siteNotice = $this->getCachedNotice( 'sitenotice' );
 				} else {
 					$siteNotice = $anonNotice;
 				}
 			}
-			if ( !$siteNotice ) {
+			if ( $siteNotice === false ) {
 				$siteNotice = $this->getCachedNotice( 'default' );
 			}
 		}
@@ -1618,8 +1624,12 @@ abstract class Skin extends ContextSource {
 		);
 
 		$result .= '<span class="mw-editsection-bracket">]</span></span>';
-
-		Hooks::run( 'DoEditSectionLink', array( $this, $nt, $section, $tooltip, &$result, $lang ) );
+		// Deprecated, use SkinEditSectionLinks hook instead
+		Hooks::run(
+			'DoEditSectionLink',
+			array( $this, $nt, $section, $tooltip, &$result, $lang ),
+			'1.25'
+		);
 		return $result;
 	}
 

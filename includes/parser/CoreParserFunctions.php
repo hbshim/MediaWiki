@@ -41,7 +41,7 @@ class CoreParserFunctions {
 		$noHashFunctions = array(
 			'ns', 'nse', 'urlencode', 'lcfirst', 'ucfirst', 'lc', 'uc',
 			'localurl', 'localurle', 'fullurl', 'fullurle', 'canonicalurl',
-			'canonicalurle', 'formatnum', 'grammar', 'gender', 'plural',
+			'canonicalurle', 'formatnum', 'grammar', 'gender', 'plural', 'bidi',
 			'numberofpages', 'numberofusers', 'numberofactiveusers',
 			'numberofarticles', 'numberoffiles', 'numberofadmins',
 			'numberingroup', 'numberofedits', 'language',
@@ -60,7 +60,11 @@ class CoreParserFunctions {
 			$parser->setFunctionHook( $func, array( __CLASS__, $func ), Parser::SFH_NO_HASH );
 		}
 
-		$parser->setFunctionHook( 'namespace', array( __CLASS__, 'mwnamespace' ), Parser::SFH_NO_HASH );
+		$parser->setFunctionHook(
+			'namespace',
+			array( __CLASS__, 'mwnamespace' ),
+			Parser::SFH_NO_HASH
+		);
 		$parser->setFunctionHook( 'int', array( __CLASS__, 'intFunction' ), Parser::SFH_NO_HASH );
 		$parser->setFunctionHook( 'special', array( __CLASS__, 'special' ) );
 		$parser->setFunctionHook( 'speciale', array( __CLASS__, 'speciale' ) );
@@ -68,7 +72,11 @@ class CoreParserFunctions {
 		$parser->setFunctionHook( 'formatdate', array( __CLASS__, 'formatDate' ) );
 
 		if ( $wgAllowDisplayTitle ) {
-			$parser->setFunctionHook( 'displaytitle', array( __CLASS__, 'displaytitle' ), Parser::SFH_NO_HASH );
+			$parser->setFunctionHook(
+				'displaytitle',
+				array( __CLASS__, 'displaytitle' ),
+				Parser::SFH_NO_HASH
+			);
 		}
 		if ( $wgAllowSlowParserFunctions ) {
 			$parser->setFunctionHook(
@@ -88,9 +96,13 @@ class CoreParserFunctions {
 		if ( strval( $part1 ) !== '' ) {
 			$args = array_slice( func_get_args(), 2 );
 			$message = wfMessage( $part1, $args )
-				->inLanguage( $parser->getOptions()->getUserLangObj() )->plain();
-
-			return array( $message, 'noparse' => false );
+				->inLanguage( $parser->getOptions()->getUserLangObj() );
+			if ( !$message->exists() ) {
+				// When message does not exists, the message name is surrounded by angle
+				// and can result in a tag, therefore escape the angles
+				return $message->escaped();
+			}
+			return array( $message->plain(), 'noparse' => false );
 		} else {
 			return array( 'found' => false );
 		}
@@ -178,7 +190,9 @@ class CoreParserFunctions {
 			default:
 				$func = 'urlencode';
 		}
-		return $parser->markerSkipCallback( $s, $func );
+		// See T105242, where the choice to kill markers and various
+		// other options were discussed.
+		return $func( $parser->killMarkers( $s ) );
 	}
 
 	public static function lcfirst( $parser, $s = '' ) {
@@ -351,6 +365,15 @@ class CoreParserFunctions {
 		$text = $parser->getFunctionLang()->parseFormattedNumber( $text );
 		settype( $text, ctype_digit( $text ) ? 'int' : 'float' );
 		return $parser->getFunctionLang()->convertPlural( $text, $forms );
+	}
+
+	/**
+	 * @param Parser $parser
+	 * @param string $text
+	 * @return string
+	 */
+	public static function bidi( $parser, $text = '' ) {
+		return $parser->getFunctionLang()->embedBidi( $text );
 	}
 
 	/**
@@ -681,15 +704,15 @@ class CoreParserFunctions {
 
 		// split the given option to its variable
 		if ( self::matchAgainstMagicword( 'rawsuffix', $arg1 ) ) {
-			//{{pagesincategory:|raw[|type]}}
+			// {{pagesincategory:|raw[|type]}}
 			$raw = $arg1;
 			$type = $magicWords->matchStartToEnd( $arg2 );
 		} else {
-			//{{pagesincategory:[|type[|raw]]}}
+			// {{pagesincategory:[|type[|raw]]}}
 			$type = $magicWords->matchStartToEnd( $arg1 );
 			$raw = $arg2;
 		}
-		if ( !$type ) { //backward compatibility
+		if ( !$type ) { // backward compatibility
 			$type = 'pagesincategory_all';
 		}
 
@@ -795,7 +818,9 @@ class CoreParserFunctions {
 	 * @param int $direction
 	 * @return string
 	 */
-	public static function pad( $parser, $string, $length, $padding = '0', $direction = STR_PAD_RIGHT ) {
+	public static function pad(
+		$parser, $string, $length, $padding = '0', $direction = STR_PAD_RIGHT
+	) {
 		$padding = $parser->killMarkers( $padding );
 		$lengthOfPadding = mb_strlen( $padding );
 		if ( $lengthOfPadding == 0 ) {
@@ -893,9 +918,17 @@ class CoreParserFunctions {
 		}
 	}
 
-	// Usage {{filepath|300}}, {{filepath|nowiki}}, {{filepath|nowiki|300}}
-	// or {{filepath|300|nowiki}} or {{filepath|300px}}, {{filepath|200x300px}},
-	// {{filepath|nowiki|200x300px}}, {{filepath|200x300px|nowiki}}.
+	/**
+	 * Usage {{filepath|300}}, {{filepath|nowiki}}, {{filepath|nowiki|300}}
+	 * or {{filepath|300|nowiki}} or {{filepath|300px}}, {{filepath|200x300px}},
+	 * {{filepath|nowiki|200x300px}}, {{filepath|200x300px|nowiki}}.
+	 *
+	 * @param Parser $parser
+	 * @param string $name
+	 * @param string $argA
+	 * @param string $argB
+	 * @return array|string
+	 */
 	public static function filepath( $parser, $name = '', $argA = '', $argB = '' ) {
 		$file = wfFindFile( $name );
 
@@ -934,7 +967,7 @@ class CoreParserFunctions {
 	 * Parser function to extension tag adaptor
 	 * @param Parser $parser
 	 * @param PPFrame $frame
-	 * @param array $args
+	 * @param PPNode[] $args
 	 * @return string
 	 */
 	public static function tagObj( $parser, $frame, $args ) {

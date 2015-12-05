@@ -29,12 +29,11 @@
  */
 class JobQueueDB extends JobQueue {
 	const CACHE_TTL_SHORT = 30; // integer; seconds to cache info without re-validating
-	const CACHE_TTL_LONG = 300; // integer; seconds to cache info that is kept up to date
 	const MAX_AGE_PRUNE = 604800; // integer; seconds a job can live once claimed
 	const MAX_JOB_RANDOM = 2147483647; // integer; 2^31 - 1, used for job_random
 	const MAX_OFFSET = 255; // integer; maximum number of rows to skip
 
-	/** @var BagOStuff */
+	/** @var WANObjectCache */
 	protected $cache;
 
 	/** @var bool|string Name of an external DB cluster. False if not set */
@@ -49,13 +48,10 @@ class JobQueueDB extends JobQueue {
 	 * @param array $params
 	 */
 	protected function __construct( array $params ) {
-		global $wgMemc;
-
 		parent::__construct( $params );
 
 		$this->cluster = isset( $params['cluster'] ) ? $params['cluster'] : false;
-		// Make sure that we don't use the SQL cache, which would be harmful
-		$this->cache = ( $wgMemc instanceof SqlBagOStuff ) ? new EmptyBagOStuff() : $wgMemc;
+		$this->cache = ObjectCache::getMainWANInstance();
 	}
 
 	protected function supportedOrders() {
@@ -71,15 +67,6 @@ class JobQueueDB extends JobQueue {
 	 * @return bool
 	 */
 	protected function doIsEmpty() {
-		$key = $this->getCacheKey( 'empty' );
-
-		$isEmpty = $this->cache->get( $key );
-		if ( $isEmpty === 'true' ) {
-			return true;
-		} elseif ( $isEmpty === 'false' ) {
-			return false;
-		}
-
 		$dbr = $this->getSlaveDB();
 		try {
 			$found = $dbr->selectField( // unclaimed job
@@ -88,7 +75,6 @@ class JobQueueDB extends JobQueue {
 		} catch ( DBError $e ) {
 			$this->throwDBException( $e );
 		}
-		$this->cache->add( $key, $found ? 'false' : 'true', self::CACHE_TTL_LONG );
 
 		return !$found;
 	}
@@ -155,15 +141,13 @@ class JobQueueDB extends JobQueue {
 	 * @throws MWException
 	 */
 	protected function doGetAbandonedCount() {
-		global $wgMemc;
-
 		if ( $this->claimTTL <= 0 ) {
 			return 0; // no acknowledgements
 		}
 
 		$key = $this->getCacheKey( 'abandonedcount' );
 
-		$count = $wgMemc->get( $key );
+		$count = $this->cache->get( $key );
 		if ( is_int( $count ) ) {
 			return $count;
 		}
@@ -181,14 +165,15 @@ class JobQueueDB extends JobQueue {
 		} catch ( DBError $e ) {
 			$this->throwDBException( $e );
 		}
-		$wgMemc->set( $key, $count, self::CACHE_TTL_SHORT );
+
+		$this->cache->set( $key, $count, self::CACHE_TTL_SHORT );
 
 		return $count;
 	}
 
 	/**
 	 * @see JobQueue::doBatchPush()
-	 * @param array $jobs
+	 * @param IJobSpecification[] $jobs
 	 * @param int $flags
 	 * @throws DBError|Exception
 	 * @return void
@@ -209,7 +194,7 @@ class JobQueueDB extends JobQueue {
 	 * This function should *not* be called outside of JobQueueDB
 	 *
 	 * @param IDatabase $dbw
-	 * @param array $jobs
+	 * @param IJobSpecification[] $jobs
 	 * @param int $flags
 	 * @param string $method
 	 * @throws DBError
@@ -232,7 +217,7 @@ class JobQueueDB extends JobQueue {
 		}
 
 		if ( $flags & self::QOS_ATOMIC ) {
-			$dbw->begin( $method ); // wrap all the job additions in one transaction
+			$dbw->startAtomic( $method ); // wrap all the job additions in one transaction
 		}
 		try {
 			// Strip out any duplicate jobs that are already in the queue...
@@ -256,12 +241,9 @@ class JobQueueDB extends JobQueue {
 			foreach ( array_chunk( $rows, 50 ) as $rowBatch ) {
 				$dbw->insert( 'job', $rowBatch, $method );
 			}
-			JobQueue::incrStats( 'job-insert', $this->type, count( $rows ), $this->wiki );
-			JobQueue::incrStats(
-				'job-insert-duplicate',
-				$this->type,
-				count( $rowSet ) + count( $rowList ) - count( $rows ),
-				$this->wiki
+			JobQueue::incrStats( 'inserts', $this->type, count( $rows ) );
+			JobQueue::incrStats( 'dupe_inserts', $this->type,
+				count( $rowSet ) + count( $rowList ) - count( $rows )
 			);
 		} catch ( DBError $e ) {
 			if ( $flags & self::QOS_ATOMIC ) {
@@ -270,10 +252,8 @@ class JobQueueDB extends JobQueue {
 			throw $e;
 		}
 		if ( $flags & self::QOS_ATOMIC ) {
-			$dbw->commit( $method );
+			$dbw->endAtomic( $method );
 		}
-
-		$this->cache->set( $this->getCacheKey( 'empty' ), 'false', JobQueueDB::CACHE_TTL_LONG );
 
 		return;
 	}
@@ -283,10 +263,6 @@ class JobQueueDB extends JobQueue {
 	 * @return Job|bool
 	 */
 	protected function doPop() {
-		if ( $this->cache->get( $this->getCacheKey( 'empty' ) ) === 'true' ) {
-			return false; // queue is empty
-		}
-
 		$dbw = $this->getMasterDB();
 		try {
 			$dbw->commit( __METHOD__, 'flush' ); // flush existing transaction
@@ -309,22 +285,23 @@ class JobQueueDB extends JobQueue {
 				}
 				// Check if we found a row to reserve...
 				if ( !$row ) {
-					$this->cache->set( $this->getCacheKey( 'empty' ), 'true', self::CACHE_TTL_LONG );
 					break; // nothing to do
 				}
-				JobQueue::incrStats( 'job-pop', $this->type, 1, $this->wiki );
+				JobQueue::incrStats( 'pops', $this->type );
 				// Get the job object from the row...
-				$title = Title::makeTitleSafe( $row->job_namespace, $row->job_title );
-				if ( !$title ) {
-					$dbw->delete( 'job', array( 'job_id' => $row->job_id ), __METHOD__ );
-					wfDebug( "Row has invalid title '{$row->job_title}'.\n" );
-					continue; // try again
-				}
+				$title = Title::makeTitle( $row->job_namespace, $row->job_title );
 				$job = Job::factory( $row->job_cmd, $title,
 					self::extractBlob( $row->job_params ), $row->job_id );
 				$job->metadata['id'] = $row->job_id;
+				$job->metadata['timestamp'] = $row->job_timestamp;
 				break; // done
 			} while ( true );
+
+			if ( !$job || mt_rand( 0, 9 ) == 0 ) {
+				// Handled jobs that need to be recycled/deleted;
+				// any recycled jobs will be picked up next attempt
+				$this->recycleAndDeleteStaleJobs();
+			}
 		} catch ( DBError $e ) {
 			$this->throwDBException( $e );
 		}
@@ -495,6 +472,8 @@ class JobQueueDB extends JobQueue {
 			// Delete a row with a single DELETE without holding row locks over RTTs...
 			$dbw->delete( 'job',
 				array( 'job_cmd' => $this->type, 'job_id' => $job->metadata['id'] ), __METHOD__ );
+
+			JobQueue::incrStats( 'acks', $this->type );
 		} catch ( DBError $e ) {
 			$this->throwDBException( $e );
 		}
@@ -504,11 +483,11 @@ class JobQueueDB extends JobQueue {
 
 	/**
 	 * @see JobQueue::doDeduplicateRootJob()
-	 * @param Job $job
+	 * @param IJobSpecification $job
 	 * @throws MWException
 	 * @return bool
 	 */
-	protected function doDeduplicateRootJob( Job $job ) {
+	protected function doDeduplicateRootJob( IJobSpecification $job ) {
 		$params = $job->getParams();
 		if ( !isset( $params['rootJobSignature'] ) ) {
 			throw new MWException( "Cannot register root job; missing 'rootJobSignature'." );
@@ -560,22 +539,10 @@ class JobQueueDB extends JobQueue {
 	}
 
 	/**
-	 * @return array
-	 */
-	protected function doGetPeriodicTasks() {
-		return array(
-			'recycleAndDeleteStaleJobs' => array(
-				'callback' => array( $this, 'recycleAndDeleteStaleJobs' ),
-				'period' => ceil( $this->claimTTL / 2 )
-			)
-		);
-	}
-
-	/**
 	 * @return void
 	 */
 	protected function doFlushCaches() {
-		foreach ( array( 'empty', 'size', 'acquiredcount' ) as $type ) {
+		foreach ( array( 'size', 'acquiredcount' ) as $type ) {
 			$this->cache->delete( $this->getCacheKey( $type ) );
 		}
 	}
@@ -585,18 +552,35 @@ class JobQueueDB extends JobQueue {
 	 * @return Iterator
 	 */
 	public function getAllQueuedJobs() {
+		return $this->getJobIterator( array( 'job_cmd' => $this->getType(), 'job_token' => '' ) );
+	}
+
+	/**
+	 * @see JobQueue::getAllAcquiredJobs()
+	 * @return Iterator
+	 */
+	public function getAllAcquiredJobs() {
+		return $this->getJobIterator( array( 'job_cmd' => $this->getType(), "job_token > ''" ) );
+	}
+
+	/**
+	 * @param array $conds Query conditions
+	 * @return Iterator
+	 */
+	protected function getJobIterator( array $conds ) {
 		$dbr = $this->getSlaveDB();
 		try {
 			return new MappedIterator(
-				$dbr->select( 'job', self::selectFields(),
-					array( 'job_cmd' => $this->getType(), 'job_token' => '' ) ),
-				function ( $row ) use ( $dbr ) {
+				$dbr->select( 'job', self::selectFields(), $conds ),
+				function ( $row ) {
 					$job = Job::factory(
 						$row->job_cmd,
 						Title::makeTitle( $row->job_namespace, $row->job_title ),
-						strlen( $row->job_params ) ? unserialize( $row->job_params ) : false
+						strlen( $row->job_params ) ? unserialize( $row->job_params ) : array()
 					);
 					$job->metadata['id'] = $row->job_id;
+					$job->metadata['timestamp'] = $row->job_timestamp;
+
 					return $job;
 				}
 			);
@@ -613,6 +597,10 @@ class JobQueueDB extends JobQueue {
 
 	protected function doGetSiblingQueuesWithJobs( array $types ) {
 		$dbr = $this->getSlaveDB();
+		// @note: this does not check whether the jobs are claimed or not.
+		// This is useful so JobQueueGroup::pop() also sees queues that only
+		// have stale jobs. This lets recycleAndDeleteStaleJobs() re-enqueue
+		// failed jobs so that they can be popped again for that edge case.
 		$res = $dbr->select( 'job', 'DISTINCT job_cmd',
 			array( 'job_cmd' => $types ), __METHOD__ );
 
@@ -685,8 +673,8 @@ class JobQueueDB extends JobQueue {
 					);
 					$affected = $dbw->affectedRows();
 					$count += $affected;
-					JobQueue::incrStats( 'job-recycle', $this->type, $affected, $this->wiki );
-					$this->cache->set( $this->getCacheKey( 'empty' ), 'false', self::CACHE_TTL_LONG );
+					JobQueue::incrStats( 'recycles', $this->type, $affected );
+					$this->aggr->notifyQueueNonEmpty( $this->wiki, $this->type );
 				}
 			}
 
@@ -712,7 +700,7 @@ class JobQueueDB extends JobQueue {
 				$dbw->delete( 'job', array( 'job_id' => $ids ), __METHOD__ );
 				$affected = $dbw->affectedRows();
 				$count += $affected;
-				JobQueue::incrStats( 'job-abandon', $this->type, $affected, $this->wiki );
+				JobQueue::incrStats( 'abandons', $this->type, $affected );
 			}
 
 			$dbw->unlock( "jobqueue-recycle-{$this->type}", __METHOD__ );
@@ -739,7 +727,7 @@ class JobQueueDB extends JobQueue {
 			// Additional job metadata
 			'job_id' => $dbw->nextSequenceValue( 'job_job_id_seq' ),
 			'job_timestamp' => $dbw->timestamp(),
-			'job_sha1' => wfBaseConvert(
+			'job_sha1' => Wikimedia\base_convert(
 				sha1( serialize( $job->getDeduplicationInfo() ) ),
 				16, 36, 31
 			),

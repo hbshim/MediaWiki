@@ -30,15 +30,10 @@
  * @file
  */
 
+use MediaWiki\Logger\LegacyLogger;
+
 // So extensions (and other code) can check whether they're running in API mode
 define( 'MW_API', true );
-
-// Bail if PHP is too low
-if ( !function_exists( 'version_compare' ) || version_compare( PHP_VERSION, '5.3.3' ) < 0 ) {
-	// We need to use dirname( __FILE__ ) here cause __DIR__ is PHP5.3+
-	require dirname( __FILE__ ) . '/includes/PHPVersionError.php';
-	wfPHPVersionError( 'api.php' );
-}
 
 require __DIR__ . '/includes/WebStart.php';
 
@@ -59,7 +54,11 @@ if ( !$wgEnableAPI ) {
 
 // Set a dummy $wgTitle, because $wgTitle == null breaks various things
 // In a perfect world this wouldn't be necessary
-$wgTitle = Title::makeTitle( NS_MAIN, 'API' );
+$wgTitle = Title::makeTitle( NS_SPECIAL, 'Badtitle/dummy title for API calls set in api.php' );
+
+// RequestContext will read from $wgTitle, but it will also whine about it.
+// In a perfect world this wouldn't be necessary either.
+RequestContext::getMain()->setTitle( $wgTitle );
 
 try {
 	/* Construct an ApiMain with the arguments passed via the URL. What we get back
@@ -69,7 +68,7 @@ try {
 	$processor = new ApiMain( RequestContext::getMain(), $wgEnableWriteAPI );
 
 	// Last chance hook before executing the API
-	wfRunHooks( 'ApiBeforeMain', array( &$processor ) );
+	Hooks::run( 'ApiBeforeMain', array( &$processor ) );
 	if ( !$processor instanceof ApiMain ) {
 		throw new MWException( 'ApiBeforeMain hook set $processor to a non-ApiMain class' );
 	}
@@ -84,17 +83,8 @@ if ( $processor ) {
 	$processor->execute();
 }
 
-if ( function_exists( 'fastcgi_finish_request' ) ) {
-	fastcgi_finish_request();
-}
-
-// Execute any deferred updates
-DeferredUpdates::doUpdates();
-
 // Log what the user did, for book-keeping purposes.
 $endtime = microtime( true );
-
-wfLogProfilingData();
 
 // Log the request
 if ( $wgAPIRequestLog ) {
@@ -120,11 +110,9 @@ if ( $wgAPIRequestLog ) {
 	} else {
 		$items[] = "failed in ApiBeforeMain";
 	}
-	MWLoggerLegacyLogger::emit( implode( ',', $items ) . "\n", $wgAPIRequestLog );
+	LegacyLogger::emit( implode( ',', $items ) . "\n", $wgAPIRequestLog );
 	wfDebug( "Logged API request to $wgAPIRequestLog\n" );
 }
 
-// Shut down the database.  foo()->bar() syntax is not supported in PHP4: we won't ever actually
-// get here to worry about whether this should be = or =&, but the file has to parse properly.
-$lb = wfGetLBFactory();
-$lb->shutdown();
+$mediawiki = new MediaWiki();
+$mediawiki->doPostOutputShutdown( 'fast' );

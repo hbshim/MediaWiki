@@ -23,9 +23,9 @@
 
 /**
  * @ingroup Parser
- * @codingStandardsIgnoreStart
  */
-class Preprocessor_DOM implements Preprocessor {
+// @codingStandardsIgnoreStart Squiz.Classes.ValidClassName.NotCamelCaps
+class Preprocessor_DOM extends Preprocessor {
 	// @codingStandardsIgnoreEnd
 
 	/**
@@ -35,7 +35,7 @@ class Preprocessor_DOM implements Preprocessor {
 
 	public $memoryLimit;
 
-	const CACHE_VERSION = 1;
+	const CACHE_PREFIX = 'preprocess-xml';
 
 	public function __construct( $parser ) {
 		$this->parser = $parser;
@@ -71,7 +71,7 @@ class Preprocessor_DOM implements Preprocessor {
 	 * @throws MWException
 	 */
 	public function newPartNodeArray( $values ) {
-		//NOTE: DOM manipulation is slower than building & parsing XML! (or so Tim sais)
+		// NOTE: DOM manipulation is slower than building & parsing XML! (or so Tim sais)
 		$xml = "<list>";
 
 		foreach ( $values as $k => $val ) {
@@ -87,12 +87,12 @@ class Preprocessor_DOM implements Preprocessor {
 		$xml .= "</list>";
 
 		$dom = new DOMDocument();
-		wfSuppressWarnings();
+		MediaWiki\suppressWarnings();
 		$result = $dom->loadXML( $xml );
-		wfRestoreWarnings();
+		MediaWiki\restoreWarnings();
 		if ( !$result ) {
 			// Try running the XML through UtfNormal to get rid of invalid characters
-			$xml = UtfNormal::cleanUp( $xml );
+			$xml = UtfNormal\Validator::cleanUp( $xml );
 			// 1 << 19 == XML_PARSE_HUGE, needed so newer versions of libxml2
 			// don't barf when the XML is >256 levels deep
 			$result = $dom->loadXML( $xml, 1 << 19 );
@@ -148,31 +148,11 @@ class Preprocessor_DOM implements Preprocessor {
 	 * @return PPNode_DOM
 	 */
 	public function preprocessToObj( $text, $flags = 0 ) {
-		global $wgMemc, $wgPreprocessorCacheThreshold;
 
-		$xml = false;
-		$cacheable = ( $wgPreprocessorCacheThreshold !== false
-			&& strlen( $text ) > $wgPreprocessorCacheThreshold );
-		if ( $cacheable ) {
-
-			$cacheKey = wfMemcKey( 'preprocess-xml', md5( $text ), $flags );
-			$cacheValue = $wgMemc->get( $cacheKey );
-			if ( $cacheValue ) {
-				$version = substr( $cacheValue, 0, 8 );
-				if ( intval( $version ) == self::CACHE_VERSION ) {
-					$xml = substr( $cacheValue, 8 );
-					// From the cache
-					wfDebugLog( "Preprocessor", "Loaded preprocessor XML from memcached (key $cacheKey)" );
-				}
-			}
-			if ( $xml === false ) {
-				$xml = $this->preprocessToXml( $text, $flags );
-				$cacheValue = sprintf( "%08d", self::CACHE_VERSION ) . $xml;
-				$wgMemc->set( $cacheKey, $cacheValue, 86400 );
-				wfDebugLog( "Preprocessor", "Saved preprocessor XML to memcached (key $cacheKey)" );
-			}
-		} else {
+		$xml = $this->cacheGetTree( $text, $flags );
+		if ( $xml === false ) {
 			$xml = $this->preprocessToXml( $text, $flags );
+			$this->cacheSetTree( $text, $flags, $xml );
 		}
 
 		// Fail if the number of elements exceeds acceptable limits
@@ -180,18 +160,17 @@ class Preprocessor_DOM implements Preprocessor {
 		$this->parser->mGeneratedPPNodeCount += substr_count( $xml, '<' );
 		$max = $this->parser->mOptions->getMaxGeneratedPPNodeCount();
 		if ( $this->parser->mGeneratedPPNodeCount > $max ) {
-			if ( $cacheable ) {
-			}
+			// if ( $cacheable ) { ... }
 			throw new MWException( __METHOD__ . ': generated node count limit exceeded' );
 		}
 
 		$dom = new DOMDocument;
-		wfSuppressWarnings();
+		MediaWiki\suppressWarnings();
 		$result = $dom->loadXML( $xml );
-		wfRestoreWarnings();
+		MediaWiki\restoreWarnings();
 		if ( !$result ) {
 			// Try running the XML through UtfNormal to get rid of invalid characters
-			$xml = UtfNormal::cleanUp( $xml );
+			$xml = UtfNormal\Validator::cleanUp( $xml );
 			// 1 << 19 == XML_PARSE_HUGE, needed so newer versions of libxml2
 			// don't barf when the XML is >256 levels deep.
 			$result = $dom->loadXML( $xml, 1 << 19 );
@@ -200,8 +179,7 @@ class Preprocessor_DOM implements Preprocessor {
 			$obj = new PPNode_DOM( $dom->documentElement );
 		}
 
-		if ( $cacheable ) {
-		}
+		// if ( $cacheable ) { ... }
 
 		if ( !$result ) {
 			throw new MWException( __METHOD__ . ' generated invalid XML' );
@@ -215,24 +193,6 @@ class Preprocessor_DOM implements Preprocessor {
 	 * @return string
 	 */
 	public function preprocessToXml( $text, $flags = 0 ) {
-		$rules = array(
-			'{' => array(
-				'end' => '}',
-				'names' => array(
-					2 => 'template',
-					3 => 'tplarg',
-				),
-				'min' => 2,
-				'max' => 3,
-			),
-			'[' => array(
-				'end' => ']',
-				'names' => array( 2 => null ),
-				'min' => 2,
-				'max' => 2,
-			)
-		);
-
 		$forInclusion = $flags & Parser::PTD_FOR_INCLUSION;
 
 		$xmlishElements = $this->parser->getStripList();
@@ -258,7 +218,7 @@ class Preprocessor_DOM implements Preprocessor {
 
 		$stack = new PPDStack;
 
-		$searchBase = "[{<\n"; #}
+		$searchBase = "[{<\n"; # }
 		// For fast reverse searches
 		$revText = strrev( $text );
 		$lengthText = strlen( $text );
@@ -283,7 +243,7 @@ class Preprocessor_DOM implements Preprocessor {
 		$fakeLineStart = true;
 
 		while ( true ) {
-			//$this->memCheck();
+			// $this->memCheck();
 
 			if ( $findOnlyinclude ) {
 				// Ignore all input up to the next <onlyinclude>
@@ -350,9 +310,9 @@ class Preprocessor_DOM implements Preprocessor {
 						}
 					} elseif ( $curChar == $currentClosing ) {
 						$found = 'close';
-					} elseif ( isset( $rules[$curChar] ) ) {
+					} elseif ( isset( $this->rules[$curChar] ) ) {
 						$found = 'open';
-						$rule = $rules[$curChar];
+						$rule = $this->rules[$curChar];
 					} else {
 						# Some versions of PHP have a strcspn which stops on null characters
 						# Ignore and continue
@@ -649,7 +609,7 @@ class Preprocessor_DOM implements Preprocessor {
 
 				# check for maximum matching characters (if there are 5 closing
 				# characters, we will probably need only 3 - depending on the rules)
-				$rule = $rules[$piece->open];
+				$rule = $this->rules[$piece->open];
 				if ( $count > $rule['max'] ) {
 					# The specified maximum exists in the callback array, unless the caller
 					# has made an error
@@ -718,7 +678,7 @@ class Preprocessor_DOM implements Preprocessor {
 					$piece->parts = array( new PPDPart );
 					$piece->count -= $matchingCount;
 					# do we still qualify for any callback with remaining count?
-					$min = $rules[$piece->open]['min'];
+					$min = $this->rules[$piece->open]['min'];
 					if ( $piece->count >= $min ) {
 						$stack->push( $piece );
 						$accum =& $stack->getAccum();
@@ -849,11 +809,31 @@ class PPDStack {
  * @ingroup Parser
  */
 class PPDStackElement {
-	public $open,              // Opening character (\n for heading)
-		$close,             // Matching closing character
-		$count,             // Number of opening characters found (number of "=" for heading)
-		$parts,             // Array of PPDPart objects describing pipe-separated parts.
-		$lineStart;         // True if the open char appeared at the start of the input line. Not set for headings.
+	/**
+	 * @var string Opening character (\n for heading)
+	 */
+	public $open;
+
+	/**
+	 * @var string Matching closing character
+	 */
+	public $close;
+
+	/**
+	 * @var int Number of opening characters found (number of "=" for heading)
+	 */
+	public $count;
+
+	/**
+	 * @var PPDPart[] Array of PPDPart objects describing pipe-separated parts.
+	 */
+	public $parts;
+
+	/**
+	 * @var bool True if the open char appeared at the start of the input line.
+	 *  Not set for headings.
+	 */
+	public $lineStart;
 
 	public $partClass = 'PPDPart';
 
@@ -924,7 +904,10 @@ class PPDStackElement {
  * @ingroup Parser
  */
 class PPDPart {
-	public $out; // Output accumulator string
+	/**
+	 * @var string Output accumulator string
+	 */
+	public $out;
 
 	// Optional member variables:
 	//   eqpos        Position of equals sign in output accumulator
@@ -939,8 +922,8 @@ class PPDPart {
 /**
  * An expansion frame, used as a context to expand the result of preprocessToObj()
  * @ingroup Parser
- * @codingStandardsIgnoreStart
  */
+// @codingStandardsIgnoreStart Squiz.Classes.ValidClassName.NotCamelCaps
 class PPFrame_DOM implements PPFrame {
 	// @codingStandardsIgnoreEnd
 
@@ -1029,6 +1012,10 @@ class PPFrame_DOM implements PPFrame {
 					$index = $nameNodes->item( 0 )->attributes->getNamedItem( 'index' )->textContent;
 					$index = $index - $indexOffset;
 					if ( isset( $namedArgs[$index] ) || isset( $numberedArgs[$index] ) ) {
+						$this->parser->getOutput()->addWarning( wfMessage( 'duplicate-args-warning',
+							wfEscapeWikiText( $this->title ),
+							wfEscapeWikiText( $title ),
+							wfEscapeWikiText( $index ) )->text() );
 						$this->parser->addTrackingCategory( 'duplicate-args-category' );
 					}
 					$numberedArgs[$index] = $value->item( 0 );
@@ -1037,6 +1024,10 @@ class PPFrame_DOM implements PPFrame {
 					// Named parameter
 					$name = trim( $this->expand( $nameNodes->item( 0 ), PPFrame::STRIP_COMMENTS ) );
 					if ( isset( $namedArgs[$name] ) || isset( $numberedArgs[$name] ) ) {
+						$this->parser->getOutput()->addWarning( wfMessage( 'duplicate-args-warning',
+							wfEscapeWikiText( $this->title ),
+							wfEscapeWikiText( $title ),
+							wfEscapeWikiText( $name ) )->text() );
 						$this->parser->addTrackingCategory( 'duplicate-args-category' );
 					}
 					$namedArgs[$name] = $value->item( 0 );
@@ -1195,9 +1186,11 @@ class PPFrame_DOM implements PPFrame {
 				} elseif ( $contextNode->nodeName == 'comment' ) {
 					# HTML-style comment
 					# Remove it in HTML, pre+remove and STRIP_COMMENTS modes
-					if ( $this->parser->ot['html']
+					# Not in RECOVER_COMMENTS mode (msgnw) though.
+					if ( ( $this->parser->ot['html']
 						|| ( $this->parser->ot['pre'] && $this->parser->mOptions->getRemoveComments() )
 						|| ( $flags & PPFrame::STRIP_COMMENTS )
+						) && !( $flags & PPFrame::RECOVER_COMMENTS )
 					) {
 						$out .= '';
 					} elseif ( $this->parser->ot['wiki'] && !( $flags & PPFrame::RECOVER_COMMENTS ) ) {
@@ -1263,7 +1256,7 @@ class PPFrame_DOM implements PPFrame {
 						$titleText = $this->title->getPrefixedDBkey();
 						$this->parser->mHeadings[] = array( $titleText, $headingIndex );
 						$serial = count( $this->parser->mHeadings ) - 1;
-						$marker = "{$this->parser->mUniqPrefix}-h-$serial-" . Parser::MARKER_SUFFIX;
+						$marker = Parser::MARKER_PREFIX . "-h-$serial-" . Parser::MARKER_SUFFIX;
 						$count = $contextNode->getAttribute( 'level' );
 						$s = substr( $s, 0, $count ) . $marker . substr( $s, $count );
 						$this->parser->mStripState->addGeneral( $marker, '' );
@@ -1543,8 +1536,8 @@ class PPFrame_DOM implements PPFrame {
 /**
  * Expansion frame with template arguments
  * @ingroup Parser
- * @codingStandardsIgnoreStart
  */
+// @codingStandardsIgnoreStart Squiz.Classes.ValidClassName.NotCamelCaps
 class PPTemplateFrame_DOM extends PPFrame_DOM {
 	// @codingStandardsIgnoreEnd
 
@@ -1710,8 +1703,8 @@ class PPTemplateFrame_DOM extends PPFrame_DOM {
 /**
  * Expansion frame with custom arguments
  * @ingroup Parser
- * @codingStandardsIgnoreStart
  */
+// @codingStandardsIgnoreStart Squiz.Classes.ValidClassName.NotCamelCaps
 class PPCustomFrame_DOM extends PPFrame_DOM {
 	// @codingStandardsIgnoreEnd
 
@@ -1759,8 +1752,8 @@ class PPCustomFrame_DOM extends PPFrame_DOM {
 
 /**
  * @ingroup Parser
- * @codingStandardsIgnoreStart
  */
+// @codingStandardsIgnoreStart Squiz.Classes.ValidClassName.NotCamelCaps
 class PPNode_DOM implements PPNode {
 	// @codingStandardsIgnoreEnd
 

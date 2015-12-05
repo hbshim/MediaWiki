@@ -1,6 +1,6 @@
 <?php
 /**
- * Resource loader module for populating language specific data.
+ * ResourceLoader module for populating language specific data.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -63,25 +63,17 @@ class ResourceLoaderLanguageDataModule extends ResourceLoaderModule {
 	}
 
 	/**
-	 * @param ResourceLoaderContext $context
-	 * @return int UNIX timestamp
+	 * @return bool
 	 */
-	public function getModifiedTime( ResourceLoaderContext $context ) {
-		return max( 1, $this->getHashMtime( $context ) );
+	public function enableModuleContentVersion() {
+		return true;
 	}
 
 	/**
 	 * @param ResourceLoaderContext $context
-	 * @return string Hash
-	 */
-	public function getModifiedHash( ResourceLoaderContext $context ) {
-		return md5( serialize( $this->getData( $context ) ) );
-	}
-
-	/**
 	 * @return array
 	 */
-	public function getDependencies() {
+	public function getDependencies( ResourceLoaderContext $context = null ) {
 		return array( 'mediawiki.language.init' );
 	}
 }

@@ -3,7 +3,7 @@
  * Handler for the Gimp's native file format (XCF)
  *
  * Overview:
- *   http://en.wikipedia.org/wiki/XCF_(file_format)
+ *   https://en.wikipedia.org/wiki/XCF_(file_format)
  * Specification in Gnome repository:
  *   http://svn.gnome.org/viewvc/gimp/trunk/devel-docs/xcf.txt?view=markup
  *
@@ -106,21 +106,23 @@ class XCFHandler extends BitmapHandler {
 		$binaryHeader = fread( $f, 26 );
 		fclose( $f );
 
-		# Master image structure:
-		#
-		# byte[9] "gimp xcf "  File type magic
-		# byte[4] version      XCF version
-		#                        "file" - version 0
-		#                        "v001" - version 1
-		#                        "v002" - version 2
-		# byte    0            Zero-terminator for version tag
-		# uint32  width        With of canvas
-		# uint32  height       Height of canvas
-		# uint32  base_type    Color mode of the image; one of
-		#                         0: RGB color
-		#                         1: Grayscale
-		#                         2: Indexed color
-		#        (enum GimpImageBaseType in libgimpbase/gimpbaseenums.h)
+		/**
+		 * Master image structure:
+		 *
+		 * byte[9] "gimp xcf "  File type magic
+		 * byte[4] version      XCF version
+		 *                        "file" - version 0
+		 *                        "v001" - version 1
+		 *                        "v002" - version 2
+		 * byte    0            Zero-terminator for version tag
+		 * uint32  width        With of canvas
+		 * uint32  height       Height of canvas
+		 * uint32  base_type    Color mode of the image; one of
+		 *                         0: RGB color
+		 *                         1: Grayscale
+		 *                         2: Indexed color
+		 *        (enum GimpImageBaseType in libgimpbase/gimpbaseenums.h)
+		 */
 		try {
 			$header = wfUnpack(
 				"A9magic" . # A: space padded
@@ -222,9 +224,9 @@ class XCFHandler extends BitmapHandler {
 	 * @return bool
 	 */
 	public function canRender( $file ) {
-		wfSuppressWarnings();
+		MediaWiki\suppressWarnings();
 		$xcfMeta = unserialize( $file->getMetadata() );
-		wfRestoreWarnings();
+		MediaWiki\restoreWarnings();
 		if ( isset( $xcfMeta['colorType'] ) && $xcfMeta['colorType'] === 'index-coloured' ) {
 			return false;
 		}

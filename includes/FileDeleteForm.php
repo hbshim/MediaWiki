@@ -180,6 +180,8 @@ class FileDeleteForm {
 				$logEntry->setComment( $logComment );
 				$logid = $logEntry->insert();
 				$logEntry->publish( $logid );
+
+				$status->value = $logid;
 			}
 		} else {
 			$status = Status::newFatal( 'cannotdelete',
@@ -188,6 +190,7 @@ class FileDeleteForm {
 			$page = WikiPage::factory( $title );
 			$dbw = wfGetDB( DB_MASTER );
 			try {
+				$dbw->startAtomic( __METHOD__ );
 				// delete the associated article first
 				$error = '';
 				$deleteStatus = $page->doDeleteArticleReal( $reason, $suppress, 0, false, $error, $user );
@@ -196,10 +199,15 @@ class FileDeleteForm {
 				if ( $deleteStatus->isOK() ) {
 					$status = $file->delete( $reason, $suppress, $user );
 					if ( $status->isOK() ) {
-						$dbw->commit( __METHOD__ );
+						$status->value = $deleteStatus->value; // log id
+						$dbw->endAtomic( __METHOD__ );
 					} else {
+						// Page deleted but file still there? rollback page delete
 						$dbw->rollback( __METHOD__ );
 					}
+				} else {
+					// Done; nothing changed
+					$dbw->endAtomic( __METHOD__ );
 				}
 			} catch ( Exception $e ) {
 				// Rollback before returning to prevent UI from displaying
@@ -296,8 +304,8 @@ class FileDeleteForm {
 			Xml::closeElement( 'form' );
 
 			if ( $wgUser->isAllowed( 'editinterface' ) ) {
-				$title = Title::makeTitle( NS_MEDIAWIKI, 'Filedelete-reason-dropdown' );
-				$link = Linker::link(
+				$title = wfMessage( 'filedelete-reason-dropdown' )->inContentLanguage()->getTitle();
+				$link = Linker::linkKnown(
 					$title,
 					wfMessage( 'filedelete-edit-reasonlist' )->escaped(),
 					array(),

@@ -30,7 +30,7 @@ class LinkerTest extends MediaWikiLangTestCase {
 		# - optional message
 		return array(
 
-			### ANONYMOUS USER ########################################
+			# ## ANONYMOUS USER ########################################
 			array(
 				'<a href="/wiki/Special:Contributions/JohnDoe" '
 					. 'title="Special:Contributions/JohnDoe" '
@@ -82,7 +82,7 @@ class LinkerTest extends MediaWikiLangTestCase {
 				'Anonymous with IPv4 and an alternative username'
 			),
 
-			### Regular user ##########################################
+			# ## Regular user ##########################################
 			# TODO!
 		);
 	}
@@ -93,12 +93,28 @@ class LinkerTest extends MediaWikiLangTestCase {
 	 * @covers Linker::formatAutocomments
 	 * @covers Linker::formatLinksInComment
 	 */
-	public function testFormatComment( $expected, $comment, $title = false, $local = false ) {
+	public function testFormatComment(
+		$expected, $comment, $title = false, $local = false, $wikiId = null
+	) {
+		$conf = new SiteConfiguration();
+		$conf->settings = array(
+			'wgServer' => array(
+				'enwiki' => '//en.example.org',
+				'dewiki' => '//de.example.org',
+			),
+			'wgArticlePath' => array(
+				'enwiki' => '/w/$1',
+				'dewiki' => '/w/$1',
+			),
+		);
+		$conf->suffixes = array( 'wiki' );
+
 		$this->setMwGlobals( array(
 			'wgScript' => '/wiki/index.php',
 			'wgArticlePath' => '/wiki/$1',
 			'wgWellFormedXml' => true,
 			'wgCapitalLinks' => true,
+			'wgConf' => $conf,
 		) );
 
 		if ( $title === false ) {
@@ -108,11 +124,14 @@ class LinkerTest extends MediaWikiLangTestCase {
 
 		$this->assertEquals(
 			$expected,
-			Linker::formatComment( $comment, $title, $local )
+			Linker::formatComment( $comment, $title, $local, $wikiId )
 		);
 	}
 
-	public static function provideCasesForFormatComment() {
+	public function provideCasesForFormatComment() {
+		$wikiId = 'enwiki'; // $wgConf has a fake entry for this
+
+		// @codingStandardsIgnoreStart Generic.Files.LineLength
 		return array(
 			// Linker::formatComment
 			array(
@@ -126,6 +145,10 @@ class LinkerTest extends MediaWikiLangTestCase {
 			array(
 				"&#039;&#039;&#039;not bolded&#039;&#039;&#039;",
 				"'''not bolded'''",
+			),
+			array(
+				"try &lt;script&gt;evil&lt;/scipt&gt; things",
+				"try <script>evil</scipt> things",
 			),
 			// Linker::formatAutocomments
 			array(
@@ -157,6 +180,14 @@ class LinkerTest extends MediaWikiLangTestCase {
 				"/* autocomment containing /* */ T70361"
 			),
 			array(
+				'<a href="/wiki/Special:BlankPage#autocomment_containing_.22quotes.22" title="Special:BlankPage">→</a>‎<span dir="auto"><span class="autocomment">autocomment containing &quot;quotes&quot;</span></span>',
+				"/* autocomment containing \"quotes\" */"
+			),
+			array(
+				'<a href="/wiki/Special:BlankPage#autocomment_containing_.3Cscript.3Etags.3C.2Fscript.3E" title="Special:BlankPage">→</a>‎<span dir="auto"><span class="autocomment">autocomment containing &lt;script&gt;tags&lt;/script&gt;</span></span>',
+				"/* autocomment containing <script>tags</script> */"
+			),
+			array(
 				'<a href="#autocomment">→</a>‎<span dir="auto"><span class="autocomment">autocomment</span></span>',
 				"/* autocomment */",
 				false, true
@@ -165,6 +196,16 @@ class LinkerTest extends MediaWikiLangTestCase {
 				'‎<span dir="auto"><span class="autocomment">autocomment</span></span>',
 				"/* autocomment */",
 				null
+			),
+			array(
+				'<a href="/wiki/Special:BlankPage#autocomment" title="Special:BlankPage">→</a>‎<span dir="auto"><span class="autocomment">autocomment</span></span>',
+				"/* autocomment */",
+				false, false
+			),
+			array(
+				'<a class="external" rel="nofollow" href="//en.example.org/w/Special:BlankPage#autocomment">→</a>‎<span dir="auto"><span class="autocomment">autocomment</span></span>',
+				"/* autocomment */",
+				false, false, $wikiId
 			),
 			// Linker::formatLinksInComment
 			array(
@@ -191,7 +232,30 @@ class LinkerTest extends MediaWikiLangTestCase {
 				'abc <a href="/wiki/index.php?title=/subpage&amp;action=edit&amp;redlink=1" class="new" title="/subpage (page does not exist)">/subpage</a> def',
 				"abc [[/subpage]] def",
 			),
+			array(
+				'abc <a href="/wiki/index.php?title=%22evil!%22&amp;action=edit&amp;redlink=1" class="new" title="&quot;evil!&quot; (page does not exist)">&quot;evil!&quot;</a> def',
+				"abc [[\"evil!\"]] def",
+			),
+			array(
+				'abc [[&lt;script&gt;very evil&lt;/script&gt;]] def',
+				"abc [[<script>very evil</script>]] def",
+			),
+			array(
+				'abc [[|]] def',
+				"abc [[|]] def",
+			),
+			array(
+				'abc <a href="/wiki/index.php?title=Link&amp;action=edit&amp;redlink=1" class="new" title="Link (page does not exist)">link</a> def',
+				"abc [[link]] def",
+				false, false
+			),
+			array(
+				'abc <a class="external" rel="nofollow" href="//en.example.org/w/Link">link</a> def',
+				"abc [[link]] def",
+				false, false, $wikiId
+			)
 		);
+		// @codingStandardsIgnoreEnd
 	}
 
 	/**
@@ -225,6 +289,7 @@ class LinkerTest extends MediaWikiLangTestCase {
 	}
 
 	public static function provideCasesForFormatLinksInComment() {
+		// @codingStandardsIgnoreStart Generic.Files.LineLength
 		return array(
 			array(
 				'foo bar <a href="/wiki/Special:BlankPage" title="Special:BlankPage">Special:BlankPage</a>',
@@ -242,5 +307,6 @@ class LinkerTest extends MediaWikiLangTestCase {
 				'enwiki',
 			),
 		);
+		// @codingStandardsIgnoreEnd
 	}
 }

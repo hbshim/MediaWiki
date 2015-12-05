@@ -513,7 +513,7 @@ class CreateFileOp extends FileOp {
 	}
 
 	protected function getSourceSha1Base36() {
-		return wfBaseConvert( sha1( $this->params['content'] ), 16, 36, 31 );
+		return Wikimedia\base_convert( sha1( $this->params['content'] ), 16, 36, 31 );
 	}
 
 	public function storagePathsChanged() {
@@ -577,11 +577,11 @@ class StoreFileOp extends FileOp {
 	}
 
 	protected function getSourceSha1Base36() {
-		wfSuppressWarnings();
+		MediaWiki\suppressWarnings();
 		$hash = sha1_file( $this->params['src'] );
-		wfRestoreWarnings();
+		MediaWiki\restoreWarnings();
 		if ( $hash !== false ) {
-			$hash = wfBaseConvert( $hash, 16, 36, 31 );
+			$hash = Wikimedia\base_convert( $hash, 16, 36, 31 );
 		}
 
 		return $hash;

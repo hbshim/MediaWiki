@@ -58,7 +58,7 @@ class SpecialPasswordReset extends FormSpecialPage {
 			throw new ErrorPageError( 'internalerror', 'resetpass_forbidden' );
 		}
 
-		return parent::checkExecutePermissions( $user );
+		parent::checkExecutePermissions( $user );
 	}
 
 	protected function getFormFields() {
@@ -104,7 +104,7 @@ class SpecialPasswordReset extends FormSpecialPage {
 	}
 
 	protected function getDisplayFormat() {
-		return 'vform';
+		return 'ooui';
 	}
 
 	public function alterForm( HTMLForm $form ) {
@@ -139,7 +139,7 @@ class SpecialPasswordReset extends FormSpecialPage {
 	 * @return bool|array
 	 */
 	public function onSubmit( array $data ) {
-		global $wgAuth;
+		global $wgAuth, $wgMinimalPasswordLength;
 
 		if ( isset( $data['Domain'] ) ) {
 			if ( $wgAuth->validDomain( $data['Domain'] ) ) {
@@ -254,7 +254,7 @@ class SpecialPasswordReset extends FormSpecialPage {
 
 		$passwords = array();
 		foreach ( $users as $user ) {
-			$password = $user->randomPassword();
+			$password = PasswordFactory::generateRandomPasswordString( $wgMinimalPasswordLength );
 			$user->setNewpassword( $password );
 			$user->saveSettings();
 			$passwords[] = $this->msg( 'passwordreset-emailelement', $user->getName(), $password )
@@ -271,7 +271,7 @@ class SpecialPasswordReset extends FormSpecialPage {
 			round( $this->getConfig()->get( 'NewPasswordExpiry' ) / 86400 )
 		);
 
-		$title = $this->msg( 'passwordreset-emailtitle' );
+		$title = $this->msg( 'passwordreset-emailtitle' )->inLanguage( $userLanguage );
 
 		$this->result = $firstUser->sendMail( $title->text(), $this->email->text() );
 

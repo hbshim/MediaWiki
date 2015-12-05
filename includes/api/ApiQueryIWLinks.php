@@ -51,7 +51,6 @@ class ApiQueryIWLinks extends ApiQueryBase {
 		// Handle deprecated param
 		$this->requireMaxOneParameter( $params, 'url', 'prop' );
 		if ( $params['url'] ) {
-			$this->logFeatureUsage( 'prop=iwlinks&iwurl' );
 			$prop = array( 'url' => 1 );
 		}
 
@@ -129,7 +128,7 @@ class ApiQueryIWLinks extends ApiQueryBase {
 				}
 			}
 
-			ApiResult::setContent( $entry, $row->iwl_title );
+			ApiResult::setContentValue( $entry, 'title', $row->iwl_title );
 			$fit = $this->addPageSubItem( $row->iwl_from, $entry );
 			if ( !$fit ) {
 				$this->setContinueEnumParameter(
@@ -151,7 +150,8 @@ class ApiQueryIWLinks extends ApiQueryBase {
 				ApiBase::PARAM_ISMULTI => true,
 				ApiBase::PARAM_TYPE => array(
 					'url',
-				)
+				),
+				ApiBase::PARAM_HELP_MSG_PER_VALUE => array(),
 			),
 			'prefix' => null,
 			'title' => null,

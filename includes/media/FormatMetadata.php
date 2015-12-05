@@ -117,9 +117,9 @@ class FormatMetadata extends ContextSource {
 				$type = 'ul'; // default unordered list.
 			}
 
-			//This is done differently as the tag is an array.
+			// This is done differently as the tag is an array.
 			if ( $tag == 'GPSTimeStamp' && count( $vals ) === 3 ) {
-				//hour min sec array
+				// hour min sec array
 
 				$h = explode( '/', $vals[0] );
 				$m = explode( '/', $vals[1] );
@@ -413,7 +413,7 @@ class FormatMetadata extends ContextSource {
 							'mode' => ( $val & bindec( '00011000' ) ) >> 3,
 							'function' => ( $val & bindec( '00100000' ) ) >> 5,
 							'redeye' => ( $val & bindec( '01000000' ) ) >> 6,
-//						'reserved' => ($val & bindec( '10000000' )) >> 7,
+// 						'reserved' => ($val & bindec( '10000000' )) >> 7,
 						);
 						$flashMsgs = array();
 						# We do not need to handle unknown values since all are used.
@@ -597,7 +597,7 @@ class FormatMetadata extends ContextSource {
 						}
 						break;
 
-					//The GPS...Ref values are kept for compatibility, probably won't be reached.
+					// The GPS...Ref values are kept for compatibility, probably won't be reached.
 					case 'GPSLatitudeRef':
 					case 'GPSDestLatitudeRef':
 						switch ( $val ) {
@@ -706,7 +706,7 @@ class FormatMetadata extends ContextSource {
 						break;
 
 					case 'GPSDOP':
-						// See http://en.wikipedia.org/wiki/Dilution_of_precision_(GPS)
+						// See https://en.wikipedia.org/wiki/Dilution_of_precision_(GPS)
 						if ( $val <= 2 ) {
 							$val = $this->exifMsg( $tag, 'excellent', $this->formatNum( $val ) );
 						} elseif ( $val <= 5 ) {
@@ -730,7 +730,7 @@ class FormatMetadata extends ContextSource {
 
 					case 'Software':
 						if ( is_array( $val ) ) {
-							//if its a software, version array.
+							// if its a software, version array.
 							$val = $this->msg( 'exif-software-version-value', $val[0], $val[1] )->text();
 						} else {
 							$val = $this->exifMsg( $tag, '', $val );
@@ -1004,28 +1004,6 @@ class FormatMetadata extends ContextSource {
 	}
 
 	/**
-	 * Flatten an array, using the user language for any messages.
-	 *
-	 * @param array $vals Array of values
-	 * @param string $type Type of array (either lang, ul, ol).
-	 *   lang = language assoc array with keys being the lang code
-	 *   ul = unordered list, ol = ordered list
-	 *   type can also come from the '_type' member of $vals.
-	 * @param bool $noHtml If to avoid returning anything resembling HTML.
-	 *   (Ugly hack for backwards compatibility with old MediaWiki).
-	 * @param bool|IContextSource $context
-	 * @return string Single value (in wiki-syntax).
-	 */
-	public static function flattenArray( $vals, $type = 'ul', $noHtml = false, $context = false ) {
-		$obj = new FormatMetadata;
-		if ( $context ) {
-			$obj->setContext( $context );
-		}
-
-		return $obj->flattenArrayReal( $vals, $type, $noHtml );
-	}
-
-	/**
 	 * A function to collapse multivalued tags into a single value.
 	 * This turns an array of (for example) authors into a bulleted list.
 	 *
@@ -1191,7 +1169,7 @@ class FormatMetadata extends ContextSource {
 		$lowLang = strtolower( $lang );
 		$langName = Language::fetchLanguageName( $lowLang );
 		if ( $langName === '' ) {
-			//try just the base language name. (aka en-US -> en ).
+			// try just the base language name. (aka en-US -> en ).
 			list( $langPrefix ) = explode( '-', $lowLang, 2 );
 			$langName = Language::fetchLanguageName( $langPrefix );
 			if ( $langName === '' ) {
@@ -1305,7 +1283,7 @@ class FormatMetadata extends ContextSource {
 	 */
 	private function gcd( $a, $b ) {
 		/*
-			// http://en.wikipedia.org/wiki/Euclidean_algorithm
+			// https://en.wikipedia.org/wiki/Euclidean_algorithm
 			// Recursive form would be:
 			if( $b == 0 )
 				return $a;
@@ -1593,11 +1571,10 @@ class FormatMetadata extends ContextSource {
 	 * @since 1.23
 	 */
 	public function fetchExtendedMetadata( File $file ) {
-		global $wgMemc;
+		$cache = ObjectCache::getMainWANInstance();
 
 		// If revision deleted, exit immediately
 		if ( $file->isDeleted( File::DELETED_FILE ) ) {
-
 			return array();
 		}
 
@@ -1608,7 +1585,7 @@ class FormatMetadata extends ContextSource {
 			$file->getSha1()
 		);
 
-		$cachedValue = $wgMemc->get( $cacheKey );
+		$cachedValue = $cache->get( $cacheKey );
 		if (
 			$cachedValue
 			&& Hooks::run( 'ValidateExtendedMetadataCache', array( $cachedValue['timestamp'], $file ) )
@@ -1626,9 +1603,9 @@ class FormatMetadata extends ContextSource {
 			// This is an API-specific function so it would be cleaner to call it from
 			// outside fetchExtendedMetadata, but this way we don't need to redo the
 			// computation on a cache hit.
-			$this->sanitizeArrayForXml( $extendedMetadata );
+			$this->sanitizeArrayForAPI( $extendedMetadata );
 			$valueToCache = array( 'data' => $extendedMetadata, 'timestamp' => wfTimestampNow() );
-			$wgMemc->set( $cacheKey, $valueToCache, $maxCacheTime );
+			$cache->set( $cacheKey, $valueToCache, $maxCacheTime );
 		}
 
 		return $extendedMetadata;
@@ -1755,8 +1732,9 @@ class FormatMetadata extends ContextSource {
 	}
 
 	/**
-	 * Turns an XMP-style multivalue array into a single value by dropping all but the first value.
-	 * If the value is not a multivalue array (or a multivalue array inside a multilang array), it is returned unchanged.
+	 * Turns an XMP-style multivalue array into a single value by dropping all but the first
+	 * value. If the value is not a multivalue array (or a multivalue array inside a multilang
+	 * array), it is returned unchanged.
 	 * See mediawiki.org/wiki/Manual:File_metadata_handling#Multi-language_array_format
 	 * @param mixed $value
 	 * @return mixed The value, or the first value if there were multiple ones
@@ -1765,7 +1743,8 @@ class FormatMetadata extends ContextSource {
 	protected function resolveMultivalueValue( $value ) {
 		if ( !is_array( $value ) ) {
 			return $value;
-		} elseif ( isset( $value['_type'] ) && $value['_type'] === 'lang' ) { // if this is a multilang array, process fields separately
+		} elseif ( isset( $value['_type'] ) && $value['_type'] === 'lang' ) {
+			// if this is a multilang array, process fields separately
 			$newValue = array();
 			foreach ( $value as $k => $v ) {
 				$newValue[$k] = $this->resolveMultivalueValue( $v );
@@ -1822,17 +1801,16 @@ class FormatMetadata extends ContextSource {
 
 	/**
 	 * Makes sure the given array is a valid API response fragment
-	 * (can be transformed into XML)
 	 * @param array $arr
 	 */
-	protected function sanitizeArrayForXml( &$arr ) {
+	protected function sanitizeArrayForAPI( &$arr ) {
 		if ( !is_array( $arr ) ) {
 			return;
 		}
 
 		$counter = 1;
 		foreach ( $arr as $key => &$value ) {
-			$sanitizedKey = $this->sanitizeKeyForXml( $key );
+			$sanitizedKey = $this->sanitizeKeyForAPI( $key );
 			if ( $sanitizedKey !== $key ) {
 				if ( isset( $arr[$sanitizedKey] ) ) {
 					// Make the sanitized keys hopefully unique.
@@ -1846,20 +1824,24 @@ class FormatMetadata extends ContextSource {
 				unset( $arr[$key] );
 			}
 			if ( is_array( $value ) ) {
-				$this->sanitizeArrayForXml( $value );
+				$this->sanitizeArrayForAPI( $value );
 			}
+		}
+
+		// Handle API metadata keys (particularly "_type")
+		$keys = array_filter( array_keys( $arr ), 'ApiResult::isMetadataKey' );
+		if ( $keys ) {
+			ApiResult::setPreserveKeysList( $arr, $keys );
 		}
 	}
 
 	/**
-	 * Turns a string into a valid XML identifier.
-	 * Used to ensure that keys of an associative array in the
-	 * API response do not break the XML formatter.
+	 * Turns a string into a valid API identifier.
 	 * @param string $key
 	 * @return string
 	 * @since 1.23
 	 */
-	protected function sanitizeKeyForXml( $key ) {
+	protected function sanitizeKeyForAPI( $key ) {
 		// drop all characters which are not valid in an XML tag name
 		// a bunch of non-ASCII letters would be valid but probably won't
 		// be used so we take the easy way

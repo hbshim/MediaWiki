@@ -149,7 +149,8 @@ class PageArchive {
 			$fields,
 			$conds,
 			$join_conds,
-			$options
+			$options,
+			''
 		);
 
 		return $dbr->select( $tables,
@@ -370,6 +371,7 @@ class PageArchive {
 
 		if ( $restoreFiles && $this->title->getNamespace() == NS_FILE ) {
 			$img = wfLocalFile( $this->title );
+			$img->load( File::READ_LATEST );
 			$this->fileStatus = $img->restore( $fileVersions, $unsuppress );
 			if ( !$this->fileStatus->isOK() ) {
 				return false;
@@ -553,7 +555,7 @@ class PageArchive {
 		$user = User::newFromName( $revision->getUserText( Revision::RAW ), false );
 		$content = $revision->getContent( Revision::RAW );
 
-		//NOTE: article ID may not be known yet. prepareSave() should not modify the database.
+		// NOTE: article ID may not be known yet. prepareSave() should not modify the database.
 		$status = $content->prepareSave( $article, 0, -1, $user );
 
 		if ( !$status->isOK() ) {
@@ -585,7 +587,7 @@ class PageArchive {
 		$restored = 0;
 
 		foreach ( $result as $row ) {
-			// Check for key dupes due to shitty archive integrity.
+			// Check for key dupes due to needed archive integrity.
 			if ( $row->ar_rev_id ) {
 				$exists = $dbw->selectField( 'revision', '1',
 					array( 'rev_id' => $row->ar_rev_id ), __METHOD__ );
@@ -623,19 +625,21 @@ class PageArchive {
 		$wasnew = $article->updateIfNewerOn( $dbw, $revision, $previousRevId );
 		if ( $created || $wasnew ) {
 			// Update site stats, link tables, etc
-			$user = User::newFromName( $revision->getUserText( Revision::RAW ), false );
 			$article->doEditUpdates(
 				$revision,
-				$user,
-				array( 'created' => $created, 'oldcountable' => $oldcountable )
+				User::newFromName( $revision->getUserText( Revision::RAW ), false ),
+				array(
+					'created' => $created,
+					'oldcountable' => $oldcountable,
+					'restored' => true
+				)
 			);
 		}
 
 		Hooks::run( 'ArticleUndelete', array( &$this->title, $created, $comment, $oldPageId ) );
 
 		if ( $this->title->getNamespace() == NS_FILE ) {
-			$update = new HTMLCacheUpdate( $this->title, 'imagelinks' );
-			$update->doUpdate();
+			DeferredUpdates::addUpdate( new HTMLCacheUpdate( $this->title, 'imagelinks' ) );
 		}
 
 		return Status::newGood( $restored );
@@ -755,8 +759,8 @@ class SpecialUndelete extends SpecialPage {
 	 * @param User $user
 	 * @return bool
 	 */
-	private function isAllowed( $permission, User $user = null ) {
-		$user = $user ? : $this->getUser();
+	protected function isAllowed( $permission, User $user = null ) {
+		$user = $user ?: $this->getUser();
 		if ( $this->mTargetObj !== null ) {
 			return $this->mTargetObj->userCan( $permission, $user );
 		} else {
@@ -769,6 +773,8 @@ class SpecialUndelete extends SpecialPage {
 	}
 
 	function execute( $par ) {
+		$this->useTransactionalTimeLimit();
+
 		$user = $this->getUser();
 
 		$this->setHeaders();
@@ -790,6 +796,7 @@ class SpecialUndelete extends SpecialPage {
 			return;
 		}
 
+		$this->addHelpLink( 'Help:Undelete' );
 		if ( $this->mAllowed ) {
 			$out->setPageTitle( $this->msg( 'undeletepage' ) );
 		} else {
@@ -839,7 +846,7 @@ class SpecialUndelete extends SpecialPage {
 					'prefix',
 					20,
 					$this->mSearchPrefix,
-					array( 'id' => 'prefix', 'autofocus' => true )
+					array( 'id' => 'prefix', 'autofocus' => '' )
 				) . ' ' .
 				Xml::submitButton( $this->msg( 'undelete-search-submit' )->text() ) .
 				Xml::closeElement( 'fieldset' ) .
@@ -996,7 +1003,7 @@ class SpecialUndelete extends SpecialPage {
 			return;
 		}
 
-		if ( $this->mPreview || !$isText ) {
+		if ( ( $this->mPreview || !$isText ) && $content ) {
 			// NOTE: non-text content has no source view, so always use rendered preview
 
 			// Hide [edit]s
@@ -1204,7 +1211,9 @@ class SpecialUndelete extends SpecialPage {
 		$repo->streamFile( $path );
 	}
 
-	private function showHistory() {
+	protected function showHistory() {
+		$this->checkReadOnly();
+
 		$out = $this->getOutput();
 		if ( $this->mAllowed ) {
 			$out->addModules( 'mediawiki.special.undelete' );
@@ -1312,7 +1321,7 @@ class SpecialUndelete extends SpecialPage {
 					'wpComment',
 					50,
 					$this->mComment,
-					array( 'id' => 'wpComment', 'autofocus' => true )
+					array( 'id' => 'wpComment', 'autofocus' => '' )
 				) .
 				"</td>
 			</tr>
@@ -1375,7 +1384,7 @@ class SpecialUndelete extends SpecialPage {
 		return true;
 	}
 
-	private function formatRevisionRow( $row, $earliestLiveTime, $remaining ) {
+	protected function formatRevisionRow( $row, $earliestLiveTime, $remaining ) {
 		$rev = Revision::newFromArchiveRow( $row,
 			array(
 				'title' => $this->mTargetObj
@@ -1634,9 +1643,7 @@ class SpecialUndelete extends SpecialPage {
 			throw new ErrorPageError( 'undelete-error', 'filedelete-maintenance' );
 		}
 
-		if ( wfReadOnly() ) {
-			throw new ReadOnlyError;
-		}
+		$this->checkReadOnly();
 
 		$out = $this->getOutput();
 		$archive = new PageArchive( $this->mTargetObj, $this->getConfig() );

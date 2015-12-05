@@ -78,7 +78,7 @@ class LinkBatch {
 			$this->data[$ns] = array();
 		}
 
-		$this->data[$ns][str_replace( ' ', '_', $dbkey )] = 1;
+		$this->data[$ns][strtr( $dbkey, ' ', '_' )] = 1;
 	}
 
 	/**
@@ -231,7 +231,7 @@ class LinkBatch {
 	 * Construct a WHERE clause which will match all the given titles.
 	 *
 	 * @param string $prefix The appropriate table's field name prefix ('page', 'pl', etc)
-	 * @param DatabaseBase $db DatabaseBase object to use
+	 * @param IDatabase $db DatabaseBase object to use
 	 * @return string|bool String with SQL where clause fragment, or false if no items.
 	 */
 	public function constructSet( $prefix, $db ) {

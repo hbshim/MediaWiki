@@ -356,6 +356,7 @@ class SpecialPage {
 		if ( $this->getConfig()->get( 'UseMediaWikiUIEverywhere' ) ) {
 			$out->addModuleStyles( array(
 				'mediawiki.ui.input',
+				'mediawiki.ui.radio',
 				'mediawiki.ui.checkbox',
 			) );
 		}
@@ -632,6 +633,26 @@ class SpecialPage {
 	}
 
 	/**
+	 * Adds help link with an icon via page indicators.
+	 * Link target can be overridden by a local message containing a wikilink:
+	 * the message key is: lowercase special page name + '-helppage'.
+	 * @param string $to Target MediaWiki.org page title or encoded URL.
+	 * @param bool $overrideBaseUrl Whether $url is a full URL, to avoid MW.o.
+	 * @since 1.25
+	 */
+	public function addHelpLink( $to, $overrideBaseUrl = false ) {
+		global $wgContLang;
+		$msg = $this->msg( $wgContLang->lc( $this->getName() ) . '-helppage' );
+
+		if ( !$msg->isDisabled() ) {
+			$helpUrl = Skin::makeUrl( $msg->plain() );
+			$this->getOutput()->addHelpLink( $helpUrl, true );
+		} else {
+			$this->getOutput()->addHelpLink( $to, $overrideBaseUrl );
+		}
+	}
+
+	/**
 	 * Get the group that the special page belongs in on Special:SpecialPage
 	 * Use this method, instead of getGroupName to allow customization
 	 * of the group name from the wiki side
@@ -641,7 +662,6 @@ class SpecialPage {
 	 */
 	public function getFinalGroupName() {
 		$name = $this->getName();
-		$specialPageGroups = $this->getConfig()->get( 'SpecialPageGroups' );
 
 		// Allow overbidding the group from the wiki side
 		$msg = $this->msg( 'specialpages-specialpagegroup-' . strtolower( $name ) )->inContentLanguage();
@@ -650,18 +670,6 @@ class SpecialPage {
 		} else {
 			// Than use the group from this object
 			$group = $this->getGroupName();
-
-			// Group '-' is used as default to have the chance to determine,
-			// if the special pages overrides this method,
-			// if not overridden, $wgSpecialPageGroups is checked for b/c
-			if ( $group === '-' && isset( $specialPageGroups[$name] ) ) {
-				$group = $specialPageGroups[$name];
-			}
-		}
-
-		// never give '-' back, change to 'other'
-		if ( $group === '-' ) {
-			$group = 'other';
 		}
 
 		return $group;
@@ -676,8 +684,16 @@ class SpecialPage {
 	 * @since 1.21
 	 */
 	protected function getGroupName() {
-		// '-' used here to determine, if this group is overridden or has a hardcoded 'other'
-		// Needed for b/c in getFinalGroupName
-		return '-';
+		return 'other';
+	}
+
+	/**
+	 * Call wfTransactionalTimeLimit() if this request was POSTed
+	 * @since 1.26
+	 */
+	protected function useTransactionalTimeLimit() {
+		if ( $this->getRequest()->wasPosted() ) {
+			wfTransactionalTimeLimit();
+		}
 	}
 }

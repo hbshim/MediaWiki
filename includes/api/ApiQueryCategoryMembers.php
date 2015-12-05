@@ -151,25 +151,23 @@ class ApiQueryCategoryMembers extends ApiQueryGeneratorBase {
 				$this->addWhereRange( 'cl_from', $dir, null, null );
 			} else {
 				if ( $params['startsortkeyprefix'] !== null ) {
-					$startsortkey = Collation::singleton()->getSortkey( $params['startsortkeyprefix'] );
+					$startsortkey = Collation::singleton()->getSortKey( $params['startsortkeyprefix'] );
 				} elseif ( $params['starthexsortkey'] !== null ) {
 					if ( !$this->validateHexSortkey( $params['starthexsortkey'] ) ) {
 						$this->dieUsage( 'The starthexsortkey provided is not valid', 'bad_starthexsortkey' );
 					}
 					$startsortkey = pack( 'H*', $params['starthexsortkey'] );
 				} else {
-					$this->logFeatureUsage( 'list=categorymembers&cmstartsortkey' );
 					$startsortkey = $params['startsortkey'];
 				}
 				if ( $params['endsortkeyprefix'] !== null ) {
-					$endsortkey = Collation::singleton()->getSortkey( $params['endsortkeyprefix'] );
+					$endsortkey = Collation::singleton()->getSortKey( $params['endsortkeyprefix'] );
 				} elseif ( $params['endhexsortkey'] !== null ) {
 					if ( !$this->validateHexSortkey( $params['endhexsortkey'] ) ) {
 						$this->dieUsage( 'The endhexsortkey provided is not valid', 'bad_endhexsortkey' );
 					}
 					$endsortkey = pack( 'H*', $params['endhexsortkey'] );
 				} else {
-					$this->logFeatureUsage( 'list=categorymembers&cmendsortkey' );
 					$endsortkey = $params['endsortkey'];
 				}
 
@@ -246,7 +244,9 @@ class ApiQueryCategoryMembers extends ApiQueryGeneratorBase {
 			}
 
 			if ( is_null( $resultPageSet ) ) {
-				$vals = array();
+				$vals = array(
+					ApiResult::META_TYPE => 'assoc',
+				);
 				if ( $fld_ids ) {
 					$vals['pageid'] = intval( $row->page_id );
 				}
@@ -285,7 +285,7 @@ class ApiQueryCategoryMembers extends ApiQueryGeneratorBase {
 		}
 
 		if ( is_null( $resultPageSet ) ) {
-			$result->setIndexedTagName_internal(
+			$result->addIndexedTagName(
 				array( 'query', $this->getModuleName() ), 'cm' );
 		}
 	}
@@ -308,7 +308,8 @@ class ApiQueryCategoryMembers extends ApiQueryGeneratorBase {
 					'sortkeyprefix',
 					'type',
 					'timestamp',
-				)
+				),
+				ApiBase::PARAM_HELP_MSG_PER_VALUE => array(),
 			),
 			'namespace' => array(
 				ApiBase::PARAM_ISMULTI => true,

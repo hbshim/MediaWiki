@@ -287,10 +287,10 @@ class WebInstallerLanguage extends WebInstallerPage {
 	public function getLanguageSelector( $name, $label, $selectedCode, $helpHtml = '' ) {
 		global $wgDummyLanguageCodes;
 
-		$s = $helpHtml;
+		$output = $helpHtml;
 
-		$s .= Html::openElement( 'select', array( 'id' => $name, 'name' => $name,
-				'tabindex' => $this->parent->nextTabIndex() ) ) . "\n";
+		$select = new XmlSelect( $name, $name, $selectedCode );
+		$select->setAttribute( 'tabindex', $this->parent->nextTabIndex() );
 
 		$languages = Language::fetchLanguageNames();
 		ksort( $languages );
@@ -298,11 +298,11 @@ class WebInstallerLanguage extends WebInstallerPage {
 			if ( isset( $wgDummyLanguageCodes[$code] ) ) {
 				continue;
 			}
-			$s .= "\n" . Xml::option( "$code - $lang", $code, $code == $selectedCode );
+			$select->addOption( "$code - $lang", $code );
 		}
-		$s .= "\n</select>\n";
 
-		return $this->parent->label( $label, $name, $s );
+		$output .= $select->getHTML();
+		return $this->parent->label( $label, $name, $output );
 	}
 
 }
@@ -681,8 +681,7 @@ class WebInstallerUpgrade extends WebInstallerPage {
 			$this->parent->getInfoBox(
 				wfMessage( $msg,
 					$this->getVar( 'wgServer' ) .
-					$this->getVar( 'wgScriptPath' ) . '/index' .
-					$this->getVar( 'wgScriptExtension' )
+					$this->getVar( 'wgScriptPath' ) . '/index.php'
 				)->plain(), 'tick-32.png'
 			)
 		);
@@ -831,6 +830,8 @@ class WebInstallerName extends WebInstallerPage {
 	 * @return bool
 	 */
 	public function submit() {
+		global $wgPasswordPolicy;
+
 		$retVal = true;
 		$this->parent->setVarsFromRequest( array( 'wgSitename', '_NamespaceType',
 			'_AdminName', '_AdminPassword', '_AdminPasswordConfirm', '_AdminEmail',
@@ -907,13 +908,21 @@ class WebInstallerName extends WebInstallerPage {
 		$pwd = $this->getVar( '_AdminPassword' );
 		$user = User::newFromName( $cname );
 		if ( $user ) {
-			$valid = $user->getPasswordValidity( $pwd );
+			$upp = new UserPasswordPolicy(
+				$wgPasswordPolicy['policies'],
+				$wgPasswordPolicy['checks']
+			);
+			$status = $upp->checkUserPasswordForGroups(
+				$user,
+				$pwd,
+				array( 'bureaucrat', 'sysop' )  // per Installer::createSysop()
+			);
+			$valid = $status->isGood() ? true : $status->getMessage();
 		} else {
 			$valid = 'config-admin-name-invalid';
 		}
 		if ( strval( $pwd ) === '' ) {
-			# $user->getPasswordValidity just checks for $wgMinimalPasswordLength.
-			# This message is more specific and helpful.
+			// Provide a more specific and helpful message if password field is left blank
 			$msg = 'config-admin-password-blank';
 		} elseif ( $pwd !== $this->getVar( '_AdminPasswordConfirm' ) ) {
 			$msg = 'config-admin-password-mismatch';
@@ -921,7 +930,7 @@ class WebInstallerName extends WebInstallerPage {
 			$msg = $valid;
 		}
 		if ( $msg !== false ) {
-			call_user_func_array( array( $this->parent, 'showError' ), (array)$msg );
+			call_user_func( array( $this->parent, 'showError' ), $msg );
 			$this->setVar( '_AdminPassword', '' );
 			$this->setVar( '_AdminPasswordConfirm', '' );
 			$retVal = false;
@@ -1131,7 +1140,7 @@ class WebInstallerOptions extends WebInstallerPage {
 		$caches[] = 'memcached';
 
 		// We'll hide/show this on demand when the value changes, see config.js.
-		$cacheval = $this->getVar( 'wgMainCacheType' );
+		$cacheval = $this->getVar( '_MainCacheType' );
 		if ( !$cacheval ) {
 			// We need to set a default here; but don't hardcode it
 			// or we lose it every time we reload the page for validation
@@ -1147,7 +1156,7 @@ class WebInstallerOptions extends WebInstallerPage {
 			// For grep: The following messages are used as the item labels:
 			// config-cache-none, config-cache-accel, config-cache-memcached
 			$this->parent->getRadioSet( array(
-				'var' => 'wgMainCacheType',
+				'var' => '_MainCacheType',
 				'label' => 'config-cache-options',
 				'itemLabelPrefix' => 'config-cache-',
 				'values' => $caches,
@@ -1183,7 +1192,7 @@ class WebInstallerOptions extends WebInstallerPage {
 		) );
 		$styleUrl = $server . dirname( dirname( $this->parent->getUrl() ) ) .
 			'/mw-config/config-cc.css';
-		$iframeUrl = 'http://creativecommons.org/license/?' .
+		$iframeUrl = '//creativecommons.org/license/?' .
 			wfArrayToCgi( array(
 				'partner' => 'MediaWiki',
 				'exit_url' => $exitUrl,
@@ -1285,7 +1294,7 @@ class WebInstallerOptions extends WebInstallerPage {
 		$this->parent->setVarsFromRequest( array( '_RightsProfile', '_LicenseCode',
 			'wgEnableEmail', 'wgPasswordSender', 'wgEnableUploads', 'wgLogo',
 			'wgEnableUserEmail', 'wgEnotifUserTalk', 'wgEnotifWatchlist',
-			'wgEmailAuthentication', 'wgMainCacheType', '_MemCachedServers',
+			'wgEmailAuthentication', '_MainCacheType', '_MemCachedServers',
 			'wgUseInstantCommons', 'wgDefaultSkin' ) );
 
 		$retVal = true;
@@ -1351,7 +1360,7 @@ class WebInstallerOptions extends WebInstallerPage {
 		}
 		$this->parent->setVar( '_Extensions', $extsToInstall );
 
-		if ( $this->getVar( 'wgMainCacheType' ) == 'memcached' ) {
+		if ( $this->getVar( '_MainCacheType' ) == 'memcached' ) {
 			$memcServers = explode( "\n", $this->getVar( '_MemCachedServers' ) );
 			if ( !$memcServers ) {
 				$this->parent->showError( 'config-memcache-needservers' );
@@ -1479,8 +1488,7 @@ class WebInstallerComplete extends WebInstallerPage {
 				wfMessage( 'config-install-done',
 					$lsUrl,
 					$this->getVar( 'wgServer' ) .
-					$this->getVar( 'wgScriptPath' ) . '/index' .
-					$this->getVar( 'wgScriptExtension' ),
+					$this->getVar( 'wgScriptPath' ) . '/index.php',
 					'<downloadlink/>'
 				)->plain(), 'tick-32.png'
 			)

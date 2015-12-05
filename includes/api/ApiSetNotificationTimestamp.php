@@ -46,7 +46,8 @@ class ApiSetNotificationTimestamp extends ApiBase {
 		$params = $this->extractRequestParams();
 		$this->requireMaxOneParameter( $params, 'timestamp', 'torevid', 'newerthanrevid' );
 
-		$this->getResult()->beginContinuation( $params['continue'], array(), array() );
+		$continuationManager = new ApiContinuationManager( $this, array(), array() );
+		$this->setContinuationManager( $continuationManager );
 
 		$pageSet = $this->getPageSet();
 		if ( $params['entirewatchlist'] && $pageSet->getDataSource() !== null ) {
@@ -73,7 +74,8 @@ class ApiSetNotificationTimestamp extends ApiBase {
 			}
 			$title = reset( $pageSet->getGoodTitles() );
 			if ( $title ) {
-				$timestamp = Revision::getTimestampFromId( $title, $params['torevid'] );
+				$timestamp = Revision::getTimestampFromId(
+					$title, $params['torevid'], Revision::READ_LATEST );
 				if ( $timestamp ) {
 					$timestamp = $dbw->timestamp( $timestamp );
 				} else {
@@ -86,7 +88,8 @@ class ApiSetNotificationTimestamp extends ApiBase {
 			}
 			$title = reset( $pageSet->getGoodTitles() );
 			if ( $title ) {
-				$revid = $title->getNextRevisionID( $params['newerthanrevid'] );
+				$revid = $title->getNextRevisionID(
+					$params['newerthanrevid'], Title::GAID_FOR_UPDATE );
 				if ( $revid ) {
 					$timestamp = $dbw->timestamp( Revision::getTimestampFromId( $title, $revid ) );
 				} else {
@@ -100,7 +103,7 @@ class ApiSetNotificationTimestamp extends ApiBase {
 		if ( $params['entirewatchlist'] ) {
 			// Entire watchlist mode: Just update the thing and return a success indicator
 			$dbw->update( 'watchlist', array( 'wl_notificationtimestamp' => $timestamp ),
-				array( 'wl_user' => $user->getID() ),
+				array( 'wl_user' => $user->getId() ),
 				__METHOD__
 			);
 
@@ -109,24 +112,22 @@ class ApiSetNotificationTimestamp extends ApiBase {
 				: wfTimestamp( TS_ISO_8601, $timestamp );
 		} else {
 			// First, log the invalid titles
-			foreach ( $pageSet->getInvalidTitles() as $title ) {
-				$r = array();
-				$r['title'] = $title;
-				$r['invalid'] = '';
+			foreach ( $pageSet->getInvalidTitlesAndReasons() as $r ) {
+				$r['invalid'] = true;
 				$result[] = $r;
 			}
 			foreach ( $pageSet->getMissingPageIDs() as $p ) {
 				$page = array();
 				$page['pageid'] = $p;
-				$page['missing'] = '';
-				$page['notwatched'] = '';
+				$page['missing'] = true;
+				$page['notwatched'] = true;
 				$result[] = $page;
 			}
 			foreach ( $pageSet->getMissingRevisionIDs() as $r ) {
 				$rev = array();
 				$rev['revid'] = $r;
-				$rev['missing'] = '';
-				$rev['notwatched'] = '';
+				$rev['missing'] = true;
+				$rev['notwatched'] = true;
 				$result[] = $rev;
 			}
 
@@ -134,7 +135,7 @@ class ApiSetNotificationTimestamp extends ApiBase {
 				// Now process the valid titles
 				$lb = new LinkBatch( $pageSet->getTitles() );
 				$dbw->update( 'watchlist', array( 'wl_notificationtimestamp' => $timestamp ),
-					array( 'wl_user' => $user->getID(), $lb->constructSet( 'wl', $dbw ) ),
+					array( 'wl_user' => $user->getId(), $lb->constructSet( 'wl', $dbw ) ),
 					__METHOD__
 				);
 
@@ -143,7 +144,7 @@ class ApiSetNotificationTimestamp extends ApiBase {
 				$res = $dbw->select(
 					'watchlist',
 					array( 'wl_namespace', 'wl_title', 'wl_notificationtimestamp' ),
-					array( 'wl_user' => $user->getID(), $lb->constructSet( 'wl', $dbw ) ),
+					array( 'wl_user' => $user->getId(), $lb->constructSet( 'wl', $dbw ) ),
 					__METHOD__
 				);
 				foreach ( $res as $row ) {
@@ -160,7 +161,7 @@ class ApiSetNotificationTimestamp extends ApiBase {
 						'title' => $title->getPrefixedText(),
 					);
 					if ( !$title->exists() ) {
-						$r['missing'] = '';
+						$r['missing'] = true;
 					}
 					if ( isset( $timestamps[$ns] ) && array_key_exists( $dbkey, $timestamps[$ns] ) ) {
 						$r['notificationtimestamp'] = '';
@@ -168,17 +169,18 @@ class ApiSetNotificationTimestamp extends ApiBase {
 							$r['notificationtimestamp'] = wfTimestamp( TS_ISO_8601, $timestamps[$ns][$dbkey] );
 						}
 					} else {
-						$r['notwatched'] = '';
+						$r['notwatched'] = true;
 					}
 					$result[] = $r;
 				}
 			}
 
-			$apiResult->setIndexedTagName( $result, 'page' );
+			ApiResult::setIndexedTagName( $result, 'page' );
 		}
 		$apiResult->addValue( null, $this->getModuleName(), $result );
 
-		$apiResult->endContinuation();
+		$this->setContinuationManager( null );
+		$continuationManager->setContinuationIntoResult( $apiResult );
 	}
 
 	/**

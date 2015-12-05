@@ -132,7 +132,7 @@ class ApiQueryIWBacklinks extends ApiQueryGeneratorBase {
 				ApiQueryBase::addTitleInfo( $entry, $title );
 
 				if ( $row->page_is_redirect ) {
-					$entry['redirect'] = '';
+					$entry['redirect'] = true;
 				}
 
 				if ( $iwprefix ) {
@@ -155,7 +155,7 @@ class ApiQueryIWBacklinks extends ApiQueryGeneratorBase {
 		}
 
 		if ( is_null( $resultPageSet ) ) {
-			$result->setIndexedTagName_internal( array( 'query', $this->getModuleName() ), 'iw' );
+			$result->addIndexedTagName( array( 'query', $this->getModuleName() ), 'iw' );
 		} else {
 			$resultPageSet->populateFromTitles( $pages );
 		}
@@ -186,6 +186,7 @@ class ApiQueryIWBacklinks extends ApiQueryGeneratorBase {
 					'iwprefix',
 					'iwtitle',
 				),
+				ApiBase::PARAM_HELP_MSG_PER_VALUE => array(),
 			),
 			'dir' => array(
 				ApiBase::PARAM_DFLT => 'ascending',

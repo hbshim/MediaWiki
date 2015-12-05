@@ -68,15 +68,17 @@ class SpecialRandomInCategory extends FormSpecialPage {
 	}
 
 	protected function getFormFields() {
-		$form = array(
+		$this->addHelpLink( 'Help:RandomInCategory' );
+
+		return array(
 			'category' => array(
-				'type' => 'text',
+				'type' => 'title',
+				'namespace' => NS_CATEGORY,
+				'relative' => true,
 				'label-message' => 'randomincategory-category',
 				'required' => true,
 			)
 		);
-
-		return $form;
 	}
 
 	public function requiresWrite() {
@@ -85,6 +87,14 @@ class SpecialRandomInCategory extends FormSpecialPage {
 
 	public function requiresUnblock() {
 		return false;
+	}
+
+	protected function getDisplayFormat() {
+		return 'ooui';
+	}
+
+	protected function alterForm( HTMLForm $form ) {
+		$form->setSubmitTextMsg( 'randomincategory-submit' );
 	}
 
 	protected function setParameter( $par ) {

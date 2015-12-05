@@ -38,10 +38,13 @@ class VFormHTMLForm extends HTMLForm {
 	protected $displayFormat = 'vform';
 
 	public function isVForm() {
+		wfDeprecated( __METHOD__, '1.25' );
 		return true;
 	}
 
-	public static function loadInputFromParameters( $fieldname, $descriptor, HTMLForm $parent = null ) {
+	public static function loadInputFromParameters( $fieldname, $descriptor,
+		HTMLForm $parent = null
+	) {
 		$field = parent::loadInputFromParameters( $fieldname, $descriptor, $parent );
 		$field->setShowEmptyLabel( false );
 		return $field;
@@ -64,7 +67,7 @@ class VFormHTMLForm extends HTMLForm {
 
 	protected function getFormAttributes() {
 		$attribs = parent::getFormAttributes();
-		array_push( $attribs['class'], 'mw-ui-vform', 'mw-ui-container' );
+		$attribs['class'] = array( 'mw-ui-vform', 'mw-ui-container', 'visualClear' );
 		return $attribs;
 	}
 
@@ -94,8 +97,10 @@ class VFormHTMLForm extends HTMLForm {
 			$attribs['class'] = array(
 				'mw-htmlform-submit',
 				'mw-ui-button mw-ui-big mw-ui-block',
-				$this->mSubmitModifierClass,
 			);
+			foreach ( $this->mSubmitFlags as $flag ) {
+				$attribs['class'][] = 'mw-ui-' . $flag;
+			}
 
 			$buttons .= Xml::submitButton( $this->getSubmitText(), $attribs ) . "\n";
 		}

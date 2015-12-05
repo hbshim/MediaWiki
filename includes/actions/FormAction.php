@@ -31,7 +31,10 @@ abstract class FormAction extends Action {
 	 * Get an HTMLForm descriptor array
 	 * @return array
 	 */
-	abstract protected function getFormFields();
+	protected function getFormFields() {
+		// Default to an empty form with just a submit button
+		return array();
+	}
 
 	/**
 	 * Add pre- or post-text to the form
@@ -68,13 +71,16 @@ abstract class FormAction extends Action {
 		$form = new HTMLForm( $this->fields, $this->getContext(), $this->getName() );
 		$form->setSubmitCallback( array( $this, 'onSubmit' ) );
 
+		$title = $this->getTitle();
+		$form->setAction( $title->getLocalURL( array( 'action' => $this->getName() ) ) );
 		// Retain query parameters (uselang etc)
-		$form->addHiddenField( 'action', $this->getName() ); // Might not be the same as the query string
 		$params = array_diff_key(
 			$this->getRequest()->getQueryValues(),
 			array( 'action' => null, 'title' => null )
 		);
-		$form->addHiddenField( 'redirectparams', wfArrayToCgi( $params ) );
+		if ( $params ) {
+			$form->addHiddenField( 'redirectparams', wfArrayToCgi( $params ) );
+		}
 
 		$form->addPreText( $this->preText() );
 		$form->addPostText( $this->postText() );
@@ -87,9 +93,10 @@ abstract class FormAction extends Action {
 	}
 
 	/**
-	 * Process the form on POST submission.  If you return false from getFormFields(),
-	 * this will obviously never be reached.  If you don't want to do anything with the
-	 * form, just return false here
+	 * Process the form on POST submission.
+	 *
+	 * If you don't want to do anything with the form, just return false here.
+	 *
 	 * @param array $data
 	 * @return bool|array True for success, false for didn't-try, array of errors on failure
 	 */

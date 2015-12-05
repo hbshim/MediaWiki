@@ -95,12 +95,7 @@ abstract class DBLockManager extends QuorumLockManager {
 			if ( count( $bucket ) > 1 ) { // multiple peers
 				// Tracks peers that couldn't be queried recently to avoid lengthy
 				// connection timeouts. This is useless if each bucket has one peer.
-				try {
-					$this->statusCache = ObjectCache::newAccelerator( array() );
-				} catch ( Exception $e ) {
-					trigger_error( __CLASS__ .
-						" using multiple DB peers without apc, xcache, or wincache." );
-				}
+				$this->statusCache = ObjectCache::getLocalServerInstance();
 				break;
 			}
 		}
@@ -146,7 +141,7 @@ abstract class DBLockManager extends QuorumLockManager {
 	 * Get (or reuse) a connection to a lock DB
 	 *
 	 * @param string $lockDb
-	 * @return DatabaseBase
+	 * @return IDatabase
 	 * @throws DBError
 	 */
 	protected function getConnection( $lockDb ) {
@@ -185,10 +180,10 @@ abstract class DBLockManager extends QuorumLockManager {
 	 * Do additional initialization for new lock DB connection
 	 *
 	 * @param string $lockDb
-	 * @param DatabaseBase $db
+	 * @param IDatabase $db
 	 * @throws DBError
 	 */
-	protected function initConnection( $lockDb, DatabaseBase $db ) {
+	protected function initConnection( $lockDb, IDatabase $db ) {
 	}
 
 	/**
@@ -254,9 +249,9 @@ class MySqlLockManager extends DBLockManager {
 
 	/**
 	 * @param string $lockDb
-	 * @param DatabaseBase $db
+	 * @param IDatabase $db
 	 */
-	protected function initConnection( $lockDb, DatabaseBase $db ) {
+	protected function initConnection( $lockDb, IDatabase $db ) {
 		# Let this transaction see lock rows from other transactions
 		$db->query( "SET SESSION TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;" );
 	}
@@ -381,7 +376,7 @@ class PostgreSqlLockManager extends DBLockManager {
 		$db = $this->getConnection( $lockSrv ); // checked in isServerUp()
 		$bigints = array_unique( array_map(
 			function ( $key ) {
-				return wfBaseConvert( substr( $key, 0, 15 ), 16, 10 );
+				return Wikimedia\base_convert( substr( $key, 0, 15 ), 16, 10 );
 			},
 			array_map( array( $this, 'sha1Base16Absolute' ), $paths )
 		) );
@@ -394,7 +389,7 @@ class PostgreSqlLockManager extends DBLockManager {
 				: "pg_try_advisory_lock({$db->addQuotes( $bigint )}) AS K$bigint";
 		}
 		$res = $db->query( 'SELECT ' . implode( ', ', $fields ), __METHOD__ );
-		$row = (array)$res->fetchObject();
+		$row = $res->fetchRow();
 
 		if ( in_array( 'f', $row ) ) {
 			// Release any acquired locks if some could not be acquired...

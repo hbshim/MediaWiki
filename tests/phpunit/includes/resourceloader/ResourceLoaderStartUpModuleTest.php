@@ -2,6 +2,17 @@
 
 class ResourceLoaderStartUpModuleTest extends ResourceLoaderTestCase {
 
+	// Version hash for a blank file module.
+	// Result of ResourceLoader::makeHash(), ResourceLoaderTestModule
+	// and ResourceLoaderFileModule::getDefinitionSummary().
+	protected static $blankVersion = 'wvTifjse';
+
+	protected static function expandPlaceholders( $text ) {
+		return strtr( $text, array(
+			'{blankVer}' => self::$blankVersion
+		) );
+	}
+
 	public static function provideGetModuleRegistrations() {
 		return array(
 			array( array(
@@ -10,7 +21,8 @@ class ResourceLoaderStartUpModuleTest extends ResourceLoaderTestCase {
 				'out' => '
 mw.loader.addSource( {
     "local": "/w/load.php"
-} );mw.loader.register( [] );'
+} );
+mw.loader.register( [] );'
 			) ),
 			array( array(
 				'msg' => 'Basic registry',
@@ -20,10 +32,11 @@ mw.loader.addSource( {
 				'out' => '
 mw.loader.addSource( {
     "local": "/w/load.php"
-} );mw.loader.register( [
+} );
+mw.loader.register( [
     [
         "test.blank",
-        1388534400
+        "{blankVer}"
     ]
 ] );',
 			) ),
@@ -37,20 +50,21 @@ mw.loader.addSource( {
 				'out' => '
 mw.loader.addSource( {
     "local": "/w/load.php"
-} );mw.loader.register( [
+} );
+mw.loader.register( [
     [
         "test.blank",
-        1388534400
+        "{blankVer}"
     ],
     [
         "test.group.foo",
-        1388534400,
+        "{blankVer}",
         [],
         "x-foo"
     ],
     [
         "test.group.bar",
-        1388534400,
+        "{blankVer}",
         [],
         "x-bar"
     ]
@@ -65,10 +79,11 @@ mw.loader.addSource( {
 				'out' => '
 mw.loader.addSource( {
     "local": "/w/load.php"
-} );mw.loader.register( [
+} );
+mw.loader.register( [
     [
         "test.blank",
-        1388534400
+        "{blankVer}"
     ]
 ] );'
 			) ),
@@ -87,10 +102,11 @@ mw.loader.addSource( {
 mw.loader.addSource( {
     "local": "/w/load.php",
     "example": "http://example.org/w/load.php"
-} );mw.loader.register( [
+} );
+mw.loader.register( [
     [
         "test.blank",
-        1388534400,
+        "{blankVer}",
         [],
         null,
         "example"
@@ -123,14 +139,15 @@ mw.loader.addSource( {
 				'out' => '
 mw.loader.addSource( {
     "local": "/w/load.php"
-} );mw.loader.register( [
+} );
+mw.loader.register( [
     [
         "test.x.core",
-        1388534400
+        "{blankVer}"
     ],
     [
         "test.x.polyfill",
-        1388534400,
+        "{blankVer}",
         [],
         null,
         null,
@@ -138,7 +155,7 @@ mw.loader.addSource( {
     ],
     [
         "test.y.polyfill",
-        1388534400,
+        "{blankVer}",
         [],
         null,
         null,
@@ -146,7 +163,7 @@ mw.loader.addSource( {
     ],
     [
         "test.z.foo",
-        1388534400,
+        "{blankVer}",
         [
             0,
             1,
@@ -219,39 +236,40 @@ mw.loader.addSource( {
 mw.loader.addSource( {
     "local": "/w/load.php",
     "example": "http://example.org/w/load.php"
-} );mw.loader.register( [
+} );
+mw.loader.register( [
     [
         "test.blank",
-        1388534400
+        "{blankVer}"
     ],
     [
         "test.x.core",
-        1388534400
+        "{blankVer}"
     ],
     [
         "test.x.util",
-        1388534400,
+        "{blankVer}",
         [
             1
         ]
     ],
     [
         "test.x.foo",
-        1388534400,
+        "{blankVer}",
         [
             1
         ]
     ],
     [
         "test.x.bar",
-        1388534400,
+        "{blankVer}",
         [
             2
         ]
     ],
     [
         "test.x.quux",
-        1388534400,
+        "{blankVer}",
         [
             3,
             4,
@@ -260,25 +278,25 @@ mw.loader.addSource( {
     ],
     [
         "test.group.foo.1",
-        1388534400,
+        "{blankVer}",
         [],
         "x-foo"
     ],
     [
         "test.group.foo.2",
-        1388534400,
+        "{blankVer}",
         [],
         "x-foo"
     ],
     [
         "test.group.bar.1",
-        1388534400,
+        "{blankVer}",
         [],
         "x-bar"
     ],
     [
         "test.group.bar.2",
-        1388534400,
+        "{blankVer}",
         [],
         "x-bar",
         "example"
@@ -302,12 +320,12 @@ mw.loader.addSource( {
 
 		$context = $this->getResourceLoaderContext();
 		$rl = $context->getResourceLoader();
-
 		$rl->register( $case['modules'] );
-
 		$module = new ResourceLoaderStartUpModule();
+		$out = ltrim( $case['out'], "\n" );
+
 		$this->assertEquals(
-			ltrim( $case['out'], "\n" ),
+			self::expandPlaceholders( $out ),
 			$module->getModuleRegistrations( $context ),
 			$case['msg']
 		);
@@ -341,13 +359,15 @@ mw.loader.addSource( {
 		$rl = $context->getResourceLoader();
 		$rl->register( $modules );
 		$module = new ResourceLoaderStartUpModule();
+		$out = 'mw.loader.addSource({"local":"/w/load.php"});' . "\n"
+		. 'mw.loader.register(['
+		. '["test.blank","{blankVer}"],'
+		. '["test.min","{blankVer}",[0],null,null,'
+		. '"return!!(window.JSON\u0026\u0026JSON.parse\u0026\u0026JSON.stringify);"'
+		. ']]);';
+
 		$this->assertEquals(
-'mw.loader.addSource({"local":"/w/load.php"});'
-. 'mw.loader.register(['
-. '["test.blank",1388534400],'
-. '["test.min",1388534400,[0],null,null,'
-. '"return!!(window.JSON\u0026\u0026JSON.parse\u0026\u0026JSON.stringify);"'
-. ']]);',
+			self::expandPlaceholders( $out ),
 			$module->getModuleRegistrations( $context ),
 			'Minified output'
 		);
@@ -361,17 +381,18 @@ mw.loader.addSource( {
 		$rl = $context->getResourceLoader();
 		$rl->register( $modules );
 		$module = new ResourceLoaderStartUpModule();
-		$this->assertEquals(
+		$out =
 'mw.loader.addSource( {
     "local": "/w/load.php"
-} );mw.loader.register( [
+} );
+mw.loader.register( [
     [
         "test.blank",
-        1388534400
+        "{blankVer}"
     ],
     [
         "test.min",
-        1388534400,
+        "{blankVer}",
         [
             0
         ],
@@ -379,7 +400,10 @@ mw.loader.addSource( {
         null,
         "return !!(    window.JSON \u0026\u0026    JSON.parse \u0026\u0026    JSON.stringify);"
     ]
-] );',
+] );';
+
+		$this->assertEquals(
+			self::expandPlaceholders( $out ),
 			$module->getModuleRegistrations( $context ),
 			'Unminified output'
 		);

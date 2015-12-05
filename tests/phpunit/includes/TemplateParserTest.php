@@ -4,27 +4,73 @@
  * @group Templates
  */
 class TemplateParserTest extends MediaWikiTestCase {
-	/**
-	 * @covers TemplateParser::compile
-	 */
-	public function testTemplateCompilation() {
-		$this->assertRegExp(
-			'/^<\?php return function/',
-			TemplateParser::compile( "test" ),
-			'compile a simple mustache template'
-		);
+
+	protected $templateDir;
+
+	protected function setUp() {
+		parent::setUp();
+
+		$this->setMwGlobals( array(
+			'wgSecretKey' => 'foo',
+			'wgMemc' => new EmptyBagOStuff(),
+		) );
+
+		$this->templateDir = dirname( __DIR__ ) . '/data/templates/';
 	}
 
 	/**
-	 * @covers TemplateParser::compile
+	 * @dataProvider provideProcessTemplate
+	 * @covers TemplateParser::processTemplate
+	 * @covers TemplateParser::getTemplate
+	 * @covers TemplateParser::getTemplateFilename
 	 */
-	public function testTemplateCompilationWithVariable() {
-		$this->assertRegExp(
-			'/return \'\'\.htmlentities\(\(string\)\(\(isset\(\$in\[\'value\'\]\) && '
-				. 'is_array\(\$in\)\) \? \$in\[\'value\'\] : null\), ENT_QUOTES, '
-				. '\'UTF-8\'\)\.\'\';/',
-			TemplateParser::compile( "{{value}}" ),
-			'compile a mustache template with an escaped variable'
+	public function testProcessTemplate( $name, $args, $result, $exception = false ) {
+		if ( $exception ) {
+			$this->setExpectedException( $exception );
+		}
+		$tp = new TemplateParser( $this->templateDir );
+		$this->assertEquals( $result, $tp->processTemplate( $name, $args ) );
+	}
+
+	public static function provideProcessTemplate() {
+		return array(
+			array(
+				'foobar',
+				array(),
+				"hello world!\n"
+			),
+			array(
+				'foobar_args',
+				array(
+					'planet' => 'world',
+				),
+				"hello world!\n",
+			),
+			array(
+				'../foobar',
+				array(),
+				false,
+				'UnexpectedValueException'
+			),
+			array(
+				'nonexistenttemplate',
+				array(),
+				false,
+				'RuntimeException',
+			),
+			array(
+				'has_partial',
+				array(
+					'planet' => 'world',
+				),
+				"Partial hello world!\n in here\n",
+			),
+			array(
+				'bad_partial',
+				array(),
+				false,
+				'Exception',
+			),
 		);
 	}
 }

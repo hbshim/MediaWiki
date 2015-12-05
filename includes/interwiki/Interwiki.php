@@ -115,6 +115,17 @@ class Interwiki {
 	}
 
 	/**
+	 * Purge the cache for an interwiki prefix
+	 * @param string $prefix
+	 * @since 1.26
+	 */
+	public static function invalidateCache( $prefix ) {
+		$cache = ObjectCache::getMainWANInstance();
+		$key = wfMemcKey( 'interwiki', $prefix );
+		$cache->delete( $key );
+	}
+
+	/**
 	 * Fetch interwiki prefix data from local cache in constant database.
 	 *
 	 * @note More logic is explained in DefaultSettings.
@@ -191,54 +202,42 @@ class Interwiki {
 	 * @return Interwiki|bool Interwiki if $prefix is valid, otherwise false
 	 */
 	protected static function load( $prefix ) {
-		global $wgMemc, $wgInterwikiExpiry;
+		global $wgInterwikiExpiry;
 
 		$iwData = array();
 		if ( !Hooks::run( 'InterwikiLoadPrefix', array( $prefix, &$iwData ) ) ) {
 			return Interwiki::loadFromArray( $iwData );
 		}
 
-		if ( !$iwData ) {
-			$key = wfMemcKey( 'interwiki', $prefix );
-			$iwData = $wgMemc->get( $key );
-			if ( $iwData === '!NONEXISTENT' ) {
-				// negative cache hit
-				return false;
-			}
-		}
-
-		// is_array is hack for old keys
-		if ( $iwData && is_array( $iwData ) ) {
+		if ( is_array( $iwData ) ) {
 			$iw = Interwiki::loadFromArray( $iwData );
 			if ( $iw ) {
-				return $iw;
+				return $iw; // handled by hook
 			}
 		}
 
-		$db = wfGetDB( DB_SLAVE );
+		$iwData = ObjectCache::getMainWANInstance()->getWithSetCallback(
+			wfMemcKey( 'interwiki', $prefix ),
+			$wgInterwikiExpiry,
+			function ( $oldValue, &$ttl, array &$setOpts ) use ( $prefix ) {
+				$dbr = wfGetDB( DB_SLAVE );
 
-		$row = $db->fetchRow( $db->select(
-			'interwiki',
-			self::selectFields(),
-			array( 'iw_prefix' => $prefix ),
-			__METHOD__
-		) );
+				$setOpts += Database::getCacheSetOptions( $dbr );
 
-		$iw = Interwiki::loadFromArray( $row );
-		if ( $iw ) {
-			$mc = array(
-				'iw_url' => $iw->mURL,
-				'iw_api' => $iw->mAPI,
-				'iw_local' => $iw->mLocal,
-				'iw_trans' => $iw->mTrans
-			);
-			$wgMemc->add( $key, $mc, $wgInterwikiExpiry );
+				$row = $dbr->selectRow(
+					'interwiki',
+					Interwiki::selectFields(),
+					array( 'iw_prefix' => $prefix ),
+					__METHOD__
+				);
 
-			return $iw;
+				return $row ? (array)$row : '!NONEXISTENT';
+			}
+		);
+
+		if ( is_array( $iwData ) ) {
+			return Interwiki::loadFromArray( $iwData ) ?: false;
 		}
-
-		// negative cache hit
-		$wgMemc->add( $key, '!NONEXISTENT', $wgInterwikiExpiry );
 
 		return false;
 	}

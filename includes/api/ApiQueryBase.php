@@ -123,6 +123,7 @@ abstract class ApiQueryBase extends ApiBase {
 	 */
 	public function selectNamedDB( $name, $db, $groups ) {
 		$this->mDb = $this->getQuery()->getNamedDB( $name, $db, $groups );
+		return $this->mDb;
 	}
 
 	/**
@@ -316,7 +317,7 @@ abstract class ApiQueryBase extends ApiBase {
 	 * @param bool $sort
 	 */
 	protected function addTimestampWhereRange( $field, $dir, $start, $end, $sort = true ) {
-		$db = $this->getDb();
+		$db = $this->getDB();
 		$this->addWhereRange( $field, $dir,
 			$db->timestampOrNull( $start ), $db->timestampOrNull( $end ), $sort );
 	}
@@ -372,12 +373,7 @@ abstract class ApiQueryBase extends ApiBase {
 			isset( $extraQuery['join_conds'] ) ? (array)$extraQuery['join_conds'] : array()
 		);
 
-		// getDB has its own profileDBIn/Out calls
-		$db = $this->getDB();
-
-		$this->profileDBIn();
-		$res = $db->select( $tables, $fields, $where, $method, $options, $join_conds );
-		$this->profileDBOut();
+		$res = $this->getDB()->select( $tables, $fields, $where, $method, $options, $join_conds );
 
 		return $res;
 	}
@@ -388,7 +384,7 @@ abstract class ApiQueryBase extends ApiBase {
 	 * @return null|string
 	 */
 	public function prepareUrlQuerySearchString( $query = null, $protocol = null ) {
-		$db = $this->getDb();
+		$db = $this->getDB();
 		if ( !is_null( $query ) || $query != '' ) {
 			if ( is_null( $protocol ) ) {
 				$protocol = 'http://';
@@ -425,7 +421,14 @@ abstract class ApiQueryBase extends ApiBase {
 		$this->addFields( 'ipb_deleted' );
 
 		if ( $showBlockInfo ) {
-			$this->addFields( array( 'ipb_id', 'ipb_by', 'ipb_by_text', 'ipb_reason', 'ipb_expiry', 'ipb_timestamp' ) );
+			$this->addFields( array(
+				'ipb_id',
+				'ipb_by',
+				'ipb_by_text',
+				'ipb_reason',
+				'ipb_expiry',
+				'ipb_timestamp'
+			) );
 		}
 
 		// Don't show hidden names
@@ -461,7 +464,7 @@ abstract class ApiQueryBase extends ApiBase {
 	 */
 	protected function addPageSubItems( $pageId, $data ) {
 		$result = $this->getResult();
-		$result->setIndexedTagName( $data, $this->getModulePrefix() );
+		ApiResult::setIndexedTagName( $data, $this->getModulePrefix() );
 
 		return $result->addValue( array( 'query', 'pages', intval( $pageId ) ),
 			$this->getModuleName(),
@@ -486,7 +489,7 @@ abstract class ApiQueryBase extends ApiBase {
 		if ( !$fit ) {
 			return false;
 		}
-		$result->setIndexedTagName_internal( array( 'query', 'pages', $pageId,
+		$result->addIndexedTagName( array( 'query', 'pages', $pageId,
 			$this->getModuleName() ), $elemname );
 
 		return true;
@@ -498,7 +501,7 @@ abstract class ApiQueryBase extends ApiBase {
 	 * @param string|array $paramValue Parameter value
 	 */
 	protected function setContinueEnumParameter( $paramName, $paramValue ) {
-		$this->getResult()->setContinueParam( $this, $paramName, $paramValue );
+		$this->getContinuationManager()->addContinueParam( $this, $paramName, $paramValue );
 	}
 
 	/**
@@ -508,7 +511,7 @@ abstract class ApiQueryBase extends ApiBase {
 	 * capitalization settings.
 	 *
 	 * @param string $titlePart Title part
-	 * @param int $defaultNamespace Namespace of the title
+	 * @param int $namespace Namespace of the title
 	 * @return string DBkey (no namespace prefix)
 	 */
 	public function titlePartToKey( $titlePart, $namespace = NS_MAIN ) {
@@ -526,22 +529,25 @@ abstract class ApiQueryBase extends ApiBase {
 			$this->dieUsageMsg( array( 'invalidtitle', $titlePart ) );
 		}
 
-		return substr( $t->getDbKey(), 0, -1 );
+		return substr( $t->getDBkey(), 0, -1 );
 	}
 
 	/**
-	 * Gets the personalised direction parameter description
+	 * Convert an input title or title prefix into a namespace constant and dbkey.
 	 *
-	 * @param string $p ModulePrefix
-	 * @param string $extraDirText Any extra text to be appended on the description
-	 * @return array
+	 * @since 1.26
+	 * @param string $titlePart Title part
+	 * @param int $defaultNamespace Default namespace if none is given
+	 * @return array (int, string) Namespace number and DBkey
 	 */
-	public function getDirectionDescription( $p = '', $extraDirText = '' ) {
-		return array(
-			"In which direction to enumerate{$extraDirText}",
-			" newer          - List oldest first. Note: {$p}start has to be before {$p}end.",
-			" older          - List newest first (default). Note: {$p}start has to be later than {$p}end.",
-		);
+	public function prefixedTitlePartToKey( $titlePart, $defaultNamespace = NS_MAIN ) {
+		$t = Title::newFromText( $titlePart . 'x', $defaultNamespace );
+		if ( !$t || $t->hasFragment() || $t->isExternal() ) {
+			// Invalid title (e.g. bad chars) or contained a '#'.
+			$this->dieUsageMsg( array( 'invalidtitle', $titlePart ) );
+		}
+
+		return array( $t->getNamespace(), substr( $t->getDBkey(), 0, -1 ) );
 	}
 
 	/**
@@ -590,7 +596,6 @@ abstract class ApiQueryBase extends ApiBase {
 	protected function checkRowCount() {
 		wfDeprecated( __METHOD__, '1.24' );
 		$db = $this->getDB();
-		$this->profileDBIn();
 		$rowcount = $db->estimateRowCount(
 			$this->tables,
 			$this->fields,
@@ -598,7 +603,6 @@ abstract class ApiQueryBase extends ApiBase {
 			__METHOD__,
 			$this->options
 		);
-		$this->profileDBOut();
 
 		if ( $rowcount > $this->getConfig()->get( 'APIMaxDBRows' ) ) {
 			return false;
@@ -660,6 +664,22 @@ abstract class ApiQueryBase extends ApiBase {
 		return substr( $this->keyToTitle( $keyPart . 'x' ), 0, -1 );
 	}
 
+	/**
+	 * Gets the personalised direction parameter description
+	 *
+	 * @deprecated since 1.25 along with ApiBase::getParamDescription
+	 * @param string $p ModulePrefix
+	 * @param string $extraDirText Any extra text to be appended on the description
+	 * @return array
+	 */
+	public function getDirectionDescription( $p = '', $extraDirText = '' ) {
+		return array(
+			"In which direction to enumerate{$extraDirText}",
+			" newer          - List oldest first. Note: {$p}start has to be before {$p}end.",
+			" older          - List newest first (default). Note: {$p}start has to be later than {$p}end.",
+		);
+	}
+
 	/**@}*/
 }
 
@@ -717,7 +737,7 @@ abstract class ApiQueryGeneratorBase extends ApiQueryBase {
 	 */
 	protected function setContinueEnumParameter( $paramName, $paramValue ) {
 		if ( $this->mGeneratorPageSet !== null ) {
-			$this->getResult()->setGeneratorContinueParam( $this, $paramName, $paramValue );
+			$this->getContinuationManager()->addGeneratorContinueParam( $this, $paramName, $paramValue );
 		} else {
 			parent::setContinueEnumParameter( $paramName, $paramValue );
 		}

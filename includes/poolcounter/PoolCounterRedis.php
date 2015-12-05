@@ -76,7 +76,7 @@ class PoolCounterRedis extends PoolCounter {
 	const AWAKE_ONE = 1; // wake-up if when a slot can be taken from an existing process
 	const AWAKE_ALL = 2; // wake-up if an existing process finishes and wake up such others
 
-	/** @var array List of active PoolCounterRedis objects in this script */
+	/** @var PoolCounterRedis[] List of active PoolCounterRedis objects in this script */
 	protected static $active = null;
 
 	function __construct( $conf, $type, $key ) {
@@ -121,7 +121,6 @@ class PoolCounterRedis extends PoolCounter {
 	}
 
 	function acquireForMe() {
-
 		$status = $this->precheckAcquire();
 		if ( !$status->isGood() ) {
 			return $status;
@@ -131,7 +130,6 @@ class PoolCounterRedis extends PoolCounter {
 	}
 
 	function acquireForAnyone() {
-
 		$status = $this->precheckAcquire();
 		if ( !$status->isGood() ) {
 			return $status;
@@ -141,7 +139,6 @@ class PoolCounterRedis extends PoolCounter {
 	}
 
 	function release() {
-
 		if ( $this->slot === null ) {
 			return Status::newGood( PoolCounter::NOT_LOCKED ); // not locked
 		}
@@ -152,6 +149,7 @@ class PoolCounterRedis extends PoolCounter {
 		}
 		$conn = $status->value;
 
+		// @codingStandardsIgnoreStart Generic.Files.LineLength
 		static $script =
 <<<LUA
 		local kSlots,kSlotsNextRelease,kWakeup,kWaiting = unpack(KEYS)
@@ -189,8 +187,10 @@ class PoolCounterRedis extends PoolCounter {
 		end
 		return 1
 LUA;
+		// @codingStandardsIgnoreEnd
+
 		try {
-			$res = $conn->luaEval( $script,
+			$conn->luaEval( $script,
 				array(
 					$this->getSlotListKey(),
 					$this->getSlotRTimeSetKey(),

@@ -32,8 +32,12 @@
 class ApiImport extends ApiBase {
 
 	public function execute() {
+		$this->useTransactionalTimeLimit();
+
 		$user = $this->getUser();
 		$params = $this->extractRequestParams();
+
+		$this->requireMaxOneParameter( $params, 'namespace', 'rootpage' );
 
 		$isUpload = false;
 		if ( isset( $params['interwikisource'] ) ) {
@@ -63,8 +67,7 @@ class ApiImport extends ApiBase {
 		$importer = new WikiImporter( $source->value, $this->getConfig() );
 		if ( isset( $params['namespace'] ) ) {
 			$importer->setTargetNamespace( $params['namespace'] );
-		}
-		if ( isset( $params['rootpage'] ) ) {
+		} elseif ( isset( $params['rootpage'] ) ) {
 			$statusRootPage = $importer->setTargetRootPage( $params['rootpage'] );
 			if ( !$statusRootPage->isGood() ) {
 				$this->dieStatus( $statusRootPage );
@@ -85,8 +88,32 @@ class ApiImport extends ApiBase {
 
 		$resultData = $reporter->getData();
 		$result = $this->getResult();
-		$result->setIndexedTagName( $resultData, 'page' );
+		ApiResult::setIndexedTagName( $resultData, 'page' );
 		$result->addValue( null, $this->getModuleName(), $resultData );
+	}
+
+	/**
+	 * Returns a list of interwiki prefixes corresponding to each defined import
+	 * source.
+	 *
+	 * @return array
+	 * @since 1.27
+	 */
+	public function getAllowedImportSources() {
+		$importSources = $this->getConfig()->get( 'ImportSources' );
+		Hooks::run( 'ImportSources', array( &$importSources ) );
+
+		$result = array();
+		foreach ( $importSources as $key => $value ) {
+			if ( is_int( $key ) ) {
+				$result[] = $value;
+			} else {
+				foreach ( $value as $subproject ) {
+					$result[] = "$key:$subproject";
+				}
+			}
+		}
+		return $result;
 	}
 
 	public function mustBePosted() {
@@ -104,7 +131,7 @@ class ApiImport extends ApiBase {
 				ApiBase::PARAM_TYPE => 'upload',
 			),
 			'interwikisource' => array(
-				ApiBase::PARAM_TYPE => $this->getConfig()->get( 'ImportSources' ),
+				ApiBase::PARAM_TYPE => $this->getAllowedImportSources(),
 			),
 			'interwikipage' => null,
 			'fullhistory' => false,
@@ -155,7 +182,7 @@ class ApiImportReporter extends ImportReporter {
 		if ( $title === null ) {
 			# Invalid or non-importable title
 			$r['title'] = $pageInfo['title'];
-			$r['invalid'] = '';
+			$r['invalid'] = true;
 		} else {
 			ApiQueryBase::addTitleInfo( $r, $title );
 			$r['revisions'] = intval( $successCount );

@@ -29,7 +29,7 @@
  * @since 1.21
  */
 class RightsLogFormatter extends LogFormatter {
-	protected function makePageLink( Title $title = null, $parameters = array() ) {
+	protected function makePageLink( Title $title = null, $parameters = array(), $html = null ) {
 		global $wgContLang, $wgUserrightsInterwikiDelimiter;
 
 		if ( !$this->plaintext ) {
@@ -38,7 +38,7 @@ class RightsLogFormatter extends LogFormatter {
 
 			if ( count( $parts ) === 2 ) {
 				$titleLink = WikiMap::foreignUserLink( $parts[1], $parts[0],
-					htmlspecialchars( $title->getPrefixedText() ) );
+					htmlspecialchars( $title->getText() ) );
 
 				if ( $titleLink !== false ) {
 					return $titleLink;
@@ -46,7 +46,7 @@ class RightsLogFormatter extends LogFormatter {
 			}
 		}
 
-		return parent::makePageLink( $title, $parameters );
+		return parent::makePageLink( $title, $parameters, $title ? $title->getText() : null );
 	}
 
 	protected function getMessageKey() {
@@ -67,20 +67,8 @@ class RightsLogFormatter extends LogFormatter {
 			return $params;
 		}
 
-		$oldGroups = $params[3];
-		$newGroups = $params[4];
-
-		// Less old entries
-		if ( $oldGroups === '' ) {
-			$oldGroups = array();
-		} elseif ( is_string( $oldGroups ) ) {
-			$oldGroups = array_map( 'trim', explode( ',', $oldGroups ) );
-		}
-		if ( $newGroups === '' ) {
-			$newGroups = array();
-		} elseif ( is_string( $newGroups ) ) {
-			$newGroups = array_map( 'trim', explode( ',', $newGroups ) );
-		}
+		$oldGroups = $this->makeGroupArray( $params[3] );
+		$newGroups = $this->makeGroupArray( $params[4] );
 
 		$userName = $this->entry->getTarget()->getText();
 		if ( !$this->plaintext && count( $oldGroups ) ) {
@@ -109,5 +97,54 @@ class RightsLogFormatter extends LogFormatter {
 		}
 
 		return $params;
+	}
+
+	protected function getParametersForApi() {
+		$entry = $this->entry;
+		$params = $entry->getParameters();
+
+		static $map = array(
+			'4:array:oldgroups',
+			'5:array:newgroups',
+			'4::oldgroups' => '4:array:oldgroups',
+			'5::newgroups' => '5:array:newgroups',
+		);
+		foreach ( $map as $index => $key ) {
+			if ( isset( $params[$index] ) ) {
+				$params[$key] = $params[$index];
+				unset( $params[$index] );
+			}
+		}
+
+		// Really old entries does not have log params
+		if ( isset( $params['4:array:oldgroups'] ) ) {
+			$params['4:array:oldgroups'] = $this->makeGroupArray( $params['4:array:oldgroups'] );
+		}
+		if ( isset( $params['5:array:newgroups'] ) ) {
+			$params['5:array:newgroups'] = $this->makeGroupArray( $params['5:array:newgroups'] );
+		}
+
+		return $params;
+	}
+
+	public function formatParametersForApi() {
+		$ret = parent::formatParametersForApi();
+		if ( isset( $ret['oldgroups'] ) ) {
+			ApiResult::setIndexedTagName( $ret['oldgroups'], 'g' );
+		}
+		if ( isset( $ret['newgroups'] ) ) {
+			ApiResult::setIndexedTagName( $ret['newgroups'], 'g' );
+		}
+		return $ret;
+	}
+
+	private function makeGroupArray( $group ) {
+		// Migrate old group params from string to array
+		if ( $group === '' ) {
+			$group = array();
+		} elseif ( is_string( $group ) ) {
+			$group = array_map( 'trim', explode( ',', $group ) );
+		}
+		return $group;
 	}
 }

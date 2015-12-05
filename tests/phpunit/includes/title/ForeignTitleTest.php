@@ -16,7 +16,6 @@
  * http://www.gnu.org/copyleft/gpl.html
  *
  * @file
- * @license GPL 2+
  * @author This, that and the other
  */
 
@@ -60,7 +59,7 @@ class ForeignTitleTest extends MediaWikiTestCase {
 		$this->assertEquals( $expectedText, $title->getText() );
 	}
 
-	public function testUnknownNamespaceCheck( ) {
+	public function testUnknownNamespaceCheck() {
 		$title = new ForeignTitle( null, 'this', 'that' );
 
 		$this->assertEquals( false, $title->isNamespaceIdKnown() );
@@ -68,7 +67,7 @@ class ForeignTitleTest extends MediaWikiTestCase {
 		$this->assertEquals( 'that', $title->getText() );
 	}
 
-	public function testUnknownNamespaceError( ) {
+	public function testUnknownNamespaceError() {
 		$this->setExpectedException( 'MWException' );
 		$title = new ForeignTitle( null, 'this', 'that' );
 		$title->getNamespaceId();

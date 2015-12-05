@@ -3,13 +3,9 @@
  * @singleton
  */
 ( function ( mw, $ ) {
-	var user, i,
+	var i,
 		deferreds = {},
-		byteToHex = [],
-		// Extend the skeleton mw.user from mediawiki.js
-		// This is kind of ugly but we're stuck with this for b/c reasons
-		options = mw.user.options || new mw.Map(),
-		tokens = mw.user.tokens || new mw.Map();
+		byteToHex = [];
 
 	/**
 	 * Get the current user's groups or rights
@@ -20,7 +16,7 @@
 	 */
 	function getUserInfo( info ) {
 		var api;
-		if ( !deferreds[info] ) {
+		if ( !deferreds[ info ] ) {
 
 			deferreds.rights = $.Deferred();
 			deferreds.groups = $.Deferred();
@@ -42,18 +38,17 @@
 
 		}
 
-		return deferreds[info].promise();
+		return deferreds[ info ].promise();
 	}
 
 	// Map from numbers 0-255 to a hex string (with padding)
 	for ( i = 0; i < 256; i++ ) {
 		// Padding: Add a full byte (0x100, 256) and strip the extra character
-		byteToHex[i] = ( i + 256 ).toString( 16 ).slice( 1 );
+		byteToHex[ i ] = ( i + 256 ).toString( 16 ).slice( 1 );
 	}
 
-	mw.user = user = {
-		options: options,
-		tokens: tokens,
+	// mw.user with the properties options and tokens gets defined in mediawiki.js.
+	$.extend( mw.user, {
 
 		/**
 		 * Generate a random user session ID.
@@ -83,7 +78,7 @@
 				crypto = window.crypto || window.msCrypto;
 
 			// Based on https://github.com/broofa/node-uuid/blob/bfd9f96127/uuid.js
-			if ( crypto ) {
+			if ( crypto && crypto.getRandomValues ) {
 				// Fill an array with 8 random values, each of which is 8 bits.
 				// Note that Uint8Array is array-like but does not implement Array.
 				rnds = new Uint8Array( 8 );
@@ -94,12 +89,12 @@
 					if ( ( i & 3 ) === 0 ) {
 						r = Math.random() * 0x100000000;
 					}
-					rnds[i] = r >>> ( ( i & 3 ) << 3 ) & 255;
+					rnds[ i ] = r >>> ( ( i & 3 ) << 3 ) & 255;
 				}
 			}
 			// Convert from number to hex
 			for ( i = 0; i < 8; i++ ) {
-				hexRnds[i] = byteToHex[rnds[i]];
+				hexRnds[ i ] = byteToHex[ rnds[ i ] ];
 			}
 
 			// Concatenation of two random integers with entrophy n and m
@@ -135,7 +130,7 @@
 		 */
 		getRegistration: function () {
 			var registration = mw.config.get( 'wgUserRegistration' );
-			if ( user.isAnon() ) {
+			if ( mw.user.isAnon() ) {
 				return false;
 			}
 			if ( registration === null ) {
@@ -152,7 +147,7 @@
 		 * @return {boolean}
 		 */
 		isAnon: function () {
-			return user.getName() === null;
+			return mw.user.getName() === null;
 		},
 
 		/**
@@ -164,10 +159,10 @@
 		 * @return {string} Random session ID
 		 */
 		sessionId: function () {
-			var sessionId = $.cookie( 'mediaWiki.user.sessionId' );
-			if ( sessionId === undefined || sessionId === null ) {
-				sessionId = user.generateRandomSessionId();
-				$.cookie( 'mediaWiki.user.sessionId', sessionId, { expires: null, path: '/' } );
+			var sessionId = mw.cookie.get( 'mwuser-sessionId' );
+			if ( sessionId === null ) {
+				sessionId = mw.user.generateRandomSessionId();
+				mw.cookie.set( 'mwuser-sessionId', sessionId, { expires: null } );
 			}
 			return sessionId;
 		},
@@ -180,7 +175,7 @@
 		 * @return {string} User name or random session ID
 		 */
 		id: function () {
-			return user.getName() || user.sessionId();
+			return mw.user.getName() || mw.user.sessionId();
 		},
 
 		/**
@@ -213,14 +208,14 @@
 				expires: 30
 			}, options || {} );
 
-			cookie = $.cookie( 'mediaWiki.user.bucket:' + key );
+			cookie = mw.cookie.get( 'mwuser-bucket:' + key );
 
 			// Bucket information is stored as 2 integers, together as version:bucket like: "1:2"
 			if ( typeof cookie === 'string' && cookie.length > 2 && cookie.indexOf( ':' ) !== -1 ) {
 				parts = cookie.split( ':' );
-				if ( parts.length > 1 && Number( parts[0] ) === options.version ) {
-					version = Number( parts[0] );
-					bucket = String( parts[1] );
+				if ( parts.length > 1 && Number( parts[ 0 ] ) === options.version ) {
+					version = Number( parts[ 0 ] );
+					bucket = String( parts[ 1 ] );
 				}
 			}
 
@@ -234,7 +229,7 @@
 				// Find range
 				range = 0;
 				for ( k in options.buckets ) {
-					range += options.buckets[k];
+					range += options.buckets[ k ];
 				}
 
 				// Select random value within range
@@ -244,16 +239,16 @@
 				total = 0;
 				for ( k in options.buckets ) {
 					bucket = k;
-					total += options.buckets[k];
+					total += options.buckets[ k ];
 					if ( total >= rand ) {
 						break;
 					}
 				}
 
-				$.cookie(
-					'mediaWiki.user.bucket:' + key,
+				mw.cookie.set(
+					'mwuser-bucket:' + key,
 					version + ':' + bucket,
-					{ path: '/', expires: Number( options.expires ) }
+					{ expires: Number( options.expires ) * 86400 }
 				);
 			}
 
@@ -279,6 +274,6 @@
 		getRights: function ( callback ) {
 			return getUserInfo( 'rights' ).done( callback );
 		}
-	};
+	} );
 
 }( mediaWiki, jQuery ) );

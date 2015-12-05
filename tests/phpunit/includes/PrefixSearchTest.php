@@ -5,35 +5,12 @@
  */
 class PrefixSearchTest extends MediaWikiLangTestCase {
 
-	protected function setUp() {
-		parent::setUp();
-
+	public function addDBData() {
 		if ( !$this->isWikitextNS( NS_MAIN ) ) {
-			$this->markTestSkipped( 'Main namespace does not support wikitext.' );
+			// tests are skipped if NS_MAIN is not wikitext
+			return;
 		}
 
-		$this->insertPages();
-
-		// Avoid special pages from extensions interferring with the tests
-		$this->setMwGlobals( 'wgSpecialPages', array() );
-	}
-
-	protected function searchProvision( Array $results = null ) {
-		if ( $results === null ) {
-			$this->setMwGlobals( 'wgHooks', array() );
-		} else {
-			$this->setMwGlobals( 'wgHooks', array(
-				'PrefixSearchBackend' => array(
-					function ( $namespaces, $search, $limit, &$srchres ) use ( $results ) {
-						$srchres = $results;
-						return false;
-					}
-				),
-			) );
-		}
-	}
-
-	public function insertPages() {
 		$this->insertPage( 'Sandbox' );
 		$this->insertPage( 'Bar' );
 		$this->insertPage( 'Example' );
@@ -53,6 +30,32 @@ class PrefixSearchTest extends MediaWikiLangTestCase {
 		$this->insertPage( 'Talk:Example' );
 
 		$this->insertPage( 'User:Example' );
+	}
+
+	protected function setUp() {
+		parent::setUp();
+
+		if ( !$this->isWikitextNS( NS_MAIN ) ) {
+			$this->markTestSkipped( 'Main namespace does not support wikitext.' );
+		}
+
+		// Avoid special pages from extensions interferring with the tests
+		$this->setMwGlobals( 'wgSpecialPages', array() );
+	}
+
+	protected function searchProvision( Array $results = null ) {
+		if ( $results === null ) {
+			$this->setMwGlobals( 'wgHooks', array() );
+		} else {
+			$this->setMwGlobals( 'wgHooks', array(
+				'PrefixSearchBackend' => array(
+					function ( $namespaces, $search, $limit, &$srchres ) use ( $results ) {
+						$srchres = $results;
+						return false;
+					}
+				),
+			) );
+		}
 	}
 
 	public static function provideSearch() {

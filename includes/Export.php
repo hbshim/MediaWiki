@@ -79,7 +79,7 @@ class WikiExporter {
 	 * make additional queries to pull source data while the
 	 * main query is still running.
 	 *
-	 * @param DatabaseBase $db
+	 * @param IDatabase $db
 	 * @param int|array $history One of WikiExporter::FULL, WikiExporter::CURRENT,
 	 *   WikiExporter::RANGE or WikiExporter::STABLE, or an associative array:
 	 *   - offset: non-inclusive offset at which to start the query
@@ -874,7 +874,7 @@ class XmlDumpWriter {
 		}
 
 		global $wgContLang;
-		$prefix = str_replace( '_', ' ', $wgContLang->getNsText( $title->getNamespace() ) );
+		$prefix = $wgContLang->getFormattedNsText( $title->getNamespace() );
 
 		if ( $prefix !== '' ) {
 			$prefix .= ':';
@@ -1191,7 +1191,7 @@ class Dump7ZipOutput extends DumpPipeOutput {
 	 * @return string
 	 */
 	function setup7zCommand( $file ) {
-		$command = "7za a -bd -si " . wfEscapeShellArg( $file );
+		$command = "7za a -bd -si -mx=4 " . wfEscapeShellArg( $file );
 		// Suppress annoying useless crap from p7zip
 		// Unfortunately this could suppress real error messages too
 		$command .= ' >' . wfGetNull() . ' 2>&1';

@@ -5,20 +5,9 @@ class ResourceLoaderTest extends ResourceLoaderTestCase {
 	protected function setUp() {
 		parent::setUp();
 
-		// $wgResourceLoaderLESSFunctions, $wgResourceLoaderLESSImportPaths; $wgResourceLoaderLESSVars;
-
 		$this->setMwGlobals( array(
-			'wgResourceLoaderLESSFunctions' => array(
-				'test-sum' => function ( $frame, $less ) {
-					$sum = 0;
-					foreach ( $frame[2] as $arg ) {
-						$sum += (int)$arg[1];
-					}
-					return $sum;
-				},
-			),
 			'wgResourceLoaderLESSImportPaths' => array(
-				dirname( dirname( __DIR__  ) ) . '/data/less/common',
+				dirname( dirname( __DIR__ ) ) . '/data/less/common',
 			),
 			'wgResourceLoaderLESSVars' => array(
 				'foo'  => '2px',
@@ -28,14 +17,11 @@ class ResourceLoaderTest extends ResourceLoaderTestCase {
 		) );
 	}
 
-	/* Provider Methods */
 	public static function provideValidModules() {
 		return array(
 			array( 'TEST.validModule1', new ResourceLoaderTestModule() ),
 		);
 	}
-
-	/* Test Methods */
 
 	/**
 	 * Ensures that the ResourceLoaderRegisterModules hook is called when a new
@@ -85,6 +71,7 @@ class ResourceLoaderTest extends ResourceLoaderTestCase {
 			'localBasePath' => $basePath,
 			'styles' => array( 'styles.less' ),
 		) );
+		$module->setName( 'test.less' );
 		$styles = $module->getStyles( $context );
 		$this->assertStringEqualsFile( $basePath . '/styles.css', $styles['all'] );
 	}
@@ -94,40 +81,8 @@ class ResourceLoaderTest extends ResourceLoaderTestCase {
 	 * @param string $css
 	 * @return string
 	 */
-	private function stripNoflip( $css ) {
+	private static function stripNoflip( $css ) {
 		return str_replace( '/*@noflip*/ ', '', $css );
-	}
-
-	/**
-	 * What happens when you mix @embed and @noflip?
-	 * This really is an integration test, but oh well.
-	 */
-	public function testMixedCssAnnotations(  ) {
-		$basePath = __DIR__ . '/../../data/css';
-		$testModule = new ResourceLoaderFileModule( array(
-			'localBasePath' => $basePath,
-			'styles' => array( 'test.css' ),
-		) );
-		$expectedModule = new ResourceLoaderFileModule( array(
-			'localBasePath' => $basePath,
-			'styles' => array( 'expected.css' ),
-		) );
-
-		$contextLtr = $this->getResourceLoaderContext( 'en', 'ltr' );
-		$contextRtl = $this->getResourceLoaderContext( 'he', 'rtl' );
-
-		// Since we want to compare the effect of @noflip+@embed against the effect of just @embed, and
-		// the @noflip annotations are always preserved, we need to strip them first.
-		$this->assertEquals(
-			$expectedModule->getStyles( $contextLtr ),
-			$this->stripNoflip( $testModule->getStyles( $contextLtr ) ),
-			"/*@noflip*/ with /*@embed*/ gives correct results in LTR mode"
-		);
-		$this->assertEquals(
-			$expectedModule->getStyles( $contextLtr ),
-			$this->stripNoflip( $testModule->getStyles( $contextRtl ) ),
-			"/*@noflip*/ with /*@embed*/ gives correct results in RTL mode"
-		);
 	}
 
 	/**
@@ -191,6 +146,7 @@ class ResourceLoaderTest extends ResourceLoaderTestCase {
 	/**
 	 * @dataProvider provideAddSource
 	 * @covers ResourceLoader::addSource
+	 * @covers ResourceLoader::getSources
 	 */
 	public function testAddSource( $name, $info, $expected ) {
 		$rl = new ResourceLoader;
@@ -221,6 +177,106 @@ class ResourceLoaderTest extends ResourceLoaderTestCase {
 		);
 	}
 
+	public static function provideLoaderImplement() {
+		return array(
+			array( array(
+				'title' => 'Implement scripts, styles and messages',
+
+				'name' => 'test.example',
+				'scripts' => 'mw.example();',
+				'styles' => array( 'css' => array( '.mw-example {}' ) ),
+				'messages' => array( 'example' => '' ),
+				'templates' => array(),
+
+				'expected' => 'mw.loader.implement( "test.example", function ( $, jQuery ) {
+mw.example();
+}, {
+    "css": [
+        ".mw-example {}"
+    ]
+}, {
+    "example": ""
+} );',
+			) ),
+			array( array(
+				'title' => 'Implement scripts',
+
+				'name' => 'test.example',
+				'scripts' => 'mw.example();',
+				'styles' => array(),
+				'messages' => new XmlJsCode( '{}' ),
+				'templates' => array(),
+				'title' => 'scripts, styles and messags',
+
+				'expected' => 'mw.loader.implement( "test.example", function ( $, jQuery ) {
+mw.example();
+} );',
+			) ),
+			array( array(
+				'title' => 'Implement styles',
+
+				'name' => 'test.example',
+				'scripts' => array(),
+				'styles' => array( 'css' => array( '.mw-example {}' ) ),
+				'messages' => new XmlJsCode( '{}' ),
+				'templates' => array(),
+
+				'expected' => 'mw.loader.implement( "test.example", [], {
+    "css": [
+        ".mw-example {}"
+    ]
+} );',
+			) ),
+			array( array(
+				'title' => 'Implement scripts and messages',
+
+				'name' => 'test.example',
+				'scripts' => 'mw.example();',
+				'styles' => array(),
+				'messages' => array( 'example' => '' ),
+				'templates' => array(),
+
+				'expected' => 'mw.loader.implement( "test.example", function ( $, jQuery ) {
+mw.example();
+}, {}, {
+    "example": ""
+} );',
+			) ),
+			array( array(
+				'title' => 'Implement scripts and templates',
+
+				'name' => 'test.example',
+				'scripts' => 'mw.example();',
+				'styles' => array(),
+				'messages' => new XmlJsCode( '{}' ),
+				'templates' => array( 'example.html' => '' ),
+
+				'expected' => 'mw.loader.implement( "test.example", function ( $, jQuery ) {
+mw.example();
+}, {}, {}, {
+    "example.html": ""
+} );',
+			) ),
+		);
+	}
+
+	/**
+	 * @dataProvider provideLoaderImplement
+	 * @covers ResourceLoader::makeLoaderImplementScript
+	 */
+	public function testMakeLoaderImplementScript( $case ) {
+		$this->assertEquals(
+			$case['expected'],
+			ResourceLoader::makeLoaderImplementScript(
+				$case['name'],
+				$case['scripts'],
+				$case['styles'],
+				$case['messages'],
+				$case['templates']
+			)
+		);
+	}
+
 	/**
 	 * @covers ResourceLoader::getLoadScript
 	 */
@@ -239,5 +295,15 @@ class ResourceLoaderTest extends ResourceLoaderTestCase {
 		} catch ( MWException $e ) {
 			$this->assertTrue( true );
 		}
+	}
+
+	/**
+	 * @covers ResourceLoader::isModuleRegistered
+	 */
+	public function testIsModuleRegistered() {
+		$rl = new ResourceLoader();
+		$rl->register( 'test.module', new ResourceLoaderTestModule() );
+		$this->assertTrue( $rl->isModuleRegistered( 'test.module' ) );
+		$this->assertFalse( $rl->isModuleRegistered( 'test.modulenotregistered' ) );
 	}
 }

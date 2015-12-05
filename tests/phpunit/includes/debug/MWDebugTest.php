@@ -12,11 +12,11 @@ class MWDebugTest extends MediaWikiTestCase {
 		}
 		/** Clear log before each test */
 		MWDebug::clearLog();
-		wfSuppressWarnings();
+		MediaWiki\suppressWarnings();
 	}
 
 	protected function tearDown() {
-		wfRestoreWarnings();
+		MediaWiki\restoreWarnings();
 		parent::tearDown();
 	}
 
@@ -29,7 +29,7 @@ class MWDebugTest extends MediaWikiTestCase {
 			array( array(
 				'msg' => 'logging a string',
 				'type' => 'log',
-				'caller' => __METHOD__,
+				'caller' => 'MWDebugTest->testAddLog',
 			) ),
 			MWDebug::getLog()
 		);
@@ -96,12 +96,11 @@ class MWDebugTest extends MediaWikiTestCase {
 		$apiMain = new ApiMain( $context );
 
 		$result = new ApiResult( $apiMain );
-		$result->setRawMode( true );
 
 		MWDebug::appendDebugInfoToApiResult( $context, $result );
 
 		$this->assertInstanceOf( 'ApiResult', $result );
-		$data = $result->getData();
+		$data = $result->getResultData();
 
 		$expectedKeys = array( 'mwVersion', 'phpEngine', 'phpVersion', 'gitRevision', 'gitBranch',
 			'gitViewUrl', 'time', 'log', 'debugLog', 'queries', 'request', 'memory',

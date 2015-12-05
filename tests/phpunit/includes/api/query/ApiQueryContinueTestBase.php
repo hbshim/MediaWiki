@@ -57,11 +57,6 @@ abstract class ApiQueryContinueTestBase extends ApiQueryTestBase {
 		} else {
 			$params['action'] = 'query';
 		}
-		if ( $useContinue && !isset( $params['continue'] ) ) {
-			$params['continue'] = '';
-		} else {
-			$params['rawcontinue'] = '1';
-		}
 		$count = 0;
 		$result = array();
 		$continue = array();
@@ -75,7 +70,7 @@ abstract class ApiQueryContinueTestBase extends ApiQueryTestBase {
 				return strcmp( $a, $b );
 			} );
 			$reqStr = http_build_query( $request );
-			//$reqStr = str_replace( '&', ' & ', $reqStr );
+			// $reqStr = str_replace( '&', ' & ', $reqStr );
 			$this->assertLessThan( $expectedCount, $count, "$id more data: $reqStr" );
 			if ( $this->mVerbose ) {
 				print "$id (#$count): $reqStr\n";

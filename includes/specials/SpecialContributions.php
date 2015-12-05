@@ -38,6 +38,7 @@ class SpecialContributions extends IncludableSpecialPage {
 		$this->outputHeader();
 		$out = $this->getOutput();
 		$out->addModuleStyles( 'mediawiki.special' );
+		$this->addHelpLink( 'Help:User contributions' );
 
 		$this->opts = array();
 		$request = $this->getRequest();
@@ -106,7 +107,8 @@ class SpecialContributions extends IncludableSpecialPage {
 			)->inContentLanguage() );
 		}
 
-		if ( ( $ns = $request->getVal( 'namespace', null ) ) !== null && $ns !== '' ) {
+		$ns = $request->getVal( 'namespace', null );
+		if ( $ns !== null && $ns !== '' ) {
 			$this->opts['namespace'] = intval( $ns );
 		} else {
 			$this->opts['namespace'] = '';
@@ -515,8 +517,13 @@ class SpecialContributions extends IncludableSpecialPage {
 					'mw-ui-input-inline',
 					'mw-autocomplete-user', // used by mediawiki.userSuggest
 				),
-			) + ( $this->opts['target'] ? array() : array( 'autofocus' ) )
+			) + (
+				// Only autofocus if target hasn't been specified or in non-newbies mode
+				( $this->opts['contribs'] === 'newbie' || $this->opts['target'] )
+					? array() : array( 'autofocus' => true )
+				)
 		);
+
 		$targetSelection = Html::rawElement(
 			'td',
 			array( 'colspan' => 2 ),
@@ -541,7 +548,7 @@ class SpecialContributions extends IncludableSpecialPage {
 			) . '&#160;' .
 				Html::rawElement(
 					'span',
-					array( 'style' => 'white-space: nowrap' ),
+					array( 'class' => 'mw-input-with-label' ),
 					Xml::checkLabel(
 						$this->msg( 'invert' )->text(),
 						'nsInvert',
@@ -553,7 +560,7 @@ class SpecialContributions extends IncludableSpecialPage {
 						)
 					) . '&#160;'
 				) .
-				Html::rawElement( 'span', array( 'style' => 'white-space: nowrap' ),
+				Html::rawElement( 'span', array( 'class' => 'mw-input-with-label' ),
 					Xml::checkLabel(
 						$this->msg( 'namespace_association' )->text(),
 						'associated',
@@ -570,7 +577,7 @@ class SpecialContributions extends IncludableSpecialPage {
 		if ( $this->getUser()->isAllowed( 'deletedhistory' ) ) {
 			$deletedOnlyCheck = Html::rawElement(
 				'span',
-				array( 'style' => 'white-space: nowrap' ),
+				array( 'class' => 'mw-input-with-label' ),
 				Xml::checkLabel(
 					$this->msg( 'history-show-deleted' )->text(),
 					'deletedOnly',
@@ -585,7 +592,7 @@ class SpecialContributions extends IncludableSpecialPage {
 
 		$checkLabelTopOnly = Html::rawElement(
 			'span',
-			array( 'style' => 'white-space: nowrap' ),
+			array( 'class' => 'mw-input-with-label' ),
 			Xml::checkLabel(
 				$this->msg( 'sp-contributions-toponly' )->text(),
 				'topOnly',
@@ -596,7 +603,7 @@ class SpecialContributions extends IncludableSpecialPage {
 		);
 		$checkLabelNewOnly = Html::rawElement(
 			'span',
-			array( 'style' => 'white-space: nowrap' ),
+			array( 'class' => 'mw-input-with-label' ),
 			Xml::checkLabel(
 				$this->msg( 'sp-contributions-newonly' )->text(),
 				'newOnly',
@@ -724,7 +731,6 @@ class ContribsPager extends ReverseChronologicalPager {
 			$limit,
 			$descending
 		);
-		$pager = $this;
 
 		/*
 		 * This hook will allow extensions to add in additional queries, so they can get their data
@@ -749,7 +755,7 @@ class ContribsPager extends ReverseChronologicalPager {
 		) );
 		Hooks::run(
 			'ContribsPager::reallyDoQuery',
-			array( &$data, $pager, $offset, $limit, $descending )
+			array( &$data, $this, $offset, $limit, $descending )
 		);
 
 		$result = array();
@@ -965,14 +971,14 @@ class ContribsPager extends ReverseChronologicalPager {
 		 * we're definitely dealing with revision data and we may proceed, if not, we'll leave it
 		 * to extensions to subscribe to the hook to parse the row.
 		 */
-		wfSuppressWarnings();
+		MediaWiki\suppressWarnings();
 		try {
 			$rev = new Revision( $row );
 			$validRevision = (bool)$rev->getId();
 		} catch ( Exception $e ) {
 			$validRevision = false;
 		}
-		wfRestoreWarnings();
+		MediaWiki\restoreWarnings();
 
 		if ( $validRevision ) {
 			$classes = array();

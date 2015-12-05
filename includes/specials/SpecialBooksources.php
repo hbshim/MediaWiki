@@ -135,7 +135,7 @@ class SpecialBookSources extends SpecialPage {
 			'isbn',
 			20,
 			$this->isbn,
-			array( 'autofocus' => true, 'class' => 'mw-ui-input-inline' )
+			array( 'autofocus' => '', 'class' => 'mw-ui-input-inline' )
 		);
 
 		$form .= '&#160;' . Html::submitButton(
@@ -171,7 +171,7 @@ class SpecialBookSources extends SpecialPage {
 			$content = $rev->getContent();
 
 			if ( $content instanceof TextContent ) {
-				//XXX: in the future, this could be stored as structured data, defining a list of book sources
+				// XXX: in the future, this could be stored as structured data, defining a list of book sources
 
 				$text = $content->getNativeData();
 				$this->getOutput()->addWikiText( str_replace( 'MAGICNUMBER', $this->isbn, $text ) );

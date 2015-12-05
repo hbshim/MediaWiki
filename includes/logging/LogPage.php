@@ -285,30 +285,10 @@ class LogPage {
 					$rv = wfMessage( $wgLogActions[$key] )->rawParams( $titleLink )
 						->inLanguage( $langObj )->escaped();
 				} else {
-					$details = '';
 					array_unshift( $params, $titleLink );
 
-					// Page protections
-					if ( $type == 'protect' && count( $params ) == 3 ) {
-						// Restrictions and expiries
-						if ( $skin ) {
-							$details .= $wgLang->getDirMark() . htmlspecialchars( " {$params[1]}" );
-						} else {
-							$details .= " {$params[1]}";
-						}
-
-						// Cascading flag...
-						if ( $params[2] ) {
-							$text = wfMessage( 'protect-summary-cascade' )
-								->inLanguage( $langObj )->text();
-							$details .= ' ';
-							$details .= wfMessage( 'brackets', $text )->inLanguage( $langObj )->text();
-
-						}
-					}
-
 					$rv = wfMessage( $wgLogActions[$key] )->rawParams( $params )
-							->inLanguage( $langObj )->escaped() . $details;
+							->inLanguage( $langObj )->escaped();
 				}
 			}
 		} else {
@@ -422,6 +402,10 @@ class LogPage {
 		$logEntry->setTarget( $target );
 		$logEntry->setPerformer( $doer );
 		$logEntry->setParameters( $params );
+		// All log entries using the LogPage to insert into the logging table
+		// are using the old logging system and therefore the legacy flag is
+		// needed to say the LogFormatter the parameters have numeric keys
+		$logEntry->setLegacy( true );
 
 		$formatter = LogFormatter::newFromEntry( $logEntry );
 		$context = RequestContext::newExtraneousContext( $target );

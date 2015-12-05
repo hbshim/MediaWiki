@@ -92,9 +92,8 @@ class BitmapHandler extends TransformationalImageHandler {
 				// JPEG decoder hint to reduce memory, available since IM 6.5.6-2
 				$decoderHint = array( '-define', "jpeg:size={$params['physicalDimensions']}" );
 			}
-		} elseif ( $params['mimeType'] == 'image/png' ) {
+		} elseif ( $params['mimeType'] == 'image/png' || $params['mimeType'] == 'image/webp' ) {
 			$quality = array( '-quality', '95' ); // zlib 9, adaptive filtering
-
 		} elseif ( $params['mimeType'] == 'image/gif' ) {
 			if ( $this->getImageArea( $image ) > $wgMaxAnimatedGifArea ) {
 				// Extract initial frame only; we're so big it'll
@@ -121,9 +120,9 @@ class BitmapHandler extends TransformationalImageHandler {
 				'-layers', 'merge',
 				'-background', 'white',
 			);
-			wfSuppressWarnings();
+			MediaWiki\suppressWarnings();
 			$xcfMeta = unserialize( $image->getMetadata() );
-			wfRestoreWarnings();
+			MediaWiki\restoreWarnings();
 			if ( $xcfMeta
 				&& isset( $xcfMeta['colorType'] )
 				&& $xcfMeta['colorType'] === 'greyscale-alpha'
@@ -162,6 +161,8 @@ class BitmapHandler extends TransformationalImageHandler {
 			( $params['comment'] !== ''
 				? array( '-set', 'comment', $this->escapeMagickProperty( $params['comment'] ) )
 				: array() ),
+			// T108616: Avoid exposure of local file path
+			array( '+set', 'Thumb::URI' ),
 			array( '-depth', 8 ),
 			$sharpen,
 			array( '-rotate', "-$rotation" ),
@@ -300,7 +301,6 @@ class BitmapHandler extends TransformationalImageHandler {
 	 */
 	protected function transformGd( $image, $params ) {
 		# Use PHP's builtin GD library functions.
-		#
 		# First find out what kind of file this is, and select the correct
 		# input routine for this.
 
@@ -340,7 +340,9 @@ class BitmapHandler extends TransformationalImageHandler {
 
 		$src_image = call_user_func( $loader, $params['srcPath'] );
 
-		$rotation = function_exists( 'imagerotate' ) && !isset( $params['disableRotation'] ) ? $this->getRotation( $image ) : 0;
+		$rotation = function_exists( 'imagerotate' ) && !isset( $params['disableRotation'] ) ?
+			$this->getRotation( $image ) :
+			0;
 		list( $width, $height ) = $this->extractPreRotationDimensions( $params, $rotation );
 		$dst_image = imagecreatetruecolor( $width, $height );
 

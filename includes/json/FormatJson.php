@@ -122,7 +122,7 @@ class FormatJson {
 	 *   readability, using that string for indentation. If true, use the default indent
 	 *   string (four spaces).
 	 * @param int $escaping Bitfield consisting of _OK class constants
-	 * @return string|bool: String if successful; false upon failure
+	 * @return string|false String if successful; false upon failure
 	 */
 	public static function encode( $value, $pretty = false, $escaping = 0 ) {
 		if ( !is_string( $pretty ) ) {
@@ -137,8 +137,9 @@ class FormatJson {
 	}
 
 	/**
-	 * Decodes a JSON string. It is recommended to use FormatJson::parse(), which returns more comprehensive
-	 * result in case of an error, and has more parsing options.
+	 * Decodes a JSON string. It is recommended to use FormatJson::parse(),
+	 * which returns more comprehensive result in case of an error, and has
+	 * more parsing options.
 	 *
 	 * @param string $value The JSON string being decoded
 	 * @param bool $assoc When true, returned objects will be converted into associative arrays.
@@ -154,7 +155,8 @@ class FormatJson {
 
 	/**
 	 * Decodes a JSON string.
-	 * Unlike FormatJson::decode(), if $value represents null value, it will be properly decoded as valid.
+	 * Unlike FormatJson::decode(), if $value represents null value, it will be
+	 * properly decoded as valid.
 	 *
 	 * @param string $value The JSON string being decoded
 	 * @param int $options A bit field that allows FORCE_ASSOC, TRY_FIXING,
@@ -230,7 +232,7 @@ class FormatJson {
 	 * @param mixed $value
 	 * @param string|bool $pretty
 	 * @param int $escaping
-	 * @return string|bool
+	 * @return string|false
 	 */
 	private static function encode54( $value, $pretty, $escaping ) {
 		static $bug66021;
@@ -282,7 +284,7 @@ class FormatJson {
 	 * @param mixed $value
 	 * @param string|bool $pretty
 	 * @param int $escaping
-	 * @return string|bool
+	 * @return string|false
 	 */
 	private static function encode53( $value, $pretty, $escaping ) {
 		$options = ( $escaping & self::XMLMETA_OK ) ? 0 : ( JSON_HEX_TAG | JSON_HEX_AMP );
@@ -378,7 +380,7 @@ class FormatJson {
 		$inComment = false;
 		$multiline = false;
 
-		for ($idx = 0; $idx < $maxLen; $idx++) {
+		for ( $idx = 0; $idx < $maxLen; $idx++ ) {
 			switch ( $str[$idx] ) {
 				case '"':
 					$lookBehind = ( $idx - 1 >= 0 ) ? $str[$idx - 1] : '';

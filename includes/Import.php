@@ -34,7 +34,7 @@ class WikiImporter {
 	private $reader = null;
 	private $foreignNamespaces = null;
 	private $mLogItemCallback, $mUploadCallback, $mRevisionCallback, $mPageCallback;
-	private $mSiteInfoCallback, $mTargetNamespace, $mPageOutCallback;
+	private $mSiteInfoCallback, $mPageOutCallback;
 	private $mNoticeCallback, $mDebug;
 	private $mImportUploads, $mImageBasePath;
 	private $mNoUpdates = false;
@@ -49,8 +49,13 @@ class WikiImporter {
 	 * Creates an ImportXMLReader drawing from the source provided
 	 * @param ImportSource $source
 	 * @param Config $config
+	 * @throws Exception
 	 */
 	function __construct( ImportSource $source, Config $config = null ) {
+		if ( !class_exists( 'XMLReader' ) ) {
+			throw new Exception( 'Import requires PHP to have been compiled with libxml support' );
+		}
+
 		$this->reader = new XMLReader();
 		if ( !$config ) {
 			wfDeprecated( __METHOD__ . ' without a Config instance', '1.25' );
@@ -62,11 +67,22 @@ class WikiImporter {
 			stream_wrapper_register( 'uploadsource', 'UploadSourceAdapter' );
 		}
 		$id = UploadSourceAdapter::registerSource( $source );
+
+		// Enable the entity loader, as it is needed for loading external URLs via
+		// XMLReader::open (T86036)
+		$oldDisable = libxml_disable_entity_loader( false );
 		if ( defined( 'LIBXML_PARSEHUGE' ) ) {
-			$this->reader->open( "uploadsource://$id", null, LIBXML_PARSEHUGE );
+			$status = $this->reader->open( "uploadsource://$id", null, LIBXML_PARSEHUGE );
 		} else {
-			$this->reader->open( "uploadsource://$id" );
+			$status = $this->reader->open( "uploadsource://$id" );
 		}
+		if ( !$status ) {
+			$error = libxml_get_last_error();
+			libxml_disable_entity_loader( $oldDisable );
+			throw new MWException( 'Encountered an internal error while initializing WikiImporter object: ' .
+				$error->message );
+		}
+		libxml_disable_entity_loader( $oldDisable );
 
 		// Default callbacks
 		$this->setPageCallback( array( $this, 'beforeImportPage' ) );
@@ -224,7 +240,6 @@ class WikiImporter {
 	public function setTargetNamespace( $namespace ) {
 		if ( is_null( $namespace ) ) {
 			// Don't override namespaces
-			$this->mTargetNamespace = null;
 			$this->setImportTitleFactory( new NaiveImportTitleFactory() );
 			return true;
 		} elseif (
@@ -232,7 +247,6 @@ class WikiImporter {
 			MWNamespace::exists( intval( $namespace ) )
 		) {
 			$namespace = intval( $namespace );
-			$this->mTargetNamespace = $namespace;
 			$this->setImportTitleFactory( new NamespaceImportTitleFactory( $namespace ) );
 			return true;
 		} else {
@@ -251,11 +265,8 @@ class WikiImporter {
 			// No rootpage
 			$this->setImportTitleFactory( new NaiveImportTitleFactory() );
 		} elseif ( $rootpage !== '' ) {
-			$rootpage = rtrim( $rootpage, '/' ); //avoid double slashes
-			$title = Title::newFromText( $rootpage, !is_null( $this->mTargetNamespace )
-				? $this->mTargetNamespace
-				: NS_MAIN
-			);
+			$rootpage = rtrim( $rootpage, '/' ); // avoid double slashes
+			$title = Title::newFromText( $rootpage );
 
 			if ( !$title || $title->isExternal() ) {
 				$status->fatal( 'import-rootpage-invalid' );
@@ -375,14 +386,19 @@ class WikiImporter {
 		$page = WikiPage::factory( $title );
 		$page->loadPageData( 'fromdbmaster' );
 		$content = $page->getContent();
-		$editInfo = $page->prepareContentForEdit( $content );
-
-		$countable = $page->isCountable( $editInfo );
-		$oldcountable = $this->countableCache['title_' . $title->getPrefixedText()];
-		if ( isset( $oldcountable ) && $countable != $oldcountable ) {
-			DeferredUpdates::addUpdate( SiteStatsUpdate::factory( array(
-				'articles' => ( (int)$countable - (int)$oldcountable )
-			) ) );
+		if ( $content === null ) {
+			wfDebug( __METHOD__ . ': Skipping article count adjustment for ' . $title .
+				' because WikiPage::getContent() returned null' );
+		} else {
+			$editInfo = $page->prepareContentForEdit( $content );
+			$countKey = 'title_' . $title->getPrefixedText();
+			$countable = $page->isCountable( $editInfo );
+			if ( array_key_exists( $countKey, $this->countableCache ) &&
+				$countable != $this->countableCache[$countKey] ) {
+				DeferredUpdates::addUpdate( SiteStatsUpdate::factory( array(
+					'articles' => ( (int)$countable - (int)$this->countableCache[$countKey] )
+				) ) );
+			}
 		}
 
 		$args = func_get_args();
@@ -477,7 +493,8 @@ class WikiImporter {
 	/**
 	 * Retrieves the contents of the named attribute of the current element.
 	 * @param string $attr The name of the attribute
-	 * @return string The value of the attribute or an empty string if it is not set in the current element.
+	 * @return string The value of the attribute or an empty string if it is not set in the current
+	 * element.
 	 */
 	public function nodeAttribute( $attr ) {
 		return $this->reader->getAttribute( $attr );
@@ -498,6 +515,7 @@ class WikiImporter {
 		while ( $this->reader->read() ) {
 			switch ( $this->reader->nodeType ) {
 			case XMLReader::TEXT:
+			case XMLReader::CDATA:
 			case XMLReader::SIGNIFICANT_WHITESPACE:
 				$buffer .= $this->reader->value;
 				break;
@@ -522,10 +540,10 @@ class WikiImporter {
 		$oldDisable = libxml_disable_entity_loader( true );
 		$this->reader->read();
 
-		if ( $this->reader->name != 'mediawiki' ) {
+		if ( $this->reader->localName != 'mediawiki' ) {
 			libxml_disable_entity_loader( $oldDisable );
 			throw new MWException( "Expected <mediawiki> tag, got " .
-				$this->reader->name );
+				$this->reader->localName );
 		}
 		$this->debug( "<mediawiki> tag is correct." );
 
@@ -536,7 +554,7 @@ class WikiImporter {
 		$rethrow = null;
 		try {
 			while ( $keepReading ) {
-				$tag = $this->reader->name;
+				$tag = $this->reader->localName;
 				$type = $this->reader->nodeType;
 
 				if ( !Hooks::run( 'ImportHandleToplevelXMLTag', array( $this ) ) ) {
@@ -587,14 +605,14 @@ class WikiImporter {
 
 		while ( $this->reader->read() ) {
 			if ( $this->reader->nodeType == XmlReader::END_ELEMENT &&
-					$this->reader->name == 'siteinfo' ) {
+					$this->reader->localName == 'siteinfo' ) {
 				break;
 			}
 
-			$tag = $this->reader->name;
+			$tag = $this->reader->localName;
 
 			if ( $tag == 'namespace' ) {
-				$this->foreignNamespaces[ $this->nodeAttribute( 'key' ) ] =
+				$this->foreignNamespaces[$this->nodeAttribute( 'key' )] =
 					$this->nodeContents();
 			} elseif ( in_array( $tag, $normalFields ) ) {
 				$siteInfo[$tag] = $this->nodeContents();
@@ -615,11 +633,11 @@ class WikiImporter {
 
 		while ( $this->reader->read() ) {
 			if ( $this->reader->nodeType == XMLReader::END_ELEMENT &&
-					$this->reader->name == 'logitem' ) {
+					$this->reader->localName == 'logitem' ) {
 				break;
 			}
 
-			$tag = $this->reader->name;
+			$tag = $this->reader->localName;
 
 			if ( !Hooks::run( 'ImportHandleLogItemXMLTag', array(
 				$this, $logInfo
@@ -679,13 +697,13 @@ class WikiImporter {
 
 		while ( $skip ? $this->reader->next() : $this->reader->read() ) {
 			if ( $this->reader->nodeType == XMLReader::END_ELEMENT &&
-					$this->reader->name == 'page' ) {
+					$this->reader->localName == 'page' ) {
 				break;
 			}
 
 			$skip = false;
 
-			$tag = $this->reader->name;
+			$tag = $this->reader->localName;
 
 			if ( $badTitle ) {
 				// The title is invalid, bail out of this page
@@ -711,13 +729,14 @@ class WikiImporter {
 					$title = $this->processTitle( $pageInfo['title'],
 						isset( $pageInfo['ns'] ) ? $pageInfo['ns'] : null );
 
-					if ( !$title ) {
+					// $title is either an array of two titles or false.
+					if ( is_array( $title ) ) {
+						$this->pageCallback( $title );
+						list( $pageInfo['_title'], $foreignTitle ) = $title;
+					} else {
 						$badTitle = true;
 						$skip = true;
 					}
-
-					$this->pageCallback( $title );
-					list( $pageInfo['_title'], $foreignTitle ) = $title;
 				}
 
 				if ( $title ) {
@@ -733,10 +752,17 @@ class WikiImporter {
 			}
 		}
 
-		$this->pageOutCallback( $pageInfo['_title'], $foreignTitle,
+		// @note $pageInfo is only set if a valid $title is processed above with
+		//       no error. If we have a valid $title, then pageCallback is called
+		//       above, $pageInfo['title'] is set and we do pageOutCallback here.
+		//       If $pageInfo['_title'] is not set, then $foreignTitle is also not
+		//       set since they both come from $title above.
+		if ( array_key_exists( '_title', $pageInfo ) ) {
+			$this->pageOutCallback( $pageInfo['_title'], $foreignTitle,
 					$pageInfo['revisionCount'],
 					$pageInfo['successfulRevisionCount'],
 					$pageInfo );
+		}
 	}
 
 	/**
@@ -752,11 +778,11 @@ class WikiImporter {
 
 		while ( $skip ? $this->reader->next() : $this->reader->read() ) {
 			if ( $this->reader->nodeType == XMLReader::END_ELEMENT &&
-					$this->reader->name == 'revision' ) {
+					$this->reader->localName == 'revision' ) {
 				break;
 			}
 
-			$tag = $this->reader->name;
+			$tag = $this->reader->localName;
 
 			if ( !Hooks::run( 'ImportHandleRevisionXMLTag', array(
 				$this, $pageInfo, $revisionInfo
@@ -844,11 +870,11 @@ class WikiImporter {
 
 		while ( $skip ? $this->reader->next() : $this->reader->read() ) {
 			if ( $this->reader->nodeType == XMLReader::END_ELEMENT &&
-					$this->reader->name == 'upload' ) {
+					$this->reader->localName == 'upload' ) {
 				break;
 			}
 
-			$tag = $this->reader->name;
+			$tag = $this->reader->localName;
 
 			if ( !Hooks::run( 'ImportHandleUploadXMLTag', array(
 				$this, $pageInfo
@@ -942,11 +968,11 @@ class WikiImporter {
 
 		while ( $this->reader->read() ) {
 			if ( $this->reader->nodeType == XMLReader::END_ELEMENT &&
-					$this->reader->name == 'contributor' ) {
+					$this->reader->localName == 'contributor' ) {
 				break;
 			}
 
-			$tag = $this->reader->name;
+			$tag = $this->reader->localName;
 
 			if ( in_array( $tag, $fields ) ) {
 				$info[$tag] = $this->nodeContents();
@@ -1473,7 +1499,7 @@ class WikiRevision {
 	 */
 	function getSha1() {
 		if ( $this->sha1base36 ) {
-			return wfBaseConvert( $this->sha1base36, 36, 16 );
+			return Wikimedia\base_convert( $this->sha1base36, 36, 16 );
 		}
 		return false;
 	}
@@ -1553,8 +1579,7 @@ class WikiRevision {
 		}
 
 		// avoid memory leak...?
-		$linkCache = LinkCache::singleton();
-		$linkCache->clear();
+		Title::clearCaches();
 
 		$page = WikiPage::factory( $this->title );
 		$page->loadPageData( 'fromdbmaster' );
@@ -1582,6 +1607,20 @@ class WikiRevision {
 			}
 		}
 
+		// Select previous version to make size diffs correct
+		$prevId = $dbw->selectField( 'revision', 'rev_id',
+			array(
+				'rev_page' => $pageId,
+				'rev_timestamp <= ' . $dbw->timestamp( $this->timestamp ),
+			),
+			__METHOD__,
+			array( 'ORDER BY' => array(
+					'rev_timestamp DESC',
+					'rev_id DESC', // timestamp is not unique per page
+				)
+			)
+		);
+
 		# @todo FIXME: Use original rev_id optionally (better for backups)
 		# Insert the row
 		$revision = new Revision( array(
@@ -1589,13 +1628,14 @@ class WikiRevision {
 			'page' => $pageId,
 			'content_model' => $this->getModel(),
 			'content_format' => $this->getFormat(),
-			//XXX: just set 'content' => $this->getContent()?
+			// XXX: just set 'content' => $this->getContent()?
 			'text' => $this->getContent()->serialize( $this->getFormat() ),
 			'comment' => $this->getComment(),
 			'user' => $userId,
 			'user_text' => $userText,
 			'timestamp' => $this->timestamp,
 			'minor_edit' => $this->minor,
+			'parent_id' => $prevId,
 			) );
 		$revision->insertOn( $dbw );
 		$changed = $page->updateIfNewerOn( $dbw, $revision );
@@ -1630,7 +1670,7 @@ class WikiRevision {
 				'log_namespace' => $this->getTitle()->getNamespace(),
 				'log_title' => $this->getTitle()->getDBkey(),
 				'log_comment' => $this->getComment(),
-				#'log_user_text' => $this->user_text,
+				# 'log_user_text' => $this->user_text,
 				'log_params' => $this->params ),
 			__METHOD__
 		);
@@ -1648,7 +1688,7 @@ class WikiRevision {
 			'log_action' => $this->action,
 			'log_timestamp' => $dbw->timestamp( $this->timestamp ),
 			'log_user' => User::idFromName( $this->user_text ),
-			#'log_user_text' => $this->user_text,
+			# 'log_user_text' => $this->user_text,
 			'log_namespace' => $this->getTitle()->getNamespace(),
 			'log_title' => $this->getTitle()->getDBkey(),
 			'log_comment' => $this->getComment(),
@@ -1669,6 +1709,7 @@ class WikiRevision {
 				RepoGroup::singleton()->getLocalRepo(), $archiveName );
 		} else {
 			$file = wfLocalFile( $this->getTitle() );
+			$file->load( File::READ_LATEST );
 			wfDebug( __METHOD__ . 'Importing new file as ' . $file->getName() . "\n" );
 			if ( $file->exists() && $file->getTimestamp() > $this->getTimestamp() ) {
 				$archiveName = $file->getTimestamp() . '!' . $file->getName();
@@ -1740,7 +1781,7 @@ class WikiRevision {
 
 		// @todo FIXME!
 		$src = $this->getSrc();
-		$data = Http::get( $src );
+		$data = Http::get( $src, array(), __METHOD__ );
 		if ( !$data ) {
 			wfDebug( "IMPORT: couldn't fetch source $src\n" );
 			fclose( $f );
@@ -1840,9 +1881,9 @@ class ImportStreamSource implements ImportSource {
 	 * @return Status
 	 */
 	static function newFromFile( $filename ) {
-		wfSuppressWarnings();
+		MediaWiki\suppressWarnings();
 		$file = fopen( $filename, 'rt' );
-		wfRestoreWarnings();
+		MediaWiki\restoreWarnings();
 		if ( !$file ) {
 			return Status::newFatal( "importcantopen" );
 		}
@@ -1897,7 +1938,7 @@ class ImportStreamSource implements ImportSource {
 		# quicker and sorts out user-agent problems which might
 		# otherwise prevent importing from large sites, such
 		# as the Wikimedia cluster, etc.
-		$data = Http::request( $method, $url, array( 'followRedirects' => true ) );
+		$data = Http::request( $method, $url, array( 'followRedirects' => true ), __METHOD__ );
 		if ( $data !== false ) {
 			$file = tmpfile();
 			fwrite( $file, $data );
@@ -1923,23 +1964,38 @@ class ImportStreamSource implements ImportSource {
 		if ( $page == '' ) {
 			return Status::newFatal( 'import-noarticle' );
 		}
-		$link = Title::newFromText( "$interwiki:Special:Export/$page" );
-		if ( is_null( $link ) || !$link->isExternal() ) {
+
+		# Look up the first interwiki prefix, and let the foreign site handle
+		# subsequent interwiki prefixes
+		$firstIwPrefix = strtok( $interwiki, ':' );
+		$firstIw = Interwiki::fetch( $firstIwPrefix );
+		if ( !$firstIw ) {
 			return Status::newFatal( 'importbadinterwiki' );
-		} else {
-			$params = array();
-			if ( $history ) {
-				$params['history'] = 1;
-			}
-			if ( $templates ) {
-				$params['templates'] = 1;
-			}
-			if ( $pageLinkDepth ) {
-				$params['pagelink-depth'] = $pageLinkDepth;
-			}
-			$url = $link->getFullURL( $params );
-			# For interwikis, use POST to avoid redirects.
-			return ImportStreamSource::newFromURL( $url, "POST" );
 		}
+
+		$additionalIwPrefixes = strtok( '' );
+		if ( $additionalIwPrefixes ) {
+			$additionalIwPrefixes .= ':';
+		}
+		# Have to do a DB-key replacement ourselves; otherwise spaces get
+		# URL-encoded to +, which is wrong in this case. Similar to logic in
+		# Title::getLocalURL
+		$link = $firstIw->getURL( strtr( "${additionalIwPrefixes}Special:Export/$page",
+			' ', '_' ) );
+
+		$params = array();
+		if ( $history ) {
+			$params['history'] = 1;
+		}
+		if ( $templates ) {
+			$params['templates'] = 1;
+		}
+		if ( $pageLinkDepth ) {
+			$params['pagelink-depth'] = $pageLinkDepth;
+		}
+
+		$url = wfAppendQuery( $link, $params );
+		# For interwikis, use POST to avoid redirects.
+		return ImportStreamSource::newFromURL( $url, "POST" );
 	}
 }

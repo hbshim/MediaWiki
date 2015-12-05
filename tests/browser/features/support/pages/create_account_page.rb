@@ -12,8 +12,8 @@
 class CreateAccountPage
   include PageObject
 
-  include URL
-  page_url URL.url("<%=params[:page_title]%>")
+  page_url '<%=params[:page_title]%>'
 
-  button(:create_account, id: "wpCreateaccount")
+  button(:create_account, id: 'wpCreateaccount')
+  div(:error_message, id: 'mw-createacct-status-area')
 end

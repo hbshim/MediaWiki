@@ -44,7 +44,7 @@ class ResourceLoaderImage {
 	 * @param string|array $descriptor Path to image file, or array structure containing paths
 	 * @param string $basePath Directory to which paths in descriptor refer
 	 * @param array $variants
-	 * @throws MWException
+	 * @throws InvalidArgumentException
 	 */
 	public function __construct( $name, $module, $descriptor, $basePath, $variants ) {
 		$this->name = $name;
@@ -52,6 +52,21 @@ class ResourceLoaderImage {
 		$this->descriptor = $descriptor;
 		$this->basePath = $basePath;
 		$this->variants = $variants;
+
+		// Expand shorthands:
+		// array( "en,de,fr" => "foo.svg" )
+		// → array( "en" => "foo.svg", "de" => "foo.svg", "fr" => "foo.svg" )
+		if ( is_array( $this->descriptor ) && isset( $this->descriptor['lang'] ) ) {
+			foreach ( array_keys( $this->descriptor['lang'] ) as $langList ) {
+				if ( strpos( $langList, ',' ) !== false ) {
+					$this->descriptor['lang'] += array_fill_keys(
+						explode( ',', $langList ),
+						$this->descriptor['lang'][$langList]
+					);
+					unset( $this->descriptor['lang'][$langList] );
+				}
+			}
+		}
 
 		// Ensure that all files have common extension.
 		$extensions = array();
@@ -61,11 +76,15 @@ class ResourceLoaderImage {
 		} );
 		$extensions = array_unique( $extensions );
 		if ( count( $extensions ) !== 1 ) {
-			throw new MWException( 'Image type for various images differs.' );
+			throw new InvalidArgumentException(
+				"File type for different image files of '$name' not the same"
+			);
 		}
 		$ext = $extensions[0];
 		if ( !isset( self::$fileTypes[$ext] ) ) {
-			throw new MWException( 'Invalid image type; svg, png, gif or jpg required.' );
+			throw new InvalidArgumentException(
+				"Invalid file type for image files of '$name' (valid: svg, png, gif, jpg)"
+			);
 		}
 		$this->extension = $ext;
 	}
@@ -103,14 +122,14 @@ class ResourceLoaderImage {
 	 * @param ResourceLoaderContext $context Any context
 	 * @return string
 	 */
-	protected function getPath( ResourceLoaderContext $context ) {
+	public function getPath( ResourceLoaderContext $context ) {
 		$desc = $this->descriptor;
 		if ( is_string( $desc ) ) {
 			return $this->basePath . '/' . $desc;
-		} elseif ( isset( $desc['lang'][ $context->getLanguage() ] ) ) {
-			return $this->basePath . '/' . $desc['lang'][ $context->getLanguage() ];
-		} elseif ( isset( $desc[ $context->getDirection() ] ) ) {
-			return $this->basePath . '/' . $desc[ $context->getDirection() ];
+		} elseif ( isset( $desc['lang'][$context->getLanguage()] ) ) {
+			return $this->basePath . '/' . $desc['lang'][$context->getLanguage()];
+		} elseif ( isset( $desc[$context->getDirection()] ) ) {
+			return $this->basePath . '/' . $desc[$context->getDirection()];
 		} else {
 			return $this->basePath . '/' . $desc['default'];
 		}
@@ -184,13 +203,14 @@ class ResourceLoaderImage {
 	 * Call getExtension() or getMimeType() with the same $format argument to learn what file type the
 	 * returned data uses.
 	 *
-	 * @param ResourceLoaderContext $context Image context, or any context of $variant and $format
+	 * @param ResourceLoaderContext $context Image context, or any context if $variant and $format
 	 *     given.
-	 * @param string|null $variant Variant to get the data for. Optional, if given, overrides the data
+	 * @param string|null $variant Variant to get the data for. Optional; if given, overrides the data
 	 *     from $context.
-	 * @param string $format Format to get the data for, 'original' or 'rasterized'. Optional, if
+	 * @param string $format Format to get the data for, 'original' or 'rasterized'. Optional; if
 	 *     given, overrides the data from $context.
 	 * @return string|false Possibly binary image data, or false on failure
+	 * @throws MWException If the image file doesn't exist
 	 */
 	public function getImageData( ResourceLoaderContext $context, $variant = false, $format = false ) {
 		if ( $variant === false ) {
@@ -201,6 +221,10 @@ class ResourceLoaderImage {
 		}
 
 		$path = $this->getPath( $context );
+		if ( !file_exists( $path ) ) {
+			throw new MWException( "File '$path' does not exist" );
+		}
+
 		if ( $this->getExtension() !== 'svg' ) {
 			return file_get_contents( $path );
 		}
@@ -214,7 +238,7 @@ class ResourceLoaderImage {
 		if ( $format === 'rasterized' ) {
 			$data = $this->rasterize( $data );
 			if ( !$data ) {
-				wfDebugLog( 'ResourceLoaderImage', __METHOD__  . " failed to rasterize for $path" );
+				wfDebugLog( 'ResourceLoaderImage', __METHOD__ . " failed to rasterize for $path" );
 			}
 		}
 
@@ -260,7 +284,7 @@ class ResourceLoaderImage {
 	}
 
 	/**
-	 * Massage the SVG image data for converters which doesn't understand some path data syntax.
+	 * Massage the SVG image data for converters which don't understand some path data syntax.
 	 *
 	 * This is necessary for rsvg and ImageMagick when compiled with rsvg support.
 	 * Upstream bug is https://bugzilla.gnome.org/show_bug.cgi?id=620923, fixed 2014-11-10, so
@@ -291,21 +315,23 @@ class ResourceLoaderImage {
 	 * @return string|bool PNG image data, or false on failure
 	 */
 	protected function rasterize( $svg ) {
-		// This code should be factored out to a separate method on SvgHandler, or perhaps a separate
-		// class, with a separate set of configuration settings.
-		//
-		// This is a distinct use case from regular SVG rasterization:
-		// * we can skip many sanity and security checks (as the images come from a trusted source,
-		//   rather than from the user)
-		// * we need to provide extra options to some converters to achieve acceptable quality for very
-		//   small images, which might cause performance issues in the general case
-		// * we need to directly pass image data to the converter instead of a file path
-		//
-		// See https://phabricator.wikimedia.org/T76473#801446 for examples of what happens with the
-		// default settings.
-		//
-		// For now, we special-case rsvg (used in WMF production) and do a messy workaround for other
-		// converters.
+		/**
+		 * This code should be factored out to a separate method on SvgHandler, or perhaps a separate
+		 * class, with a separate set of configuration settings.
+		 *
+		 * This is a distinct use case from regular SVG rasterization:
+		 * * We can skip many sanity and security checks (as the images come from a trusted source,
+		 *   rather than from the user).
+		 * * We need to provide extra options to some converters to achieve acceptable quality for very
+		 *   small images, which might cause performance issues in the general case.
+		 * * We want to directly pass image data to the converter, rather than a file path.
+		 *
+		 * See https://phabricator.wikimedia.org/T76473#801446 for examples of what happens with the
+		 * default settings.
+		 *
+		 * For now, we special-case rsvg (used in WMF production) and do a messy workaround for other
+		 * converters.
+		 */
 
 		global $wgSVGConverter, $wgSVGConverterPath;
 
@@ -349,7 +375,12 @@ class ResourceLoaderImage {
 			}
 
 			$handler = new SvgHandler;
-			$res = $handler->rasterize( $tempFilenameSvg, $tempFilenamePng, $metadata['width'], $metadata['height'] );
+			$res = $handler->rasterize(
+				$tempFilenameSvg,
+				$tempFilenamePng,
+				$metadata['width'],
+				$metadata['height']
+			);
 			unlink( $tempFilenameSvg );
 
 			$png = null;

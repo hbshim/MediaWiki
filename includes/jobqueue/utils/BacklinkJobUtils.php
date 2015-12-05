@@ -25,6 +25,27 @@
 /**
  * Class with Backlink related Job helper methods
  *
+ * When an asset changes, a base job can be inserted to update all assets that depend on it.
+ * The base job splits into per-title "leaf" jobs and a "remnant" job to handle the remaining
+ * range of backlinks. This recurs until the remnant job's backlink range is small enough that
+ * only leaf jobs are created from it.
+ *
+ * For example, if templates A and B are edited (at the same time) the queue will have:
+ *     (A base, B base)
+ * When these jobs run, the queue will have per-title and remnant partition jobs:
+ * 	   (titleX,titleY,titleZ,...,A remnant,titleM,titleN,titleO,...,B remnant)
+ *
+ * This works best when the queue is FIFO, for several reasons:
+ *   - a) Since the remnant jobs are enqueued after the leaf jobs, the slower leaf jobs have to
+ *        get popped prior to the fast remnant jobs. This avoids flooding the queue with leaf jobs
+ *        for every single backlink of widely used assets (which can be millions).
+ *   - b) Other jobs going in the queue still get a chance to run after a widely used asset changes.
+ *        This is due to the large remnant job pushing to the end of the queue with each division.
+ *
+ * The size of the queues used in this manner depend on the number of assets changes and the
+ * number of workers. Also, with FIFO-per-partition queues, the queue size can be somewhat larger,
+ * depending on the number of queue partitions.
+ *
  * @ingroup JobQueue
  * @since 1.23
  */
@@ -71,6 +92,7 @@ class BacklinkJobUtils {
 
 		if ( isset( $params['pages'] ) || empty( $params['recursive'] ) ) {
 			$ranges = array(); // sanity; this is a leaf node
+			$realBSize = 0;
 			wfWarn( __METHOD__ . " called on {$job->getType()} leaf job (explosive recursion)." );
 		} elseif ( isset( $params['range'] ) ) {
 			// This is a range job to trigger the insertion of partitioned/title jobs...
@@ -88,8 +110,10 @@ class BacklinkJobUtils {
 		// Combine the first range (of size $bSize) backlinks into leaf jobs
 		if ( isset( $ranges[0] ) ) {
 			list( $start, $end ) = $ranges[0];
-			$titles = $title->getBacklinkCache()->getLinks( $params['table'], $start, $end );
-			foreach ( array_chunk( iterator_to_array( $titles ), $cSize ) as $titleBatch ) {
+			$iter = $title->getBacklinkCache()->getLinks( $params['table'], $start, $end );
+			$titles = iterator_to_array( $iter );
+			/** @var Title[] $titleBatch */
+			foreach ( array_chunk( $titles, $cSize ) as $titleBatch ) {
 				$pages = array();
 				foreach ( $titleBatch as $tl ) {
 					$pages[$tl->getArticleId()] = array( $tl->getNamespace(), $tl->getDBKey() );

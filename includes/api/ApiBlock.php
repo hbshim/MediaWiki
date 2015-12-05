@@ -39,6 +39,8 @@ class ApiBlock extends ApiBase {
 	 * of success. If it fails, the result will specify the nature of the error.
 	 */
 	public function execute() {
+		global $wgContLang;
+
 		$user = $this->getUser();
 		$params = $this->extractRequestParams();
 
@@ -50,7 +52,13 @@ class ApiBlock extends ApiBase {
 		if ( $user->isBlocked() ) {
 			$status = SpecialBlock::checkUnblockSelf( $params['user'], $user );
 			if ( $status !== true ) {
-				$this->dieUsageMsg( array( $status ) );
+				$msg = $this->parseMsg( $status );
+				$this->dieUsage(
+					$msg['info'],
+					$msg['code'],
+					0,
+					array( 'blockinfo' => ApiQueryUserInfo::getBlockInfo( $user->getBlock() ) )
+				);
 			}
 		}
 
@@ -78,7 +86,7 @@ class ApiBlock extends ApiBase {
 				'other',
 				$params['reason']
 			),
-			'Expiry' => $params['expiry'] == 'never' ? 'infinite' : $params['expiry'],
+			'Expiry' => $params['expiry'],
 			'HardBlock' => !$params['anononly'],
 			'CreateAccount' => $params['nocreate'],
 			'AutoBlock' => $params['autoblock'],
@@ -100,11 +108,9 @@ class ApiBlock extends ApiBase {
 		$res['user'] = $params['user'];
 		$res['userID'] = $target instanceof User ? $target->getId() : 0;
 
-		$block = Block::newFromTarget( $target );
+		$block = Block::newFromTarget( $target, null, true );
 		if ( $block instanceof Block ) {
-			$res['expiry'] = $block->mExpiry == $this->getDB()->getInfinity()
-				? 'infinite'
-				: wfTimestamp( TS_ISO_8601, $block->mExpiry );
+			$res['expiry'] = $wgContLang->formatExpiry( $block->mExpiry, TS_ISO_8601, 'infinite' );
 			$res['id'] = $block->getId();
 		} else {
 			# should be unreachable
@@ -113,27 +119,13 @@ class ApiBlock extends ApiBase {
 		}
 
 		$res['reason'] = $params['reason'];
-		if ( $params['anononly'] ) {
-			$res['anononly'] = '';
-		}
-		if ( $params['nocreate'] ) {
-			$res['nocreate'] = '';
-		}
-		if ( $params['autoblock'] ) {
-			$res['autoblock'] = '';
-		}
-		if ( $params['noemail'] ) {
-			$res['noemail'] = '';
-		}
-		if ( $params['hidename'] ) {
-			$res['hidename'] = '';
-		}
-		if ( $params['allowusertalk'] ) {
-			$res['allowusertalk'] = '';
-		}
-		if ( $params['watchuser'] ) {
-			$res['watchuser'] = '';
-		}
+		$res['anononly'] = $params['anononly'];
+		$res['nocreate'] = $params['nocreate'];
+		$res['autoblock'] = $params['autoblock'];
+		$res['noemail'] = $params['noemail'];
+		$res['hidename'] = $params['hidename'];
+		$res['allowusertalk'] = $params['allowusertalk'];
+		$res['watchuser'] = $params['watchuser'];
 
 		$this->getResult()->addValue( null, $this->getModuleName(), $res );
 	}
@@ -170,12 +162,14 @@ class ApiBlock extends ApiBase {
 	}
 
 	protected function getExamplesMessages() {
+		// @codingStandardsIgnoreStart Generic.Files.LineLength
 		return array(
 			'action=block&user=192.0.2.5&expiry=3%20days&reason=First%20strike&token=123ABC'
 				=> 'apihelp-block-example-ip-simple',
 			'action=block&user=Vandal&expiry=never&reason=Vandalism&nocreate=&autoblock=&noemail=&token=123ABC'
 				=> 'apihelp-block-example-user-complex',
 		);
+		// @codingStandardsIgnoreEnd
 	}
 
 	public function getHelpUrls() {

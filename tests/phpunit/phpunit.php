@@ -42,20 +42,34 @@ class PHPUnitMaintClass extends Maintenance {
 			false, # not required
 			false # no arg needed
 		);
-		$this->addOption( 'regex', 'Only run parser tests that match the given regex.', false, true );
+		$this->addOption(
+			'regex',
+			'Only run parser tests that match the given regex.',
+			false,
+			true
+		);
 		$this->addOption( 'file', 'File describing parser tests.', false, true );
 		$this->addOption( 'use-filebackend', 'Use filebackend', false, true );
 		$this->addOption( 'use-bagostuff', 'Use bagostuff', false, true );
 		$this->addOption( 'use-jobqueue', 'Use jobqueue', false, true );
-		$this->addOption( 'keep-uploads', 'Re-use the same upload directory for each test, don\'t delete it.', false, false );
+		$this->addOption(
+			'keep-uploads',
+			'Re-use the same upload directory for each test, don\'t delete it.',
+			false,
+			false
+		);
 		$this->addOption( 'use-normal-tables', 'Use normal DB tables.', false, false );
-		$this->addOption( 'reuse-db', 'Init DB only if tables are missing and keep after finish.', false, false );
+		$this->addOption(
+			'reuse-db', 'Init DB only if tables are missing and keep after finish.',
+			false,
+			false
+		);
 	}
 
 	public function finalSetup() {
 		parent::finalSetup();
 
-		global $wgMainCacheType, $wgMessageCacheType, $wgParserCacheType;
+		global $wgMainCacheType, $wgMessageCacheType, $wgParserCacheType, $wgMainWANCache;
 		global $wgLanguageConverterCacheType, $wgUseDatabaseMessages;
 		global $wgLocaltimezone, $wgLocalisationCacheConf;
 		global $wgDevelopmentWarnings;
@@ -66,10 +80,21 @@ class PHPUnitMaintClass extends Maintenance {
 		// wfWarn should cause tests to fail
 		$wgDevelopmentWarnings = true;
 
+		// Make sure all caches and stashes are either disabled or use
+		// in-process cache only to prevent tests from using any preconfigured
+		// cache meant for the local wiki from outside the test run.
+		// See also MediaWikiTestCase::run() which mocks CACHE_DB and APC.
+
+		// Disabled in DefaultSettings, override local settings
+		$wgMainWANCache =
 		$wgMainCacheType = CACHE_NONE;
-		$wgMessageCacheType = CACHE_NONE;
-		$wgParserCacheType = CACHE_NONE;
-		$wgLanguageConverterCacheType = CACHE_NONE;
+		// Uses CACHE_ANYTHING in DefaultSettings, use hash instead of db
+		$wgMessageCacheType =
+		$wgParserCacheType =
+		$wgSessionCacheType =
+		$wgLanguageConverterCacheType = 'hash';
+		// Uses db-replicated in DefaultSettings
+		$wgMainStash = 'hash';
 
 		$wgUseDatabaseMessages = false; # Set for future resets
 
@@ -88,6 +113,11 @@ class PHPUnitMaintClass extends Maintenance {
 		);
 		// xdebug's default of 100 is too low for MediaWiki
 		ini_set( 'xdebug.max_nesting_level', 1000 );
+
+		// Bug T116683 serialize_precision of 100
+		// may break testing against floating point values
+		// treated with PHP's serialize()
+		ini_set( 'serialize_precision', 17 );
 	}
 
 	public function execute() {
@@ -103,7 +133,7 @@ class PHPUnitMaintClass extends Maintenance {
 
 		# Make sure we have --configuration or PHPUnit might complain
 		if ( !in_array( '--configuration', $_SERVER['argv'] ) ) {
-			//Hack to eliminate the need to use the Makefile (which sucks ATM)
+			// Hack to eliminate the need to use the Makefile (which sucks ATM)
 			array_splice( $_SERVER['argv'], 1, 0,
 				array( '--configuration', $IP . '/tests/phpunit/suite.xml' ) );
 		}
@@ -215,25 +245,35 @@ if ( version_compare( PHP_VERSION, '5.4.0', '<' ) ) {
 
 $ok = false;
 
-foreach ( array(
-	stream_resolve_include_path( 'phpunit.phar' ),
-	'PHPUnit/Runner/Version.php',
-	'PHPUnit/Autoload.php'
-) as $includePath ) {
-	@include_once $includePath;
-	if ( class_exists( 'PHPUnit_TextUI_Command' ) ) {
-		$ok = true;
-		break;
+if ( class_exists( 'PHPUnit_TextUI_Command' ) ) {
+	echo "PHPUnit already present\n";
+	$ok = true;
+} else {
+	foreach ( array(
+				stream_resolve_include_path( 'phpunit.phar' ),
+				'PHPUnit/Runner/Version.php',
+				'PHPUnit/Autoload.php'
+			) as $includePath ) {
+		// @codingStandardsIgnoreStart
+		@include_once $includePath;
+		// @codingStandardsIgnoreEnd
+		if ( class_exists( 'PHPUnit_TextUI_Command' ) ) {
+			$ok = true;
+			echo "Using PHPUnit from $includePath\n";
+			break;
+		}
 	}
 }
 
 if ( !$ok ) {
-	die( "Couldn't find a usable PHPUnit.\n" );
+	echo "Couldn't find a usable PHPUnit.\n";
+	exit( 1 );
 }
 
 $puVersion = PHPUnit_Runner_Version::id();
 if ( $puVersion !== '@package_version@' && version_compare( $puVersion, '3.7.0', '<' ) ) {
-	die( "PHPUnit 3.7.0 or later required; you have {$puVersion}.\n" );
+	echo "PHPUnit 3.7.0 or later required; you have {$puVersion}.\n";
+	exit( 1 );
 }
 
 PHPUnit_TextUI_Command::main();

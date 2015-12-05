@@ -34,7 +34,7 @@ abstract class JobQueueAggregator {
 	/**
 	 * @param array $params
 	 */
-	protected function __construct( array $params ) {
+	public function __construct( array $params ) {
 	}
 
 	/**
@@ -150,5 +150,23 @@ abstract class JobQueueAggregator {
 		}
 
 		return $pendingDBs;
+	}
+}
+
+class JobQueueAggregatorNull extends JobQueueAggregator {
+	protected function doNotifyQueueEmpty( $wiki, $type ) {
+		return true;
+	}
+
+	protected function doNotifyQueueNonEmpty( $wiki, $type ) {
+		return true;
+	}
+
+	protected function doGetAllReadyWikiQueues() {
+		return array();
+	}
+
+	protected function doPurge() {
+		return true;
 	}
 }

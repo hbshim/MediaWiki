@@ -175,10 +175,14 @@ class ApiQueryAllPages extends ApiQueryGeneratorBase {
 			// 1999 rules works fine, but that breaks other DBs. Sigh.
 			/// @todo Once we drop support for 1992-rule DBs, we can simplify this.
 			$dbType = $db->getType();
-			if ( $dbType === 'mysql' || $dbType === 'sqlite' ||
-				$dbType === 'postgres' && $db->getServerVersion() >= 9.1
-			) {
-				// 1999 rules, or screw-the-rules
+			if ( $dbType === 'mysql' || $dbType === 'sqlite' ) {
+				// Ignore the rules, or 1999 rules if you count unique keys
+				// over non-NULL columns as satisfying the requirement for
+				// "functional dependency" and don't require including
+				// constant-in-WHERE columns in the GROUP BY.
+				$this->addOption( 'GROUP BY', array( 'page_title' ) );
+			} elseif ( $dbType === 'postgres' && $db->getServerVersion() >= 9.1 ) {
+				// 1999 rules only counting primary keys
 				$this->addOption( 'GROUP BY', array( 'page_title', 'page_id' ) );
 			} else {
 				// 1992 rules
@@ -196,14 +200,14 @@ class ApiQueryAllPages extends ApiQueryGeneratorBase {
 		$this->addOption( 'LIMIT', $limit + 1 );
 		$res = $this->select( __METHOD__ );
 
-		//Get gender information
+		// Get gender information
 		if ( MWNamespace::hasGenderDistinction( $params['namespace'] ) ) {
 			$users = array();
 			foreach ( $res as $row ) {
 				$users[] = $row->page_title;
 			}
 			GenderCache::singleton()->doQuery( $users, __METHOD__ );
-			$res->rewind(); //reset
+			$res->rewind(); // reset
 		}
 
 		$count = 0;
@@ -234,7 +238,7 @@ class ApiQueryAllPages extends ApiQueryGeneratorBase {
 		}
 
 		if ( is_null( $resultPageSet ) ) {
-			$result->setIndexedTagName_internal( array( 'query', $this->getModuleName() ), 'p' );
+			$result->addIndexedTagName( array( 'query', $this->getModuleName() ), 'p' );
 		}
 	}
 

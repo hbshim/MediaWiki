@@ -127,6 +127,8 @@ class SpecialNewpages extends IncludableSpecialPage {
 		$this->showNavigation = !$this->including(); // Maybe changed in setup
 		$this->setup( $par );
 
+		$this->addHelpLink( 'Help:New pages' );
+
 		if ( !$this->including() ) {
 			// Settings
 			$this->form();
@@ -231,7 +233,7 @@ class SpecialNewpages extends IncludableSpecialPage {
 				'name' => 'invert',
 				'label-message' => 'invert',
 				'default' => $nsinvert,
-				'tooltip' => $this->msg( 'tooltip-invert' )->text(),
+				'tooltip' => 'invert',
 			),
 			'tagFilter' => array(
 				'type' => 'tagfilter',
@@ -313,7 +315,7 @@ class SpecialNewpages extends IncludableSpecialPage {
 			array()
 		);
 
-		$query = array( 'redirect' => 'no' );
+		$query = $title->isRedirect() ? array( 'redirect' => 'no' ) : array();
 
 		// Linker::linkKnown() uses 'known' and 'noclasses' options.
 		// This breaks the colouration for stubs.
@@ -461,7 +463,7 @@ class SpecialNewpages extends IncludableSpecialPage {
 	protected function feedItemDesc( $row ) {
 		$revision = Revision::newFromId( $row->rev_id );
 		if ( $revision ) {
-			//XXX: include content model/type in feed item?
+			// XXX: include content model/type in feed item?
 			return '<p>' . htmlspecialchars( $revision->getUserText() ) .
 				$this->msg( 'colon-separator' )->inContentLanguage()->escaped() .
 				htmlspecialchars( FeedItem::stripComment( $revision->getComment() ) ) .
@@ -592,7 +594,7 @@ class NewPagesPager extends ReverseChronologicalPager {
 		foreach ( $this->mResult as $row ) {
 			$linkBatch->add( NS_USER, $row->rc_user_text );
 			$linkBatch->add( NS_USER_TALK, $row->rc_user_text );
-			$linkBatch->add( $row->rc_namespace, $row->rc_title );
+			$linkBatch->add( $row->page_namespace, $row->page_title );
 		}
 		$linkBatch->execute();
 

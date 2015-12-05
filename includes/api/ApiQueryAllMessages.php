@@ -116,7 +116,13 @@ class ApiQueryAllMessages extends ApiQueryBase {
 			$lang = $langObj->getCode();
 
 			$customisedMessages = AllMessagesTablePager::getCustomisedStatuses(
-				array_map( array( $langObj, 'ucfirst' ), $messages_target ), $lang, $lang != $wgContLang->getCode() );
+				array_map(
+					array( $langObj, 'ucfirst' ),
+					$messages_target
+				),
+				$lang,
+				$lang != $wgContLang->getCode()
+			);
 
 			$customised = $params['customised'] === 'modified';
 		}
@@ -136,7 +142,11 @@ class ApiQueryAllMessages extends ApiQueryBase {
 			}
 
 			if ( !$skip ) {
-				$a = array( 'name' => $message );
+				$a = array(
+					'name' => $message,
+					'normalizedname' => MessageCache::normalizeKey( $message ),
+				);
+
 				$args = array();
 				if ( isset( $params['args'] ) && count( $params['args'] ) != 0 ) {
 					$args = $params['args'];
@@ -146,7 +156,7 @@ class ApiQueryAllMessages extends ApiQueryBase {
 					$messageIsCustomised = isset( $customisedMessages['pages'][$langObj->ucfirst( $message )] );
 					if ( $customised === $messageIsCustomised ) {
 						if ( $customised ) {
-							$a['customised'] = '';
+							$a['customised'] = true;
 						}
 					} else {
 						continue;
@@ -156,7 +166,7 @@ class ApiQueryAllMessages extends ApiQueryBase {
 				$msg = wfMessage( $message, $args )->inLanguage( $langObj );
 
 				if ( !$msg->exists() ) {
-					$a['missing'] = '';
+					$a['missing'] = true;
 				} else {
 					// Check if the parser is enabled:
 					if ( $params['enableparser'] ) {
@@ -165,12 +175,12 @@ class ApiQueryAllMessages extends ApiQueryBase {
 						$msgString = $msg->plain();
 					}
 					if ( !$params['nocontent'] ) {
-						ApiResult::setContent( $a, $msgString );
+						ApiResult::setContentValue( $a, 'content', $msgString );
 					}
 					if ( isset( $prop['default'] ) ) {
 						$default = wfMessage( $message )->inLanguage( $langObj )->useDatabase( false );
 						if ( !$default->exists() ) {
-							$a['defaultmissing'] = '';
+							$a['defaultmissing'] = true;
 						} elseif ( $default->plain() != $msgString ) {
 							$a['default'] = $default->plain();
 						}
@@ -183,7 +193,7 @@ class ApiQueryAllMessages extends ApiQueryBase {
 				}
 			}
 		}
-		$result->setIndexedTagName_internal( array( 'query', $this->getModuleName() ), 'message' );
+		$result->addIndexedTagName( array( 'query', $this->getModuleName() ), 'message' );
 	}
 
 	public function getCacheMode( $params ) {
@@ -245,6 +255,6 @@ class ApiQueryAllMessages extends ApiQueryBase {
 	}
 
 	public function getHelpUrls() {
-		return 'https://www.mediawiki.org/wiki/API:Meta#allmessages_.2F_am';
+		return 'https://www.mediawiki.org/wiki/API:Allmessages';
 	}
 }

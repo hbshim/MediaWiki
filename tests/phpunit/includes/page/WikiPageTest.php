@@ -160,7 +160,7 @@ class WikiPageTest extends MediaWikiLangTestCase {
 		$this->hideDeprecated( "WikiPage::getText" );
 		$this->hideDeprecated( "Revision::getText" );
 
-		//NOTE: assume help namespace will default to wikitext
+		// NOTE: assume help namespace will default to wikitext
 		$title = Title::newFromText( "Help:WikiPageTest_testDoEdit" );
 
 		$page = $this->newPage( $title );
@@ -210,25 +210,6 @@ class WikiPageTest extends MediaWikiLangTestCase {
 		$res->free();
 
 		$this->assertEquals( 2, $n, 'pagelinks should contain two links from the page' );
-	}
-
-	/**
-	 * @covers WikiPage::doQuickEdit
-	 */
-	public function testDoQuickEdit() {
-		global $wgUser;
-
-		$this->hideDeprecated( "WikiPage::doQuickEdit" );
-
-		//NOTE: assume help namespace will default to wikitext
-		$page = $this->createPage( "Help:WikiPageTest_testDoQuickEdit", "original text" );
-
-		$text = "quick text";
-		$page->doQuickEdit( $text, $wgUser, "testing q" );
-
-		# ---------------------
-		$page = new WikiPage( $page->getTitle() );
-		$this->assertEquals( $text, $page->getText() );
 	}
 
 	/**
@@ -292,6 +273,12 @@ class WikiPageTest extends MediaWikiLangTestCase {
 			"Title::exists should return false after page was deleted"
 		);
 
+		// Run the job queue
+		JobQueueGroup::destroySingletons();
+		$jobs = new RunJobs;
+		$jobs->loadParamsAndArgs( null, array( 'quiet' => true ), null );
+		$jobs->execute();
+
 		# ------------------------
 		$dbr = wfGetDB( DB_SLAVE );
 		$res = $dbr->select( 'pagelinks', '*', array( 'pl_from' => $id ) );
@@ -312,7 +299,15 @@ class WikiPageTest extends MediaWikiLangTestCase {
 		);
 		$id = $page->getId();
 
+		// Similar to MovePage logic
+		wfGetDB( DB_MASTER )->delete( 'page', array( 'page_id' => $id ), __METHOD__ );
 		$page->doDeleteUpdates( $id );
+
+		// Run the job queue
+		JobQueueGroup::destroySingletons();
+		$jobs = new RunJobs;
+		$jobs->loadParamsAndArgs( null, array( 'quiet' => true ), null );
+		$jobs->execute();
 
 		# ------------------------
 		$dbr = wfGetDB( DB_SLAVE );
@@ -743,7 +738,7 @@ more stuff
 ";
 
 	public function dataReplaceSection() {
-		//NOTE: assume the Help namespace to contain wikitext
+		// NOTE: assume the Help namespace to contain wikitext
 		return array(
 			array( 'Help:WikiPageTest_testReplaceSection',
 				CONTENT_MODEL_WIKITEXT,
@@ -938,7 +933,7 @@ more stuff
 		$this->assertEquals( 'Admin', $rev1->getUserText() );
 
 		# now, try the actual rollback
-		$admin->addGroup( "sysop" ); #XXX: make the test user a sysop...
+		$admin->addGroup( "sysop" ); # XXX: make the test user a sysop...
 		$token = $admin->getEditToken(
 			array( $page->getTitle()->getPrefixedText(), $user2->getName() ),
 			null
@@ -995,7 +990,7 @@ more stuff
 		);
 
 		# now, try the rollback
-		$admin->addGroup( "sysop" ); #XXX: make the test user a sysop...
+		$admin->addGroup( "sysop" ); # XXX: make the test user a sysop...
 		$token = $admin->getEditToken(
 			array( $page->getTitle()->getPrefixedText(), $user1->getName() ),
 			null
@@ -1026,7 +1021,7 @@ more stuff
 	public function testDoRollbackFailureSameContent() {
 		$admin = new User();
 		$admin->setName( "Admin" );
-		$admin->addGroup( "sysop" ); #XXX: make the test user a sysop...
+		$admin->addGroup( "sysop" ); # XXX: make the test user a sysop...
 
 		$text = "one";
 		$page = $this->newPage( "WikiPageTest_testDoRollback" );
@@ -1041,7 +1036,7 @@ more stuff
 
 		$user1 = new User();
 		$user1->setName( "127.0.1.11" );
-		$user1->addGroup( "sysop" ); #XXX: make the test user a sysop...
+		$user1->addGroup( "sysop" ); # XXX: make the test user a sysop...
 		$text .= "\n\ntwo";
 		$page = new WikiPage( $page->getTitle() );
 		$page->doEditContent(
@@ -1219,7 +1214,7 @@ more stuff
 	public function testGetAutoDeleteReason( $edits, $expectedResult, $expectedHistory ) {
 		global $wgUser;
 
-		//NOTE: assume Help namespace to contain wikitext
+		// NOTE: assume Help namespace to contain wikitext
 		$page = $this->newPage( "Help:WikiPageTest_testGetAutoDeleteReason" );
 
 		$c = 1;
@@ -1275,7 +1270,7 @@ more stuff
 		$user = new User();
 		$user->setName( "127.0.0.1" );
 
-		//NOTE: assume Help namespace to contain wikitext
+		// NOTE: assume Help namespace to contain wikitext
 		$page = $this->newPage( "Help:WikiPageTest_testPreloadTransform" );
 		$text = $page->preSaveTransform( $text, $user );
 

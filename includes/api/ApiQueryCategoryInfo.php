@@ -86,9 +86,7 @@ class ApiQueryCategoryInfo extends ApiQueryBase {
 			$vals['pages'] = $row->cat_pages - $row->cat_subcats - $row->cat_files;
 			$vals['files'] = intval( $row->cat_files );
 			$vals['subcats'] = intval( $row->cat_subcats );
-			if ( $row->cat_hidden ) {
-				$vals['hidden'] = '';
-			}
+			$vals['hidden'] = (bool)$row->cat_hidden;
 			$fit = $this->addPageSubItems( $catids[$row->cat_title], $vals );
 			if ( !$fit ) {
 				$this->setContinueEnumParameter( 'continue', $row->cat_title );
@@ -117,6 +115,6 @@ class ApiQueryCategoryInfo extends ApiQueryBase {
 	}
 
 	public function getHelpUrls() {
-		return 'https://www.mediawiki.org/wiki/API:Properties#categoryinfo_.2F_ci';
+		return 'https://www.mediawiki.org/wiki/API:Categoryinfo';
 	}
 }

@@ -368,6 +368,9 @@ class HistoryPager extends ReverseChronologicalPager {
 	 */
 	protected $parentLens;
 
+	/** @var bool Whether to show the tag editing UI */
+	protected $showTagEditUI;
+
 	/**
 	 * @param HistoryAction $historyPage
 	 * @param string $year
@@ -381,6 +384,7 @@ class HistoryPager extends ReverseChronologicalPager {
 		$this->tagFilter = $tagFilter;
 		$this->getDateCond( $year, $month );
 		$this->conds = $conds;
+		$this->showTagEditUI = ChangeTags::showTagEditingUI( $this->getUser() );
 	}
 
 	// For hook compatibility...
@@ -432,8 +436,13 @@ class HistoryPager extends ReverseChronologicalPager {
 			$latest = ( $this->counter == 1 && $this->mIsFirst );
 			$firstInList = $this->counter == 1;
 			$this->counter++;
-			$s = $this->historyLine( $this->lastRow, $row,
-				$this->getTitle()->getNotificationTimestamp( $this->getUser() ), $latest, $firstInList );
+
+			$notifTimestamp = $this->getConfig()->get( 'ShowUpdatedMarker' )
+				? $this->getTitle()->getNotificationTimestamp( $this->getUser() )
+				: false;
+
+			$s = $this->historyLine(
+				$this->lastRow, $row, $notifTimestamp, $latest, $firstInList );
 		} else {
 			$s = '';
 		}
@@ -443,6 +452,10 @@ class HistoryPager extends ReverseChronologicalPager {
 	}
 
 	function doBatchLookups() {
+		if ( !Hooks::run( 'PageHistoryPager::doBatchLookups', array( $this, $this->mResult ) ) ) {
+			return;
+		}
+
 		# Do a link batch query
 		$this->mResult->seek( 0 );
 		$batch = new LinkBatch();
@@ -479,6 +492,7 @@ class HistoryPager extends ReverseChronologicalPager {
 			'id' => 'mw-history-compare' ) ) . "\n";
 		$s .= Html::hidden( 'title', $this->getTitle()->getPrefixedDBkey() ) . "\n";
 		$s .= Html::hidden( 'action', 'historysubmit' ) . "\n";
+		$s .= Html::hidden( 'type', 'revision' ) . "\n";
 
 		// Button container stored in $this->buttons for re-use in getEndBody()
 		$this->buttons = '<div>';
@@ -489,8 +503,17 @@ class HistoryPager extends ReverseChronologicalPager {
 			$attrs
 		) . "\n";
 
-		if ( $this->getUser()->isAllowed( 'deleterevision' ) ) {
-			$this->buttons .= $this->getRevisionButton( 'revisiondelete', 'showhideselectedversions' );
+		$user = $this->getUser();
+		$actionButtons = '';
+		if ( $user->isAllowed( 'deleterevision' ) ) {
+			$actionButtons .= $this->getRevisionButton( 'revisiondelete', 'showhideselectedversions' );
+		}
+		if ( $this->showTagEditUI ) {
+			$actionButtons .= $this->getRevisionButton( 'editchangetags', 'history-edit-tags' );
+		}
+		if ( $actionButtons ) {
+			$this->buttons .= Xml::tags( 'div', array( 'class' =>
+				'mw-history-revisionactions' ), $actionButtons );
 		}
 		$this->buttons .= '</div>';
 
@@ -532,8 +555,13 @@ class HistoryPager extends ReverseChronologicalPager {
 				$next = $this->mPastTheEndRow;
 			}
 			$this->counter++;
-			$s = $this->historyLine( $this->lastRow, $next,
-				$this->getTitle()->getNotificationTimestamp( $this->getUser() ), $latest, $firstInList );
+
+			$notifTimestamp = $this->getConfig()->get( 'ShowUpdatedMarker' )
+				? $this->getTitle()->getNotificationTimestamp( $this->getUser() )
+				: false;
+
+			$s = $this->historyLine(
+				$this->lastRow, $next, $notifTimestamp, $latest, $firstInList );
 		} else {
 			$s = '';
 		}
@@ -606,11 +634,14 @@ class HistoryPager extends ReverseChronologicalPager {
 
 		$del = '';
 		$user = $this->getUser();
-		// Show checkboxes for each revision
-		if ( $user->isAllowed( 'deleterevision' ) ) {
+		$canRevDelete = $user->isAllowed( 'deleterevision' );
+		// Show checkboxes for each revision, to allow for revision deletion and
+		// change tags
+		if ( $canRevDelete || $this->showTagEditUI ) {
 			$this->preventClickjacking();
-			// If revision was hidden from sysops, disable the checkbox
-			if ( !$rev->userCan( Revision::DELETED_RESTRICTED, $user ) ) {
+			// If revision was hidden from sysops and we don't need the checkbox
+			// for anything else, disable it
+			if ( !$this->showTagEditUI && !$rev->userCan( Revision::DELETED_RESTRICTED, $user ) ) {
 				$del = Xml::check( 'deleterevisions', false, array( 'disabled' => 'disabled' ) );
 			// Otherwise, enable the checkbox...
 			} else {

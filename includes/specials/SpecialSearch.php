@@ -47,7 +47,10 @@ class SpecialSearch extends SpecialPage {
 	/** @var array For links */
 	protected $extraParams = array();
 
-	/** @var string No idea, apparently used by some other classes */
+	/**
+	 * @var string The prefix url parameter. Set on the searcher and the
+	 * is expected to treat it as prefix filter on titles.
+	 */
 	protected $mPrefix;
 
 	/**
@@ -64,6 +67,17 @@ class SpecialSearch extends SpecialPage {
 	 * @var string
 	 */
 	protected $fulltext;
+
+	/**
+	 * @var bool
+	 */
+	protected $runSuggestion = true;
+
+	/**
+	 * Names of the wikis, in format: Interwiki prefix -> caption
+	 * @var array
+	 */
+	protected $customCaptions;
 
 	const NAMESPACES_CURRENT = 'sense';
 
@@ -85,6 +99,7 @@ class SpecialSearch extends SpecialPage {
 			'mediawiki.special', 'mediawiki.special.search', 'mediawiki.ui', 'mediawiki.ui.button',
 			'mediawiki.ui.input',
 		) );
+		$this->addHelpLink( 'Help:Searching' );
 
 		// Strip underscores from title parameter; most of the time we'll want
 		// text form here. But don't strip underscores from actual text params!
@@ -107,6 +122,7 @@ class SpecialSearch extends SpecialPage {
 			return;
 		}
 
+		$out->addJsConfigVars( array( 'searchTerm' => $search ) );
 		$this->searchEngineType = $request->getVal( 'srbackend' );
 
 		if ( $request->getVal( 'fulltext' )
@@ -166,6 +182,7 @@ class SpecialSearch extends SpecialPage {
 		}
 
 		$this->fulltext = $request->getVal( 'fulltext' );
+		$this->runSuggestion = (bool)$request->getVal( 'runsuggestion', true );
 		$this->profile = $profile;
 	}
 
@@ -207,11 +224,11 @@ class SpecialSearch extends SpecialPage {
 		global $wgContLang;
 
 		$search = $this->getSearchEngine();
+		$search->setFeatureData( 'rewrite', $this->runSuggestion );
 		$search->setLimitOffset( $this->limit, $this->offset );
 		$search->setNamespaces( $this->namespaces );
 		$search->prefix = $this->mPrefix;
 		$term = $search->transformSearchTerm( $term );
-		$didYouMeanHtml = '';
 
 		Hooks::run( 'SpecialSearchSetupEngine', array( $this, $this->profile, $search ) );
 
@@ -262,37 +279,13 @@ class SpecialSearch extends SpecialPage {
 		}
 
 		// did you mean... suggestions
-		if ( $showSuggestion && $textMatches && !$textStatus && $textMatches->hasSuggestion() ) {
-			# mirror Go/Search behavior of original request ..
-			$didYouMeanParams = array( 'search' => $textMatches->getSuggestionQuery() );
-
-			if ( $this->fulltext != null ) {
-				$didYouMeanParams['fulltext'] = $this->fulltext;
+		$didYouMeanHtml = '';
+		if ( $showSuggestion && $textMatches && !$textStatus ) {
+			if ( $textMatches->hasRewrittenQuery() ) {
+				$didYouMeanHtml = $this->getDidYouMeanRewrittenHtml( $term, $textMatches );
+			} elseif ( $textMatches->hasSuggestion() ) {
+				$didYouMeanHtml = $this->getDidYouMeanHtml( $textMatches );
 			}
-
-			$stParams = array_merge(
-				$didYouMeanParams,
-				$this->powerSearchOptions()
-			);
-
-			$suggestionSnippet = $textMatches->getSuggestionSnippet();
-
-			if ( $suggestionSnippet == '' ) {
-				$suggestionSnippet = null;
-			}
-
-			$suggestLink = Linker::linkKnown(
-				$this->getPageTitle(),
-				$suggestionSnippet,
-				array(),
-				$stParams
-			);
-
-			# html of did you mean... search suggestion link
-			$didYouMeanHtml =
-				Xml::openElement( 'div', array( 'class' => 'searchdidyoumean' ) ) .
-				$this->msg( 'search-suggest' )->rawParams( $suggestLink )->text() .
-				Xml::closeElement( 'div' );
 		}
 
 		if ( !Hooks::run( 'SpecialSearchResultsPrepend', array( $this, $out, $term ) ) ) {
@@ -381,32 +374,160 @@ class SpecialSearch extends SpecialPage {
 				$out->wrapWikiMsg( "==$1==\n", 'textmatches' );
 			}
 
-			// show interwiki results if any
-			if ( $textMatches->hasInterwikiResults() ) {
-				$out->addHTML( $this->showInterwiki( $textMatches->getInterwikiResults(), $term ) );
-			}
 			// show results
 			if ( $numTextMatches > 0 ) {
 				$out->addHTML( $this->showMatches( $textMatches ) );
 			}
 
-			$textMatches->free();
+			// show secondary interwiki results if any
+			if ( $textMatches->hasInterwikiResults( SearchResultSet::SECONDARY_RESULTS ) ) {
+				$out->addHTML( $this->showInterwiki( $textMatches->getInterwikiResults(
+						SearchResultSet::SECONDARY_RESULTS ), $term ) );
+			}
 		}
+
+		$hasOtherResults = $textMatches &&
+			$textMatches->hasInterwikiResults( SearchResultSet::INLINE_RESULTS );
+
 		if ( $num === 0 ) {
 			if ( $textStatus ) {
 				$out->addHTML( '<div class="error">' .
 					$textStatus->getMessage( 'search-error' ) . '</div>' );
 			} else {
-				$out->wrapWikiMsg( "<p class=\"mw-search-nonefound\">\n$1</p>",
-					array( 'search-nonefound', wfEscapeWikiText( $term ) ) );
 				$this->showCreateLink( $title, $num, $titleMatches, $textMatches );
+				$out->wrapWikiMsg( "<p class=\"mw-search-nonefound\">\n$1</p>",
+					array( $hasOtherResults ? 'search-nonefound-thiswiki' : 'search-nonefound',
+							wfEscapeWikiText( $term )
+					) );
 			}
 		}
-		$out->addHtml( "</div>" );
+
+		if ( $hasOtherResults ) {
+			foreach ( $textMatches->getInterwikiResults( SearchResultSet::INLINE_RESULTS )
+						as $interwiki => $interwikiResult ) {
+				if ( $interwikiResult instanceof Status || $interwikiResult->numRows() == 0 ) {
+					// ignore bad interwikis for now
+					continue;
+				}
+				// TODO: wiki header
+				$out->addHTML( $this->showMatches( $interwikiResult, $interwiki ) );
+			}
+		}
+
+		if ( $textMatches ) {
+			$textMatches->free();
+		}
+
+		$out->addHTML( '<div class="visualClear"></div>' );
 
 		if ( $prevnext ) {
 			$out->addHTML( "<p class='mw-search-pager-bottom'>{$prevnext}</p>\n" );
 		}
+
+		$out->addHtml( "</div>" );
+
+		Hooks::run( 'SpecialSearchResultsAppend', array( $this, $out, $term ) );
+
+	}
+
+	/**
+	 * Produce wiki header for interwiki results
+	 * @param string $interwiki Interwiki name
+	 * @param SearchResultSet $interwikiResult The result set
+	 * @return string
+	 */
+	protected function interwikiHeader( $interwiki, $interwikiResult ) {
+		// TODO: we need to figure out how to name wikis correctly
+		$wikiMsg = $this->msg( 'search-interwiki-results-' . $interwiki )->parse();
+		return "<p class=\"mw-search-interwiki-header\">\n$wikiMsg</p>";
+	}
+
+	/**
+	 * Decide if the suggested query should be run, and it's results returned
+	 * instead of the provided $textMatches
+	 *
+	 * @param SearchResultSet $textMatches The results of a users query
+	 * @return bool
+	 */
+	protected function shouldRunSuggestedQuery( SearchResultSet $textMatches ) {
+		if ( !$this->runSuggestion ||
+			!$textMatches->hasSuggestion() ||
+			$textMatches->numRows() > 0 ||
+			$textMatches->searchContainedSyntax()
+		) {
+			return false;
+		}
+
+		return $this->getConfig()->get( 'SearchRunSuggestedQuery' );
+	}
+
+	/**
+	 * Generates HTML shown to the user when we have a suggestion about a query
+	 * that might give more results than their current query.
+	 */
+	protected function getDidYouMeanHtml( SearchResultSet $textMatches ) {
+		# mirror Go/Search behavior of original request ..
+		$params = array( 'search' => $textMatches->getSuggestionQuery() );
+		if ( $this->fulltext != null ) {
+			$params['fulltext'] = $this->fulltext;
+		}
+		$stParams = array_merge( $params, $this->powerSearchOptions() );
+
+		$suggest = Linker::linkKnown(
+			$this->getPageTitle(),
+			$textMatches->getSuggestionSnippet() ?: null,
+			array( 'id' => 'mw-search-DYM-suggestion' ),
+			$stParams
+		);
+
+		# HTML of did you mean... search suggestion link
+		return Html::rawElement(
+			'div',
+			array( 'class' => 'searchdidyoumean' ),
+			$this->msg( 'search-suggest' )->rawParams( $suggest )->parse()
+		);
+	}
+
+	/**
+	 * Generates HTML shown to user when their query has been internally rewritten,
+	 * and the results of the rewritten query are being returned.
+	 *
+	 * @param string $term The users search input
+	 * @param SearchResultSet $textMatches The response to the users initial search request
+	 * @return string HTML linking the user to their original $term query, and the one
+	 *  suggested by $textMatches.
+	 */
+	protected function getDidYouMeanRewrittenHtml( $term, SearchResultSet $textMatches ) {
+		// Showing results for '$rewritten'
+		// Search instead for '$orig'
+
+		$params = array( 'search' => $textMatches->getQueryAfterRewrite() );
+		if ( $this->fulltext != null ) {
+			$params['fulltext'] = $this->fulltext;
+		}
+		$stParams = array_merge( $params, $this->powerSearchOptions() );
+
+		$rewritten = Linker::linkKnown(
+			$this->getPageTitle(),
+			$textMatches->getQueryAfterRewriteSnippet() ?: null,
+			array( 'id' => 'mw-search-DYM-rewritten' ),
+			$stParams
+		);
+
+		$stParams['search'] = $term;
+		$stParams['runsuggestion'] = 0;
+		$original = Linker::linkKnown(
+			$this->getPageTitle(),
+			htmlspecialchars( $term ),
+			array( 'id' => 'mw-search-DYM-original' ),
+			$stParams
+		);
+
+		return Html::rawElement(
+			'div',
+			array( 'class' => 'searchdidyoumean' ),
+			$this->msg( 'search-rewritten' )->rawParams( $rewritten, $original )->escaped()
+		);
 	}
 
 	/**
@@ -533,7 +654,7 @@ class SpecialSearch extends SpecialPage {
 				$request->getVal( 'nsRemember' ),
 				'searchnamespace',
 				$request
-			)
+			) && !wfReadOnly()
 		) {
 			// Reset namespace preferences: namespaces are not searched
 			// when they're not mentioned in the URL parameters.
@@ -557,18 +678,25 @@ class SpecialSearch extends SpecialPage {
 	 * Show whole set of results
 	 *
 	 * @param SearchResultSet $matches
+	 * @param string $interwiki Interwiki name
 	 *
 	 * @return string
 	 */
-	protected function showMatches( &$matches ) {
+	protected function showMatches( &$matches, $interwiki = null ) {
 		global $wgContLang;
 
 		$terms = $wgContLang->convertForSearchResult( $matches->termMatches() );
-
-		$out = "<ul class='mw-search-results'>\n";
+		$out = '';
 		$result = $matches->next();
+		$pos = $this->offset;
+
+		if ( $result && $interwiki ) {
+			$out .= $this->interwikiHeader( $interwiki, $result );
+		}
+
+		$out .= "<ul class='mw-search-results'>\n";
 		while ( $result ) {
-			$out .= $this->showHit( $result, $terms );
+			$out .= $this->showHit( $result, $terms, ++$pos );
 			$result = $matches->next();
 		}
 		$out .= "</ul>\n";
@@ -584,10 +712,11 @@ class SpecialSearch extends SpecialPage {
 	 *
 	 * @param SearchResult $result
 	 * @param array $terms Terms to highlight
+	 * @param int $position Position within the search results, including offset.
 	 *
 	 * @return string
 	 */
-	protected function showHit( $result, $terms ) {
+	protected function showHit( $result, $terms, $position ) {
 
 		if ( $result->isBrokenTitle() ) {
 			return '';
@@ -602,18 +731,21 @@ class SpecialSearch extends SpecialPage {
 		}
 
 		$link_t = clone $title;
+		$query = array();
 
 		Hooks::run( 'ShowSearchHitTitle',
-			array( &$link_t, &$titleSnippet, $result, $terms, $this ) );
+			array( &$link_t, &$titleSnippet, $result, $terms, $this, &$query ) );
 
 		$link = Linker::linkKnown(
 			$link_t,
-			$titleSnippet
+			$titleSnippet,
+			array( 'data-serp-pos' => $position ), // HTML attributes
+			$query
 		);
 
-		//If page content is not readable, just return the title.
-		//This is not quite safe, but better than showing excerpts from non-readable pages
-		//Note that hiding the entry entirely would screw up paging.
+		// If page content is not readable, just return the title.
+		// This is not quite safe, but better than showing excerpts from non-readable pages
+		// Note that hiding the entry entirely would screw up paging.
 		if ( !$title->userCan( 'read', $this->getUser() ) ) {
 			return "<li>{$link}</li>\n";
 		}
@@ -721,6 +853,7 @@ class SpecialSearch extends SpecialPage {
 		$html = null;
 
 		$score = '';
+		$related = '';
 		if ( Hooks::run( 'ShowSearchHit', array(
 			$this, $result, $terms,
 			&$link, &$redirect, &$section, &$extract,
@@ -734,6 +867,23 @@ class SpecialSearch extends SpecialPage {
 		}
 
 		return $html;
+	}
+
+	/**
+	 * Extract custom captions from search-interwiki-custom message
+	 */
+	protected function getCustomCaptions() {
+		if ( is_null( $this->customCaptions ) ) {
+			$this->customCaptions = array();
+			// format per line <iwprefix>:<caption>
+			$customLines = explode( "\n", $this->msg( 'search-interwiki-custom' )->text() );
+			foreach ( $customLines as $line ) {
+				$parts = explode( ":", $line, 2 );
+				if ( count( $parts ) == 2 ) { // validate line
+					$this->customCaptions[$parts[0]] = $parts[1];
+				}
+			}
+		}
 	}
 
 	/**
@@ -752,15 +902,7 @@ class SpecialSearch extends SpecialPage {
 		$out .= "<ul class='mw-search-iwresults'>\n";
 
 		// work out custom project captions
-		$customCaptions = array();
-		// format per line <iwprefix>:<caption>
-		$customLines = explode( "\n", $this->msg( 'search-interwiki-custom' )->text() );
-		foreach ( $customLines as $line ) {
-			$parts = explode( ":", $line, 2 );
-			if ( count( $parts ) == 2 ) { // validate line
-				$customCaptions[$parts[0]] = $parts[1];
-			}
-		}
+		$this->getCustomCaptions();
 
 		if ( !is_array( $matches ) ) {
 			$matches = array( $matches );
@@ -770,7 +912,7 @@ class SpecialSearch extends SpecialPage {
 			$prev = null;
 			$result = $set->next();
 			while ( $result ) {
-				$out .= $this->showInterwikiHit( $result, $prev, $query, $customCaptions );
+				$out .= $this->showInterwikiHit( $result, $prev, $query );
 				$prev = $result->getInterwikiPrefix();
 				$result = $set->next();
 			}
@@ -791,11 +933,10 @@ class SpecialSearch extends SpecialPage {
 	 * @param SearchResult $result
 	 * @param string $lastInterwiki
 	 * @param string $query
-	 * @param array $customCaptions Interwiki prefix -> caption
 	 *
 	 * @return string
 	 */
-	protected function showInterwikiHit( $result, $lastInterwiki, $query, $customCaptions ) {
+	protected function showInterwikiHit( $result, $lastInterwiki, $query ) {
 
 		if ( $result->isBrokenTitle() ) {
 			return '';
@@ -832,9 +973,9 @@ class SpecialSearch extends SpecialPage {
 		$out = "";
 		// display project name
 		if ( is_null( $lastInterwiki ) || $lastInterwiki != $title->getInterwiki() ) {
-			if ( array_key_exists( $title->getInterwiki(), $customCaptions ) ) {
+			if ( array_key_exists( $title->getInterwiki(), $this->customCaptions ) ) {
 				// captions from 'search-interwiki-custom'
-				$caption = $customCaptions[$title->getInterwiki()];
+				$caption = $this->customCaptions[$title->getInterwiki()];
 			} else {
 				// default is to show the hostname of the other wiki which might suck
 				// if there are many wikis on one hostname

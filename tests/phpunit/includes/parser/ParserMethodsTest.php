@@ -1,5 +1,9 @@
 <?php
 
+/**
+ * @group Database
+ */
+
 class ParserMethodsTest extends MediaWikiLangTestCase {
 
 	public static function providePreSaveTransform() {
@@ -67,7 +71,8 @@ class ParserMethodsTest extends MediaWikiLangTestCase {
 
 	/**
 	 * @expectedException MWException
-	 * @expectedExceptionMessage Parser state cleared while parsing. Did you call Parser::parse recursively?
+	 * @expectedExceptionMessage Parser state cleared while parsing.
+	 *  Did you call Parser::parse recursively?
 	 * @covers Parser::lock
 	 */
 	public function testRecursiveParse() {

@@ -216,7 +216,7 @@ class ApiQueryAllImages extends ApiQueryGeneratorBase {
 			if ( !$this->validateSha1Hash( $sha1 ) ) {
 				$this->dieUsage( 'The SHA1 hash provided is not valid', 'invalidsha1hash' );
 			}
-			$sha1 = wfBaseConvert( $sha1, 16, 36, 31 );
+			$sha1 = Wikimedia\base_convert( $sha1, 16, 36, 31 );
 		} elseif ( isset( $params['sha1base36'] ) ) {
 			$sha1 = strtolower( $params['sha1base36'] );
 			if ( !$this->validateSha1Base36Hash( $sha1 ) ) {
@@ -308,7 +308,7 @@ class ApiQueryAllImages extends ApiQueryGeneratorBase {
 		}
 
 		if ( is_null( $resultPageSet ) ) {
-			$result->setIndexedTagName_internal( array( 'query', $this->getModuleName() ), 'img' );
+			$result->addIndexedTagName( array( 'query', $this->getModuleName() ), 'img' );
 		} else {
 			$resultPageSet->populateFromTitles( $titles );
 		}
@@ -350,7 +350,8 @@ class ApiQueryAllImages extends ApiQueryGeneratorBase {
 				ApiBase::PARAM_DFLT => 'timestamp|url',
 				ApiBase::PARAM_ISMULTI => true,
 				ApiBase::PARAM_HELP_MSG => 'apihelp-query+imageinfo-param-prop',
-				ApiBase::PARAM_HELP_MSG_PER_VALUE => ApiQueryImageInfo::getPropertyMessages( $this->propertyFilter ),
+				ApiBase::PARAM_HELP_MSG_PER_VALUE =>
+					ApiQueryImageInfo::getPropertyMessages( $this->propertyFilter ),
 			),
 			'prefix' => null,
 			'minsize' => array(
@@ -373,7 +374,6 @@ class ApiQueryAllImages extends ApiQueryGeneratorBase {
 				)
 			),
 			'mime' => array(
-				ApiBase::PARAM_DFLT => null,
 				ApiBase::PARAM_ISMULTI => true,
 			),
 			'limit' => array(

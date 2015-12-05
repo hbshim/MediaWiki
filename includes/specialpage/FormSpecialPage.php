@@ -89,11 +89,18 @@ abstract class FormSpecialPage extends SpecialPage {
 	 * @return HTMLForm|null
 	 */
 	protected function getForm() {
-		$this->fields = $this->getFormFields();
-
-		$form = HTMLForm::factory( $this->getDisplayFormat(), $this->fields, $this->getContext(), $this->getMessagePrefix() );
+		$form = HTMLForm::factory(
+			$this->getDisplayFormat(),
+			$this->getFormFields(),
+			$this->getContext(),
+			$this->getMessagePrefix()
+		);
 		$form->setSubmitCallback( array( $this, 'onSubmit' ) );
-		$form->setWrapperLegendMsg( $this->getMessagePrefix() . '-legend' );
+		if ( $this->getDisplayFormat() !== 'ooui' ) {
+			// No legend and wrapper by default in OOUI forms, but can be set manually
+			// from alterForm()
+			$form->setWrapperLegendMsg( $this->getMessagePrefix() . '-legend' );
+		}
 
 		$headerMsg = $this->msg( $this->getMessagePrefix() . '-text' );
 		if ( !$headerMsg->isDisabled() ) {
@@ -162,7 +169,6 @@ abstract class FormSpecialPage extends SpecialPage {
 	 * Failures here must throw subclasses of ErrorPageError.
 	 * @param User $user
 	 * @throws UserBlockedError
-	 * @return bool True
 	 */
 	protected function checkExecutePermissions( User $user ) {
 		$this->checkPermissions();
@@ -175,8 +181,6 @@ abstract class FormSpecialPage extends SpecialPage {
 		if ( $this->requiresWrite() ) {
 			$this->checkReadOnly();
 		}
-
-		return true;
 	}
 
 	/**

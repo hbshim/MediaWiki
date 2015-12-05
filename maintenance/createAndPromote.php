@@ -43,6 +43,14 @@ class CreateAndPromote extends Maintenance {
 		foreach ( self::$permitRoles as $role ) {
 			$this->addOption( $role, "Add the account to the {$role} group" );
 		}
+
+		$this->addOption(
+			'custom-groups',
+			'Comma-separated list of groups to add the user to',
+			false,
+			true
+		);
+
 		$this->addArg( "username", "Username of new user" );
 		$this->addArg( "password", "Password to set (not required if --force is used)", false );
 	}
@@ -69,8 +77,19 @@ class CreateAndPromote extends Maintenance {
 			$inGroups = $user->getGroups();
 		}
 
+		$groups = array_filter( self::$permitRoles, array( $this, 'hasOption' ) );
+		if ( $this->hasOption( 'custom-groups' ) ) {
+			$customGroupsText = $this->getOption( 'custom-groups' );
+			if ( $customGroupsText !== '' ) {
+				$customGroups = explode( ',', $customGroupsText );
+				foreach ( $customGroups as $customGroup ) {
+					$groups[] = trim( $customGroup );
+				}
+			}
+		}
+
 		$promotions = array_diff(
-			array_filter( self::$permitRoles, array( $this, 'hasOption' ) ),
+			$groups,
 			$inGroups
 		);
 
@@ -87,6 +106,12 @@ class CreateAndPromote extends Maintenance {
 			}
 		}
 
+		if ( !$exists ) {
+			# Insert the account into the database
+			$user->addToDatabase();
+			$user->saveSettings();
+		}
+
 		if ( $password ) {
 			# Try to set the password
 			try {
@@ -98,12 +123,6 @@ class CreateAndPromote extends Maintenance {
 			} catch ( PasswordError $pwe ) {
 				$this->error( $pwe->getText(), true );
 			}
-		}
-
-		if ( !$exists ) {
-			# Insert the account into the database
-			$user->addToDatabase();
-			$user->saveSettings();
 		}
 
 		# Promote user

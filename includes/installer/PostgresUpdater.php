@@ -250,7 +250,8 @@ class PostgresUpdater extends DatabaseUpdater {
 			array( 'addPgIndex', 'recentchanges', 'rc_timestamp_bot', '(rc_timestamp) WHERE rc_bot = 0' ),
 			array( 'addPgIndex', 'templatelinks', 'templatelinks_from', '(tl_from)' ),
 			array( 'addPgIndex', 'watchlist', 'wl_user', '(wl_user)' ),
-			array( 'addPgIndex', 'watchlist', 'wl_user_notificationtimestamp', '(wl_user, wl_notificationtimestamp)' ),
+			array( 'addPgIndex', 'watchlist', 'wl_user_notificationtimestamp',
+				'(wl_user, wl_notificationtimestamp)' ),
 			array( 'addPgIndex', 'logging', 'logging_user_type_time',
 				'(log_user, log_type, log_timestamp)' ),
 			array( 'addPgIndex', 'logging', 'logging_page_id_time', '(log_page,log_timestamp)' ),
@@ -407,6 +408,8 @@ class PostgresUpdater extends DatabaseUpdater {
 			array( 'addPgField', 'mwuser', 'user_password_expires', 'TIMESTAMPTZ NULL' ),
 			array( 'changeFieldPurgeTable', 'l10n_cache', 'lc_value', 'bytea',
 				"replace(lc_value,'\','\\\\')::bytea" ),
+			// 1.23.9
+			array( 'rebuildTextSearch' ),
 
 			// 1.24
 			array( 'addPgField', 'page_props', 'pp_sortkey', 'float NULL' ),
@@ -509,7 +512,8 @@ END;
 		if ( !$res ) {
 			return null;
 		}
-		if ( !( $r = $this->db->fetchRow( $res ) ) ) {
+		$r = $this->db->fetchRow( $res );
+		if ( !$r ) {
 			return null;
 		}
 
@@ -529,7 +533,8 @@ END;
 			if ( !$r2 ) {
 				return null;
 			}
-			if ( !( $row2 = $this->db->fetchRow( $r2 ) ) ) {
+			$row2 = $this->db->fetchRow( $r2 );
+			if ( !$row2 ) {
 				return null;
 			}
 			$colnames[] = $row2[0];
@@ -552,7 +557,8 @@ END;
 				$this->db->addQuotes( $fkey )
 			)
 		);
-		if ( !( $row = $this->db->fetchRow( $r ) ) ) {
+		$row = $this->db->fetchRow( $r );
+		if ( !$row ) {
 			return null;
 		}
 
@@ -689,8 +695,8 @@ END;
 	}
 
 	protected function changeFieldPurgeTable( $table, $field, $newtype, $default ) {
-		## For a cache table, empty it if the field needs to be changed, because the old contents
-		## may be corrupted.  If the column is already the desired type, refrain from purging.
+		# # For a cache table, empty it if the field needs to be changed, because the old contents
+		# # may be corrupted.  If the column is already the desired type, refrain from purging.
 		$fi = $this->db->fieldInfo( $table, $field );
 		if ( is_null( $fi ) ) {
 			$this->output( "...ERROR: expected column $table.$field to exist\n" );
@@ -946,5 +952,14 @@ END;
 		if ( $this->db->getServerVersion() >= 8.3 ) {
 			$this->applyPatch( 'patch-tsearch2funcs.sql', false, "Rewriting tsearch2 triggers" );
 		}
+	}
+
+	protected function rebuildTextSearch() {
+		if ( $this->updateRowExists( 'patch-textsearch_bug66650.sql' ) ) {
+			$this->output( "...bug 66650 already fixed or not applicable.\n" );
+			return true;
+		};
+		$this->applyPatch( 'patch-textsearch_bug66650.sql', false,
+			'Rebuilding text search for bug 66650' );
 	}
 }

@@ -64,7 +64,16 @@ class StatusTest extends MediaWikiLangTestCase {
 		$this->assertTrue( $status->ok );
 		$status = Status::newFatal( 'foo', 1, 2 );
 		$this->assertFalse( $status->ok );
-		$this->assertArrayEquals( array( array( 'type' => 'error', 'message' => 'foo', 'params' => array( 1, 2 ) ) ), $status->errors );
+		$this->assertArrayEquals(
+			array(
+				array(
+					'type' => 'error',
+					'message' => 'foo',
+					'params' => array( 1, 2 )
+				)
+			),
+			$status->errors
+		);
 	}
 
 	/**
@@ -372,7 +381,7 @@ class StatusTest extends MediaWikiLangTestCase {
 		);
 
 		$status = new Status();
-		$status->warning( new Message( 'fooBar!', array( 'foo', 'bar' )  ) );
+		$status->warning( new Message( 'fooBar!', array( 'foo', 'bar' ) ) );
 		$testCases['1MessageWarning'] = array(
 			$status,
 			"<fooBar!>",
@@ -439,17 +448,17 @@ class StatusTest extends MediaWikiLangTestCase {
 		// and the first call to the setUp method. Because of that you can't access any variables
 		// you create there from within a data provider."
 		// http://phpunit.de/manual/3.7/en/writing-tests-for-phpunit.html
-//		$status = new Status();
-//		$status->warning( 'fooBar!' );
-//		$status->warning( 'fooBar2!' );
-//		$testCases[ '2StringWarnings' ] = array(
-//			$status,
-//			array( new Message( 'fooBar!' ), new Message( 'fooBar2!' ) ),
-//			"* \$1\n* \$2"
-//		);
+// 		$status = new Status();
+// 		$status->warning( 'fooBar!' );
+// 		$status->warning( 'fooBar2!' );
+// 		$testCases[ '2StringWarnings' ] = array(
+// 			$status,
+// 			array( new Message( 'fooBar!' ), new Message( 'fooBar2!' ) ),
+// 			"* \$1\n* \$2"
+// 		);
 
 		$status = new Status();
-		$status->warning( new Message( 'fooBar!', array( 'foo', 'bar' )  ) );
+		$status->warning( new Message( 'fooBar!', array( 'foo', 'bar' ) ) );
 		$testCases['1MessageWarning'] = array(
 			$status,
 			array( 'foo', 'bar' ),

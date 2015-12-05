@@ -48,6 +48,16 @@ class ApiQueryPrefixSearch extends ApiQueryGeneratorBase {
 		$searcher = new TitlePrefixSearch;
 		$titles = $searcher->searchWithVariants( $search, $limit + 1, $namespaces, $offset );
 		if ( $resultPageSet ) {
+			$resultPageSet->setRedirectMergePolicy( function( array $current, array $new ) {
+				if ( !isset( $current['index'] ) || $new['index'] < $current['index'] ) {
+					$current['index'] = $new['index'];
+				}
+				return $current;
+			} );
+			if ( count( $titles ) > $limit ) {
+				$this->setContinueEnumParameter( 'offset', $offset + $params['limit'] );
+				array_pop( $titles );
+			}
 			$resultPageSet->populateFromTitles( $titles );
 			foreach ( $titles as $index => $title ) {
 				$resultPageSet->setGeneratorData( $title, array( 'index' => $index + $offset + 1 ) );
@@ -65,7 +75,7 @@ class ApiQueryPrefixSearch extends ApiQueryGeneratorBase {
 					'title' => $title->getPrefixedText(),
 				);
 				if ( $title->isSpecialPage() ) {
-					$vals['special'] = '';
+					$vals['special'] = true;
 				} else {
 					$vals['pageid'] = intval( $title->getArticleId() );
 				}
@@ -75,7 +85,7 @@ class ApiQueryPrefixSearch extends ApiQueryGeneratorBase {
 					break;
 				}
 			}
-			$result->setIndexedTagName_internal(
+			$result->addIndexedTagName(
 				array( 'query', $this->getModuleName() ), $this->getModulePrefix()
 			);
 		}

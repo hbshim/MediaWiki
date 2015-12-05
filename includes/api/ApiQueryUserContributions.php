@@ -120,7 +120,7 @@ class ApiQueryContributions extends ApiQueryBase {
 			}
 		}
 
-		$this->getResult()->setIndexedTagName_internal(
+		$this->getResult()->addIndexedTagName(
 			array( 'query', $this->getModuleName() ),
 			'item'
 		);
@@ -224,7 +224,6 @@ class ApiQueryContributions extends ApiQueryBase {
 
 		$show = $this->params['show'];
 		if ( $this->params['toponly'] ) { // deprecated/old param
-			$this->logFeatureUsage( 'list=usercontribs&uctoponly' );
 			$show[] = 'top';
 		}
 		if ( !is_null( $show ) ) {
@@ -335,15 +334,15 @@ class ApiQueryContributions extends ApiQueryBase {
 		$anyHidden = false;
 
 		if ( $row->rev_deleted & Revision::DELETED_TEXT ) {
-			$vals['texthidden'] = '';
+			$vals['texthidden'] = true;
 			$anyHidden = true;
 		}
 
 		// Any rows where we can't view the user were filtered out in the query.
-		$vals['userid'] = $row->rev_user;
+		$vals['userid'] = (int)$row->rev_user;
 		$vals['user'] = $row->rev_user_text;
 		if ( $row->rev_deleted & Revision::DELETED_USER ) {
-			$vals['userhidden'] = '';
+			$vals['userhidden'] = true;
 			$anyHidden = true;
 		}
 		if ( $this->fld_ids ) {
@@ -367,20 +366,14 @@ class ApiQueryContributions extends ApiQueryBase {
 		}
 
 		if ( $this->fld_flags ) {
-			if ( $row->rev_parent_id == 0 && !is_null( $row->rev_parent_id ) ) {
-				$vals['new'] = '';
-			}
-			if ( $row->rev_minor_edit ) {
-				$vals['minor'] = '';
-			}
-			if ( $row->page_latest == $row->rev_id ) {
-				$vals['top'] = '';
-			}
+			$vals['new'] = $row->rev_parent_id == 0 && !is_null( $row->rev_parent_id );
+			$vals['minor'] = (bool)$row->rev_minor_edit;
+			$vals['top'] = $row->page_latest == $row->rev_id;
 		}
 
 		if ( ( $this->fld_comment || $this->fld_parsedcomment ) && isset( $row->rev_comment ) ) {
 			if ( $row->rev_deleted & Revision::DELETED_COMMENT ) {
-				$vals['commenthidden'] = '';
+				$vals['commenthidden'] = true;
 				$anyHidden = true;
 			}
 
@@ -400,8 +393,8 @@ class ApiQueryContributions extends ApiQueryBase {
 			}
 		}
 
-		if ( $this->fld_patrolled && $row->rc_patrolled ) {
-			$vals['patrolled'] = '';
+		if ( $this->fld_patrolled ) {
+			$vals['patrolled'] = (bool)$row->rc_patrolled;
 		}
 
 		if ( $this->fld_size && !is_null( $row->rev_len ) ) {
@@ -421,7 +414,7 @@ class ApiQueryContributions extends ApiQueryBase {
 		if ( $this->fld_tags ) {
 			if ( $row->ts_tags ) {
 				$tags = explode( ',', $row->ts_tags );
-				$this->getResult()->setIndexedTagName( $tags, 'tag' );
+				ApiResult::setIndexedTagName( $tags, 'tag' );
 				$vals['tags'] = $tags;
 			} else {
 				$vals['tags'] = array();
@@ -429,7 +422,7 @@ class ApiQueryContributions extends ApiQueryBase {
 		}
 
 		if ( $anyHidden && $row->rev_deleted & Revision::DELETED_RESTRICTED ) {
-			$vals['suppressed'] = '';
+			$vals['suppressed'] = true;
 		}
 
 		return $vals;
@@ -497,7 +490,8 @@ class ApiQueryContributions extends ApiQueryBase {
 					'flags',
 					'patrolled',
 					'tags'
-				)
+				),
+				ApiBase::PARAM_HELP_MSG_PER_VALUE => array(),
 			),
 			'show' => array(
 				ApiBase::PARAM_ISMULTI => true,

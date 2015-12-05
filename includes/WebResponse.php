@@ -28,7 +28,7 @@
 class WebResponse {
 
 	/**
-	 * Output a HTTP header, wrapper for PHP's header()
+	 * Output an HTTP header, wrapper for PHP's header()
 	 * @param string $string Header to output
 	 * @param bool $replace Replace current similar header
 	 * @param null|int $http_response_code Forces the HTTP response code to the specified value.
@@ -54,9 +54,18 @@ class WebResponse {
 	}
 
 	/**
+	 * Output an HTTP status code header
+	 * @since 1.26
+	 * @param int $code Status code
+	 */
+	public function statusHeader( $code ) {
+		HttpStatus::header( $code );
+	}
+
+	/**
 	 * Set the browser cookie
-	 * @param string $name Name of cookie
-	 * @param string $value Value to give cookie
+	 * @param string $name The name of the cookie.
+	 * @param string $value The value to be stored in the cookie.
 	 * @param int|null $expire Unix timestamp (in seconds) when the cookie should expire.
 	 *        0 (the default) causes it to expire $wgCookieExpiration seconds from now.
 	 *        null causes it to be a session cookie.
@@ -72,7 +81,7 @@ class WebResponse {
 	 *   'prefix', 'domain', and 'secure'
 	 * @since 1.22 Replaced $prefix, $domain, and $forceSecure with $options
 	 */
-	public function setcookie( $name, $value, $expire = 0, $options = null ) {
+	public function setCookie( $name, $value, $expire = 0, $options = array() ) {
 		global $wgCookiePath, $wgCookiePrefix, $wgCookieDomain;
 		global $wgCookieSecure, $wgCookieExpiration, $wgCookieHttpOnly;
 
@@ -127,6 +136,19 @@ class WebResponse {
 				$options['httpOnly'] );
 		}
 	}
+
+	/**
+	 * Unset a browser cookie.
+	 * This sets the cookie with an empty value and an expiry set to a time in the past,
+	 * which will cause the browser to remove any cookie with the given name, domain and
+	 * path from its cookie store. Options other than these (and prefix) have no effect.
+	 * @param string $name Cookie name
+	 * @param array $options Cookie options, see {@link setCookie()}
+	 * @since 1.27
+	 */
+	public function clearCookie( $name, $options = array() ) {
+		$this->setCookie( $name, '', time() - 31536000 /* 1 year */, $options );
+	}
 }
 
 /**
@@ -163,8 +185,16 @@ class FauxResponse extends WebResponse {
 	}
 
 	/**
+	 * @since 1.26
+	 * @param int $code Status code
+	 */
+	public function statusHeader( $code ) {
+		$this->code = intval( $code );
+	}
+
+	/**
 	 * @param string $key The name of the header to get (case insensitive).
-	 * @return string
+	 * @return string|null The header value (if set); null otherwise.
 	 */
 	public function getHeader( $key ) {
 		$key = strtoupper( $key );
@@ -185,25 +215,79 @@ class FauxResponse extends WebResponse {
 	}
 
 	/**
-	 * @todo document. It just ignore optional parameters.
-	 *
-	 * @param string $name Name of cookie
-	 * @param string $value Value to give cookie
-	 * @param int $expire Number of seconds til cookie expires (Default: 0)
-	 * @param array $options Ignored
+	 * @param string $name The name of the cookie.
+	 * @param string $value The value to be stored in the cookie.
+	 * @param int|null $expire Ignored in this faux subclass.
+	 * @param array $options Ignored in this faux subclass.
 	 */
-	public function setcookie( $name, $value, $expire = 0, $options = null ) {
-		$this->cookies[$name] = $value;
+	public function setCookie( $name, $value, $expire = 0, $options = array() ) {
+		global $wgCookiePath, $wgCookiePrefix, $wgCookieDomain;
+		global $wgCookieSecure, $wgCookieExpiration, $wgCookieHttpOnly;
+
+		if ( !is_array( $options ) ) {
+			// Backwards compatibility
+			$options = array( 'prefix' => $options );
+			if ( func_num_args() >= 5 ) {
+				$options['domain'] = func_get_arg( 4 );
+			}
+			if ( func_num_args() >= 6 ) {
+				$options['secure'] = func_get_arg( 5 );
+			}
+		}
+		$options = array_filter( $options, function ( $a ) {
+			return $a !== null;
+		} ) + array(
+			'prefix' => $wgCookiePrefix,
+			'domain' => $wgCookieDomain,
+			'path' => $wgCookiePath,
+			'secure' => $wgCookieSecure,
+			'httpOnly' => $wgCookieHttpOnly,
+			'raw' => false,
+		);
+
+		if ( $expire === null ) {
+			$expire = 0; // Session cookie
+		} elseif ( $expire == 0 && $wgCookieExpiration != 0 ) {
+			$expire = time() + $wgCookieExpiration;
+		}
+
+		$this->cookies[$options['prefix'] . $name] = array(
+			'value' => (string)$value,
+			'expire' => (int)$expire,
+			'path' => (string)$options['path'],
+			'domain' => (string)$options['domain'],
+			'secure' => (bool)$options['secure'],
+			'httpOnly' => (bool)$options['httpOnly'],
+			'raw' => (bool)$options['raw'],
+		);
 	}
 
 	/**
 	 * @param string $name
-	 * @return string
+	 * @return string|null
 	 */
-	public function getcookie( $name ) {
+	public function getCookie( $name ) {
+		if ( isset( $this->cookies[$name] ) ) {
+			return $this->cookies[$name]['value'];
+		}
+		return null;
+	}
+
+	/**
+	 * @param string $name
+	 * @return array|null
+	 */
+	public function getCookieData( $name ) {
 		if ( isset( $this->cookies[$name] ) ) {
 			return $this->cookies[$name];
 		}
 		return null;
+	}
+
+	/**
+	 * @return array
+	 */
+	public function getCookies() {
+		return $this->cookies;
 	}
 }

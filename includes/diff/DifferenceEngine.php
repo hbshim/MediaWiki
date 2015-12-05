@@ -487,8 +487,7 @@ class DifferenceEngine extends ContextSource {
 						'rc_this_oldid' => $this->mNewid,
 						'rc_patrolled' => 0
 					),
-					__METHOD__,
-					array( 'USE INDEX' => 'rc_timestamp' )
+					__METHOD__
 				);
 
 				if ( $change && !$change->getPerformer()->equals( $user ) ) {
@@ -550,7 +549,7 @@ class DifferenceEngine extends ContextSource {
 		$out = $this->getOutput();
 		$revHeader = $this->getRevisionHeader( $this->mNewRev );
 		# Add "current version as of X" title
-		$out->addHTML( "<hr class='diff-hr' />
+		$out->addHTML( "<hr class='diff-hr' id='mw-oldid' />
 		<h2 class='diff-currentversion-title'>{$revHeader}</h2>\n" );
 		# Page content may be handled by a hooked call instead...
 		# @codingStandardsIgnoreStart Ignoring long lines.
@@ -681,40 +680,36 @@ class DifferenceEngine extends ContextSource {
 	 * @return mixed (string/false)
 	 */
 	public function getDiffBody() {
-		global $wgMemc;
 		$this->mCacheHit = true;
 		// Check if the diff should be hidden from this user
 		if ( !$this->loadRevisionData() ) {
-
 			return false;
 		} elseif ( $this->mOldRev &&
 			!$this->mOldRev->userCan( Revision::DELETED_TEXT, $this->getUser() )
 		) {
-
 			return false;
 		} elseif ( $this->mNewRev &&
 			!$this->mNewRev->userCan( Revision::DELETED_TEXT, $this->getUser() )
 		) {
-
 			return false;
 		}
 		// Short-circuit
 		if ( $this->mOldRev === false || ( $this->mOldRev && $this->mNewRev
 			&& $this->mOldRev->getID() == $this->mNewRev->getID() )
 		) {
-
 			return '';
 		}
 		// Cacheable?
 		$key = false;
+		$cache = ObjectCache::getMainWANInstance();
 		if ( $this->mOldid && $this->mNewid ) {
 			$key = $this->getDiffBodyCacheKey();
 
 			// Try cache
 			if ( !$this->mRefreshCache ) {
-				$difftext = $wgMemc->get( $key );
+				$difftext = $cache->get( $key );
 				if ( $difftext ) {
-					wfIncrStats( 'diff_cache_hit' );
+					wfIncrStats( 'diff_cache.hit' );
 					$difftext = $this->localiseLineNumbers( $difftext );
 					$difftext .= "\n<!-- diff cache key $key -->\n";
 
@@ -726,7 +721,6 @@ class DifferenceEngine extends ContextSource {
 
 		// Loadtext is permission safe, this just clears out the diff
 		if ( !$this->loadText() ) {
-
 			return false;
 		}
 
@@ -734,12 +728,12 @@ class DifferenceEngine extends ContextSource {
 
 		// Save to cache for 7 days
 		if ( !Hooks::run( 'AbortDiffCache', array( &$this ) ) ) {
-			wfIncrStats( 'diff_uncacheable' );
+			wfIncrStats( 'diff_cache.uncacheable' );
 		} elseif ( $key !== false && $difftext !== false ) {
-			wfIncrStats( 'diff_cache_miss' );
-			$wgMemc->set( $key, $difftext, 7 * 86400 );
+			wfIncrStats( 'diff_cache.miss' );
+			$cache->set( $key, $difftext, 7 * 86400 );
 		} else {
-			wfIncrStats( 'diff_uncacheable' );
+			wfIncrStats( 'diff_cache.uncacheable' );
 		}
 		// Replace line numbers with the text in the user's language
 		if ( $difftext !== false ) {
@@ -859,12 +853,10 @@ class DifferenceEngine extends ContextSource {
 
 			$tempFile1 = fopen( $tempName1, "w" );
 			if ( !$tempFile1 ) {
-
 				return false;
 			}
 			$tempFile2 = fopen( $tempName2, "w" );
 			if ( !$tempFile2 ) {
-
 				return false;
 			}
 			fwrite( $tempFile1, $otext );
@@ -1040,7 +1032,7 @@ class DifferenceEngine extends ContextSource {
 			$key = $title->quickUserCan( 'edit', $user ) ? 'editold' : 'viewsourceold';
 			$msg = $this->msg( $key )->escaped();
 			$editLink = $this->msg( 'parentheses' )->rawParams(
-				Linker::linkKnown( $title, $msg, array( ), $editQuery ) )->escaped();
+				Linker::linkKnown( $title, $msg, array(), $editQuery ) )->escaped();
 			$header .= ' ' . Html::rawElement(
 				'span',
 				array( 'class' => 'mw-diff-edit' ),
@@ -1077,10 +1069,11 @@ class DifferenceEngine extends ContextSource {
 		// is often in a different language, mostly the page content language/dir
 		$tableClass = 'diff diff-contentalign-' . htmlspecialchars( $this->getDiffLang()->alignStart() );
 		$header = "<table class='$tableClass'>";
+		$userLang = htmlspecialchars( $this->getLanguage()->getHtmlCode() );
 
 		if ( !$diff && !$otitle ) {
 			$header .= "
-			<tr style='vertical-align: top;'>
+			<tr style='vertical-align: top;' lang='{$userLang}'>
 			<td class='diff-ntitle'>{$ntitle}</td>
 			</tr>";
 			$multiColspan = 1;
@@ -1099,7 +1092,7 @@ class DifferenceEngine extends ContextSource {
 			}
 			if ( $otitle || $ntitle ) {
 				$header .= "
-				<tr style='vertical-align: top;'>
+				<tr style='vertical-align: top;' lang='{$userLang}'>
 				<td colspan='$colspan' class='diff-otitle'>{$otitle}</td>
 				<td colspan='$colspan' class='diff-ntitle'>{$ntitle}</td>
 				</tr>";
@@ -1108,10 +1101,11 @@ class DifferenceEngine extends ContextSource {
 
 		if ( $multi != '' ) {
 			$header .= "<tr><td colspan='{$multiColspan}' style='text-align: center;' " .
-				"class='diff-multi'>{$multi}</td></tr>";
+				"class='diff-multi' lang='{$userLang}'>{$multi}</td></tr>";
 		}
 		if ( $notice != '' ) {
-			$header .= "<tr><td colspan='{$multiColspan}' style='text-align: center;'>{$notice}</td></tr>";
+			$header .= "<tr><td colspan='{$multiColspan}' style='text-align: center;' " .
+				"lang='{$userLang}'>{$notice}</td></tr>";
 		}
 
 		return $header . $diff . "</table>";

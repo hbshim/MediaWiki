@@ -33,12 +33,12 @@ function getAccessKeyPrefix( ua ) {
 	var profile = $.client.profile( ua ),
 		accessKeyPrefix = 'alt-';
 
-	// Opera on any platform
-	if ( profile.name === 'opera' ) {
+	// Classic Opera on any platform
+	if ( profile.name === 'opera' && profile.versionNumber < 15 ) {
 		accessKeyPrefix = 'shift-esc-';
 
-	// Chrome on any platform
-	} else if ( profile.name === 'chrome' ) {
+	// Chrome and modern Opera on any platform
+	} else if ( profile.name === 'chrome' || profile.name === 'opera' ) {
 		accessKeyPrefix = (
 			profile.platform === 'mac'
 				// Chrome on Mac
@@ -112,7 +112,7 @@ function getAccessKeyLabel( element ) {
  */
 function updateTooltipOnElement( element, titleElement ) {
 	var array = ( mw.msg( 'word-separator' ) + mw.msg( 'brackets' ) ).split( '$1' ),
-		regexp = new RegExp( $.map( array, $.escapeRE ).join( '.*?' ) + '$' ),
+		regexp = new RegExp( $.map( array, mw.RegExp.escape ).join( '.*?' ) + '$' ),
 		oldTitle = titleElement.title,
 		rawTitle = oldTitle.replace( regexp, '' ),
 		newTitle = rawTitle,
@@ -150,14 +150,14 @@ function updateTooltip( element ) {
 		if ( id ) {
 			$label = $( 'label[for="' + id + '"]' );
 			if ( $label.length === 1 ) {
-				updateTooltipOnElement( element, $label[0] );
+				updateTooltipOnElement( element, $label[ 0 ] );
 			}
 		}
 
 		// Search it as parent, because the form control can also be inside the label element itself
 		$labelParent = $element.parents( 'label' );
 		if ( $labelParent.length === 1 ) {
-			updateTooltipOnElement( element, $labelParent[0] );
+			updateTooltipOnElement( element, $labelParent[ 0 ] );
 		}
 	}
 }

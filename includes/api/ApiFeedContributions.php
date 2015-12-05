@@ -56,7 +56,8 @@ class ApiFeedContributions extends ApiBase {
 		}
 
 		$msg = wfMessage( 'Contributions' )->inContentLanguage()->text();
-		$feedTitle = $config->get( 'Sitename' ) . ' - ' . $msg . ' [' . $config->get( 'LanguageCode' ) . ']';
+		$feedTitle = $config->get( 'Sitename' ) . ' - ' . $msg .
+			' [' . $config->get( 'LanguageCode' ) . ']';
 		$feedUrl = SpecialPage::getTitleFor( 'Contributions', $params['user'] )->getFullURL();
 
 		$target = $params['user'] == 'newbies'
@@ -163,10 +164,10 @@ class ApiFeedContributions extends ApiBase {
 				// only textual content has a "source view".
 				$html = nl2br( htmlspecialchars( $content->getNativeData() ) );
 			} else {
-				//XXX: we could get an HTML representation of the content via getParserOutput, but that may
+				// XXX: we could get an HTML representation of the content via getParserOutput, but that may
 				//     contain JS magic and generally may not be suitable for inclusion in a feed.
 				//     Perhaps Content should have a getDescriptiveHtml method and/or a getSourceText method.
-				//Compare also FeedUtils::formatDiffRow.
+				// Compare also FeedUtils::formatDiffRow.
 				$html = '';
 			}
 

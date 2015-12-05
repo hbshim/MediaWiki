@@ -152,6 +152,8 @@ class SpecialUpload extends SpecialPage {
 	 * @throws UserBlockedError
 	 */
 	public function execute( $par ) {
+		$this->useTransactionalTimeLimit();
+
 		$this->setHeaders();
 		$this->outputHeader();
 
@@ -159,6 +161,8 @@ class SpecialUpload extends SpecialPage {
 		if ( !UploadBase::isEnabled() ) {
 			throw new ErrorPageError( 'uploaddisabled', 'uploaddisabledtext' );
 		}
+
+		$this->addHelpLink( 'Help:Managing files' );
 
 		# Check permissions
 		$user = $this->getUser();
@@ -259,7 +263,7 @@ class SpecialUpload extends SpecialPage {
 		}
 
 		# Give a notice if the user is uploading a file that has been deleted or moved
-		# Note that this is independent from the message 'filewasdeleted' that requires JS
+		# Note that this is independent from the message 'filewasdeleted'
 		$desiredTitleObj = Title::makeTitleSafe( NS_FILE, $this->mDesiredDestName );
 		$delNotice = ''; // empty by default
 		if ( $desiredTitleObj instanceof Title && !$desiredTitleObj->exists() ) {
@@ -355,13 +359,26 @@ class SpecialUpload extends SpecialPage {
 		$sessionKey = $this->mUpload->stashSession();
 
 		$warningHtml = '<h2>' . $this->msg( 'uploadwarning' )->escaped() . "</h2>\n"
-			. '<ul class="warning">';
+			. '<div class="warningbox"><ul>';
 		foreach ( $warnings as $warning => $args ) {
 			if ( $warning == 'badfilename' ) {
 				$this->mDesiredDestName = Title::makeTitle( NS_FILE, $args )->getText();
 			}
 			if ( $warning == 'exists' ) {
 				$msg = "\t<li>" . self::getExistsWarning( $args ) . "</li>\n";
+			} elseif ( $warning == 'was-deleted' ) {
+				# If the file existed before and was deleted, warn the user of this
+				$ltitle = SpecialPage::getTitleFor( 'Log' );
+				$llink = Linker::linkKnown(
+					$ltitle,
+					wfMessage( 'deletionlog' )->escaped(),
+					array(),
+					array(
+						'type' => 'delete',
+						'page' => Title::makeTitle( NS_FILE, $args )->getPrefixedText(),
+					)
+				);
+				$msg = "\t<li>" . wfMessage( 'filewasdeleted' )->rawParams( $llink )->parse() . "</li>\n";
 			} elseif ( $warning == 'duplicate' ) {
 				$msg = $this->getDupeWarning( $args );
 			} elseif ( $warning == 'duplicate-archive' ) {
@@ -383,7 +400,7 @@ class SpecialUpload extends SpecialPage {
 			}
 			$warningHtml .= $msg;
 		}
-		$warningHtml .= "</ul>\n";
+		$warningHtml .= "</ul></div>\n";
 		$warningHtml .= $this->msg( 'uploadwarning-text' )->parseAsBlock();
 
 		$form = $this->getUploadForm( $warningHtml, $sessionKey, /* $hideIgnoreWarning */ true );
@@ -456,6 +473,14 @@ class SpecialUpload extends SpecialPage {
 			if ( $this->showUploadWarning( $warnings ) ) {
 				return;
 			}
+		}
+
+		// This is as late as we can throttle, after expected issues have been handled
+		if ( UploadBase::isThrottled( $this->getUser() ) ) {
+			$this->showRecoverableUploadError(
+				$this->msg( 'actionthrottledtext' )->escaped()
+			);
+			return;
 		}
 
 		// Get the page text if this is not a reupload
@@ -707,19 +732,6 @@ class SpecialUpload extends SpecialPage {
 			$warning = wfMessage( 'file-thumbnail-no', $badPart )->parse();
 		} elseif ( $exists['warning'] == 'bad-prefix' ) {
 			$warning = wfMessage( 'filename-bad-prefix', $exists['prefix'] )->parse();
-		} elseif ( $exists['warning'] == 'was-deleted' ) {
-			# If the file existed before and was deleted, warn the user of this
-			$ltitle = SpecialPage::getTitleFor( 'Log' );
-			$llink = Linker::linkKnown(
-				$ltitle,
-				wfMessage( 'deletionlog' )->escaped(),
-				array(),
-				array(
-					'type' => 'delete',
-					'page' => $filename
-				)
-			);
-			$warning = wfMessage( 'filewasdeleted' )->rawParams( $llink )->parseAsBlock();
 		}
 
 		return $warning;
@@ -785,6 +797,10 @@ class UploadForm extends HTMLForm {
 	protected $mMaxUploadSize = array();
 
 	public function __construct( array $options = array(), IContextSource $context = null ) {
+		if ( $context instanceof IContextSource ) {
+			$this->setContext( $context );
+		}
+
 		$this->mWatch = !empty( $options['watch'] );
 		$this->mForReUpload = !empty( $options['forreupload'] );
 		$this->mSessionKey = isset( $options['sessionkey'] ) ? $options['sessionkey'] : '';
@@ -811,8 +827,9 @@ class UploadForm extends HTMLForm {
 
 		# Add a link to edit MediaWik:Licenses
 		if ( $this->getUser()->isAllowed( 'editinterface' ) ) {
-			$licensesLink = Linker::link(
-				Title::makeTitle( NS_MEDIAWIKI, 'Licenses' ),
+			$this->getOutput()->addModuleStyles( 'mediawiki.special' );
+			$licensesLink = Linker::linkKnown(
+				$this->msg( 'licenses' )->inContentLanguage()->getTitle(),
 				$this->msg( 'licenses-edit' )->escaped(),
 				array(),
 				array( 'action' => 'edit' )
@@ -873,14 +890,20 @@ class UploadForm extends HTMLForm {
 			);
 		}
 
-		$this->mMaxUploadSize['file'] = UploadBase::getMaxUploadSize( 'file' );
-		# Limit to upload_max_filesize unless we are running under HipHop and
-		# that setting doesn't exist
-		if ( !wfIsHHVM() ) {
-			$this->mMaxUploadSize['file'] = min( $this->mMaxUploadSize['file'],
-				wfShorthandToInteger( ini_get( 'upload_max_filesize' ) ),
-				wfShorthandToInteger( ini_get( 'post_max_size' ) )
-			);
+		$this->mMaxUploadSize['file'] = min(
+			UploadBase::getMaxUploadSize( 'file' ),
+			UploadBase::getMaxPhpUploadSize()
+		);
+
+		$help = $this->msg( 'upload-maxfilesize',
+				$this->getContext()->getLanguage()->formatSize( $this->mMaxUploadSize['file'] )
+			)->parse();
+
+		// If the user can also upload by URL, there are 2 different file size limits.
+		// This extra message helps stress which limit corresponds to what.
+		if ( $canUploadByUrl ) {
+			$help .= $this->msg( 'word-separator' )->escaped();
+			$help .= $this->msg( 'upload_source_file' )->parse();
 		}
 
 		$descriptor['UploadFile'] = array(
@@ -892,11 +915,7 @@ class UploadForm extends HTMLForm {
 			'label-message' => 'sourcefilename',
 			'upload-type' => 'File',
 			'radio' => &$radio,
-			'help' => $this->msg( 'upload-maxfilesize',
-				$this->getContext()->getLanguage()->formatSize( $this->mMaxUploadSize['file'] )
-			)->parse() .
-				$this->msg( 'word-separator' )->escaped() .
-				$this->msg( 'upload_source_file' )->escaped(),
+			'help' => $help,
 			'checked' => $selectedSourceType == 'file',
 		);
 

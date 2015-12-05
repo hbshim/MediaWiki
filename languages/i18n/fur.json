@@ -1200,7 +1200,7 @@
 	"duplicate-defaultsort": "'''Avîs:''' La clâf predeterminade par l'ordenament \"$2\" invalide la clâf predeterminade precedente \"$1\".",
 	"version": "Version",
 	"version-variables": "Variabilis",
-	"version-version": "(Version $1)",
+	"version-version": "($1)",
 	"version-license": "Licence",
 	"version-software-version": "Version",
 	"fileduplicatesearch-filename": "Non dal file:",
@@ -1237,5 +1237,6 @@
 	"expand_templates_output": "Risultât",
 	"expand_templates_ok": "Va ben",
 	"expand_templates_remove_comments": "Gjave i coments",
-	"expand_templates_preview": "Anteprime"
+	"expand_templates_preview": "Anteprime",
+	"special-characters-group-symbols": "Simbols"
 }

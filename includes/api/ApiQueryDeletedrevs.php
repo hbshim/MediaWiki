@@ -75,8 +75,9 @@ class ApiQueryDeletedrevs extends ApiQueryBase {
 			);
 		}
 
-		// If we're in JSON callback mode, no tokens can be obtained
-		if ( !is_null( $this->getMain()->getRequest()->getVal( 'callback' ) ) ) {
+		// If we're in a mode that breaks the same-origin policy, no tokens can
+		// be obtained
+		if ( $this->lacksSameOriginSecurity() ) {
 			$fld_token = false;
 		}
 
@@ -176,7 +177,7 @@ class ApiQueryDeletedrevs extends ApiQueryBase {
 
 		if ( $limit == 'max' ) {
 			$limit = $this->getMain()->canApiHighLimits() ? $botMax : $userMax;
-			$this->getResult()->setParsedLimit( $this->getModuleName(), $limit );
+			$this->getResult()->addParsedLimit( $this->getModuleName(), $limit );
 		}
 
 		$this->validateLimit( 'limit', $limit, 1, $userMax, $botMax );
@@ -319,7 +320,7 @@ class ApiQueryDeletedrevs extends ApiQueryBase {
 			}
 			if ( $fld_user || $fld_userid ) {
 				if ( $row->ar_deleted & Revision::DELETED_USER ) {
-					$rev['userhidden'] = '';
+					$rev['userhidden'] = true;
 					$anyHidden = true;
 				}
 				if ( Revision::userCanBitfield( $row->ar_deleted, Revision::DELETED_USER, $user ) ) {
@@ -327,14 +328,14 @@ class ApiQueryDeletedrevs extends ApiQueryBase {
 						$rev['user'] = $row->ar_user_text;
 					}
 					if ( $fld_userid ) {
-						$rev['userid'] = $row->ar_user;
+						$rev['userid'] = (int)$row->ar_user;
 					}
 				}
 			}
 
 			if ( $fld_comment || $fld_parsedcomment ) {
 				if ( $row->ar_deleted & Revision::DELETED_COMMENT ) {
-					$rev['commenthidden'] = '';
+					$rev['commenthidden'] = true;
 					$anyHidden = true;
 				}
 				if ( Revision::userCanBitfield( $row->ar_deleted, Revision::DELETED_COMMENT, $user ) ) {
@@ -348,20 +349,20 @@ class ApiQueryDeletedrevs extends ApiQueryBase {
 				}
 			}
 
-			if ( $fld_minor && $row->ar_minor_edit == 1 ) {
-				$rev['minor'] = '';
+			if ( $fld_minor ) {
+				$rev['minor'] = $row->ar_minor_edit == 1;
 			}
 			if ( $fld_len ) {
 				$rev['len'] = $row->ar_len;
 			}
 			if ( $fld_sha1 ) {
 				if ( $row->ar_deleted & Revision::DELETED_TEXT ) {
-					$rev['sha1hidden'] = '';
+					$rev['sha1hidden'] = true;
 					$anyHidden = true;
 				}
 				if ( Revision::userCanBitfield( $row->ar_deleted, Revision::DELETED_TEXT, $user ) ) {
 					if ( $row->ar_sha1 != '' ) {
-						$rev['sha1'] = wfBaseConvert( $row->ar_sha1, 36, 16, 40 );
+						$rev['sha1'] = Wikimedia\base_convert( $row->ar_sha1, 36, 16, 40 );
 					} else {
 						$rev['sha1'] = '';
 					}
@@ -369,15 +370,15 @@ class ApiQueryDeletedrevs extends ApiQueryBase {
 			}
 			if ( $fld_content ) {
 				if ( $row->ar_deleted & Revision::DELETED_TEXT ) {
-					$rev['texthidden'] = '';
+					$rev['texthidden'] = true;
 					$anyHidden = true;
 				}
 				if ( Revision::userCanBitfield( $row->ar_deleted, Revision::DELETED_TEXT, $user ) ) {
 					if ( isset( $row->ar_text ) && !$row->ar_text_id ) {
 						// Pre-1.5 ar_text row (if condition from Revision::newFromArchiveRow)
-						ApiResult::setContent( $rev, Revision::getRevisionText( $row, 'ar_' ) );
+						ApiResult::setContentValue( $rev, 'text', Revision::getRevisionText( $row, 'ar_' ) );
 					} else {
-						ApiResult::setContent( $rev, Revision::getRevisionText( $row ) );
+						ApiResult::setContentValue( $rev, 'text', Revision::getRevisionText( $row ) );
 					}
 				}
 			}
@@ -385,7 +386,7 @@ class ApiQueryDeletedrevs extends ApiQueryBase {
 			if ( $fld_tags ) {
 				if ( $row->ts_tags ) {
 					$tags = explode( ',', $row->ts_tags );
-					$this->getResult()->setIndexedTagName( $tags, 'tag' );
+					ApiResult::setIndexedTagName( $tags, 'tag' );
 					$rev['tags'] = $tags;
 				} else {
 					$rev['tags'] = array();
@@ -393,14 +394,14 @@ class ApiQueryDeletedrevs extends ApiQueryBase {
 			}
 
 			if ( $anyHidden && ( $row->ar_deleted & Revision::DELETED_RESTRICTED ) ) {
-				$rev['suppressed'] = '';
+				$rev['suppressed'] = true;
 			}
 
 			if ( !isset( $pageMap[$row->ar_namespace][$row->ar_title] ) ) {
 				$pageID = $newPageID++;
 				$pageMap[$row->ar_namespace][$row->ar_title] = $pageID;
 				$a['revisions'] = array( $rev );
-				$result->setIndexedTagName( $a['revisions'], 'rev' );
+				ApiResult::setIndexedTagName( $a['revisions'], 'rev' );
 				$title = Title::makeTitle( $row->ar_namespace, $row->ar_title );
 				ApiQueryBase::addTitleInfo( $a, $title );
 				if ( $fld_token ) {
@@ -424,7 +425,7 @@ class ApiQueryDeletedrevs extends ApiQueryBase {
 				break;
 			}
 		}
-		$result->setIndexedTagName_internal( array( 'query', $this->getModuleName() ), 'page' );
+		$result->addIndexedTagName( array( 'query', $this->getModuleName() ), 'page' );
 	}
 
 	public function isDeprecated() {

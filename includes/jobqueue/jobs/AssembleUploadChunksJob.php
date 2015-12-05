@@ -27,12 +27,13 @@
  * @ingroup Upload
  */
 class AssembleUploadChunksJob extends Job {
-	public function __construct( $title, $params ) {
+	public function __construct( Title $title, array $params ) {
 		parent::__construct( 'AssembleUploadChunks', $title, $params );
 		$this->removeDuplicates = true;
 	}
 
 	public function run() {
+		/** @noinspection PhpUnusedLocalVariableInspection */
 		$scope = RequestContext::importScopedSession( $this->params['session'] );
 		$context = RequestContext::getMain();
 		$user = $context->getUser();
@@ -53,7 +54,7 @@ class AssembleUploadChunksJob extends Job {
 			$upload->continueChunks(
 				$this->params['filename'],
 				$this->params['filekey'],
-				$context->getRequest()
+				new WebRequestUpload( $context->getRequest(), 'null' )
 			);
 
 			// Combine all of the chunks into a local file and upload that to a new stash file
@@ -104,7 +105,7 @@ class AssembleUploadChunksJob extends Job {
 					'status' => Status::newFatal( 'api-error-stashfailed' )
 				)
 			);
-			$this->setLastError( get_class( $e ) . ": " . $e->getText() );
+			$this->setLastError( get_class( $e ) . ": " . $e->getMessage() );
 			// To be extra robust.
 			MWExceptionHandler::rollbackMasterChangesAndLog( $e );
 

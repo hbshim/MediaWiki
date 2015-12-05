@@ -156,8 +156,8 @@ class ProtectionForm {
 		} else {
 			$value = $this->mExpirySelection[$action];
 		}
-		if ( $value == 'infinite' || $value == 'indefinite' || $value == 'infinity' ) {
-			$time = wfGetDB( DB_SLAVE )->getInfinity();
+		if ( wfIsInfinity( $value ) ) {
+			$time = 'infinity';
 		} else {
 			$unix = strtotime( $value );
 
@@ -384,7 +384,16 @@ class ProtectionForm {
 				"mwProtect-$action-expires"
 			);
 
-			$expiryFormOptions = '';
+			$expiryFormOptions = new XmlSelect(
+				"wpProtectExpirySelection-$action",
+				"mwProtectExpirySelection-$action",
+				$this->mExpirySelection[$action]
+			);
+			$expiryFormOptions->setAttribute( 'tabindex', '2' );
+			if ( $this->disabled ) {
+				$expiryFormOptions->setAttribute( 'disabled', 'disabled' );
+			}
+
 			if ( $this->mExistingExpiry[$action] ) {
 				if ( $this->mExistingExpiry[$action] == 'infinity' ) {
 					$existingExpiryMessage = $context->msg( 'protect-existing-expiry-infinity' );
@@ -392,31 +401,27 @@ class ProtectionForm {
 					$timestamp = $lang->userTimeAndDate( $this->mExistingExpiry[$action], $user );
 					$d = $lang->userDate( $this->mExistingExpiry[$action], $user );
 					$t = $lang->userTime( $this->mExistingExpiry[$action], $user );
-					$existingExpiryMessage = $context->msg( 'protect-existing-expiry', $timestamp, $d, $t );
+					$existingExpiryMessage = $context->msg(
+						'protect-existing-expiry',
+						$timestamp,
+						$d,
+						$t
+					);
 				}
-				$expiryFormOptions .=
-					Xml::option(
-						$existingExpiryMessage->text(),
-						'existing',
-						$this->mExpirySelection[$action] == 'existing'
-					) . "\n";
+				$expiryFormOptions->addOption( $existingExpiryMessage->text(), 'existing' );
 			}
 
-			$expiryFormOptions .= Xml::option(
+			$expiryFormOptions->addOption(
 				$context->msg( 'protect-othertime-op' )->text(),
-				"othertime"
-			) . "\n";
+				'othertime'
+			);
 			foreach ( explode( ',', $scExpiryOptions ) as $option ) {
 				if ( strpos( $option, ":" ) === false ) {
 					$show = $value = $option;
 				} else {
 					list( $show, $value ) = explode( ":", $option );
 				}
-				$expiryFormOptions .= Xml::option(
-					$show,
-					htmlspecialchars( $value ),
-					$this->mExpirySelection[$action] === $value
-				) . "\n";
+				$expiryFormOptions->addOption( $show, htmlspecialchars( $value ) );
 			}
 			# Add expiry dropdown
 			if ( $showProtectOptions && !$this->disabled ) {
@@ -426,12 +431,7 @@ class ProtectionForm {
 							{$mProtectexpiry}
 						</td>
 						<td class='mw-input'>" .
-							Xml::tags( 'select',
-								array(
-									'id' => "mwProtectExpirySelection-$action",
-									'name' => "wpProtectExpirySelection-$action",
-									'tabindex' => '2' ) + $this->disabledAttrib,
-								$expiryFormOptions ) .
+							$expiryFormOptions->getHTML() .
 						"</td>
 					</tr></table>";
 			}
@@ -541,9 +541,8 @@ class ProtectionForm {
 		$out .= Xml::closeElement( 'fieldset' );
 
 		if ( $user->isAllowed( 'editinterface' ) ) {
-			$title = Title::makeTitle( NS_MEDIAWIKI, 'Protect-dropdown' );
-			$link = Linker::link(
-				$title,
+			$link = Linker::linkKnown(
+				$context->msg( 'protect-dropdown' )->inContentLanguage()->getTitle(),
 				$context->msg( 'protect-edit-reasonlist' )->escaped(),
 				array(),
 				array( 'action' => 'edit' )
@@ -577,18 +576,18 @@ class ProtectionForm {
 		);
 
 		$id = 'mwProtect-level-' . $action;
-		$attribs = array(
-			'id' => $id,
-			'name' => $id,
-			'size' => count( $levels ),
-		) + $this->disabledAttrib;
 
-		$out = Xml::openElement( 'select', $attribs );
-		foreach ( $levels as $key ) {
-			$out .= Xml::option( $this->getOptionLabel( $key ), $key, $key == $selected );
+		$select = new XmlSelect( $id, $id, $selected );
+		$select->setAttribute( 'size', count( $levels ) );
+		if ( $this->disabled ) {
+			$select->setAttribute( 'disabled', 'disabled' );
 		}
-		$out .= Xml::closeElement( 'select' );
-		return $out;
+
+		foreach ( $levels as $key ) {
+			$select->addOption( $this->getOptionLabel( $key ), $key );
+		}
+
+		return $select->getHTML();
 	}
 
 	/**

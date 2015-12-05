@@ -53,17 +53,27 @@ class ForeignDBViaLBRepo extends LocalRepo {
 	}
 
 	/**
-	 * @return DatabaseBase
+	 * @return IDatabase
 	 */
 	function getMasterDB() {
 		return wfGetDB( DB_MASTER, array(), $this->wiki );
 	}
 
 	/**
-	 * @return DatabaseBase
+	 * @return IDatabase
 	 */
 	function getSlaveDB() {
 		return wfGetDB( DB_SLAVE, array(), $this->wiki );
+	}
+
+	/**
+	 * @return Closure
+	 */
+	protected function getDBFactory() {
+		$wiki = $this->wiki;
+		return function( $index ) use ( $wiki ) {
+			return wfGetDB( $index, array(), $wiki );
+		};
 	}
 
 	function hasSharedCache() {

@@ -21,6 +21,7 @@
  *
  * @file
  */
+use MediaWiki\Logger\LoggerFactory;
 
 /**
  * Unit to authenticate account registration attempts to the current wiki.
@@ -29,9 +30,12 @@
  */
 class ApiCreateAccount extends ApiBase {
 	public function execute() {
-		// If we're in JSON callback mode, no tokens can be obtained
-		if ( !is_null( $this->getMain()->getRequest()->getVal( 'callback' ) ) ) {
-			$this->dieUsage( 'Cannot create account when using a callback', 'aborted' );
+		// If we're in a mode that breaks the same-origin policy, no tokens can
+		// be obtained
+		if ( $this->lacksSameOriginSecurity() ) {
+			$this->dieUsage(
+				'Cannot create account when the same-origin policy is not applied', 'aborted'
+			);
 		}
 
 		// $loginForm->addNewaccountInternal will throw exceptions
@@ -45,7 +49,12 @@ class ApiCreateAccount extends ApiBase {
 			);
 		}
 		if ( $this->getUser()->isBlockedFromCreateAccount() ) {
-			$this->dieUsage( 'You cannot create a new account because you are blocked', 'blocked' );
+			$this->dieUsage(
+				'You cannot create a new account because you are blocked',
+				'blocked',
+				0,
+				array( 'blockinfo' => ApiQueryUserInfo::getBlockInfo( $this->getUser()->getBlock() ) )
+			);
 		}
 
 		$params = $this->extractRequestParams();
@@ -86,7 +95,11 @@ class ApiCreateAccount extends ApiBase {
 		Hooks::run( 'AddNewAccountApiForm', array( $this, $loginForm ) );
 		$loginForm->load();
 
-		$status = $loginForm->addNewaccountInternal();
+		$status = $loginForm->addNewAccountInternal();
+		LoggerFactory::getInstance( 'authmanager' )->info( 'Account creation attempt via API', array(
+			'event' => 'accountcreation',
+			'status' => $status,
+		) );
 		$result = array();
 		if ( $status->isGood() ) {
 			// Success!
@@ -105,7 +118,9 @@ class ApiCreateAccount extends ApiBase {
 					'createaccount-title',
 					'createaccount-text'
 				) );
-			} elseif ( $this->getConfig()->get( 'EmailAuthentication' ) && Sanitizer::validateEmail( $user->getEmail() ) ) {
+			} elseif ( $this->getConfig()->get( 'EmailAuthentication' ) &&
+				Sanitizer::validateEmail( $user->getEmail() )
+			) {
 				// Send out an email authentication message if needed
 				$status->merge( $user->sendConfirmationMail() );
 			}
@@ -149,9 +164,9 @@ class ApiCreateAccount extends ApiBase {
 			$warnings = $status->getErrorsByType( 'warning' );
 			if ( $warnings ) {
 				foreach ( $warnings as &$warning ) {
-					$apiResult->setIndexedTagName( $warning['params'], 'param' );
+					ApiResult::setIndexedTagName( $warning['params'], 'param' );
 				}
-				$apiResult->setIndexedTagName( $warnings, 'warning' );
+				ApiResult::setIndexedTagName( $warnings, 'warning' );
 				$result['warnings'] = $warnings;
 			}
 		} else {
@@ -183,7 +198,9 @@ class ApiCreateAccount extends ApiBase {
 				ApiBase::PARAM_TYPE => 'user',
 				ApiBase::PARAM_REQUIRED => true
 			),
-			'password' => null,
+			'password' => array(
+				ApiBase::PARAM_TYPE => 'password',
+			),
 			'domain' => null,
 			'token' => null,
 			'email' => array(

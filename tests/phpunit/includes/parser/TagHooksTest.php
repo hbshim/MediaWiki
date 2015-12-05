@@ -1,6 +1,7 @@
 <?php
 
 /**
+ * @group Database
  * @group Parser
  */
 class TagHookTest extends MediaWikiTestCase {
@@ -16,12 +17,6 @@ class TagHookTest extends MediaWikiTestCase {
 
 	public static function provideBadNames() {
 		return array( array( "foo<bar" ), array( "foo>bar" ), array( "foo\nbar" ), array( "foo\rbar" ) );
-	}
-
-	protected function setUp() {
-		parent::setUp();
-
-		$this->setMwGlobals( 'wgAlwaysUseTidy', false );
 	}
 
 	/**
@@ -89,7 +84,11 @@ class TagHookTest extends MediaWikiTestCase {
 		global $wgParserConf, $wgContLang;
 		$parser = new Parser( $wgParserConf );
 
-		$parser->setFunctionTagHook( $tag, array( $this, 'functionTagCallback' ), Parser::SFH_OBJECT_ARGS );
+		$parser->setFunctionTagHook(
+			$tag,
+			array( $this, 'functionTagCallback' ),
+			Parser::SFH_OBJECT_ARGS
+		);
 		$parser->parse(
 			"Foo<$tag>Bar</$tag>Baz",
 			Title::newFromText( 'Test' ),

@@ -3,13 +3,13 @@
 require_once __DIR__ . "/../../../maintenance/backupTextPass.inc";
 
 /**
- * Tests for page dumps of BackupDumper
+ * Tests for TextPassDumper that rely on the database
  *
  * @group Database
  * @group Dump
  * @covers TextPassDumper
  */
-class TextPassDumperTest extends DumpTestCase {
+class TextPassDumperDatabaseTest extends DumpTestCase {
 
 	// We'll add several pages, revision and texts. The following variables hold the
 	// corresponding ids.
@@ -244,7 +244,9 @@ class TextPassDumperTest extends DumpTestCase {
 			$this->fail( "Could not open stream for stderr" );
 		}
 
-		$iterations = 32; // We'll start with that many iterations of revisions in stub
+		$iterations = 32; // We'll start with that many iterations of revisions
+		// in stub. Make sure that the generated volume is above the buffer size
+		// set below. Otherwise, the checkpointing does not trigger.
 		$lastDuration = 0;
 		$minDuration = 2; // We want the dump to take at least this many seconds
 		$checkpointAfter = 0.5; // Generate checkpoint after this many seconds
@@ -262,6 +264,7 @@ class TextPassDumperTest extends DumpTestCase {
 			$dumper = new TextPassDumper( array( "--stub=file:" . $nameStub,
 				"--output=" . $checkpointFormat . ":" . $nameOutputDir . "/full",
 				"--maxtime=1" /*This is in minutes. Fixup is below*/,
+				"--buffersize=32768", // The default of 32 iterations fill up 32KB about twice
 				"--checkpointfile=checkpoint-%s-%s.xml.gz" ) );
 			$dumper->setDb( $this->db );
 			$dumper->maxTimeAllowed = $checkpointAfter; // Patching maxTime from 1 minute
@@ -298,7 +301,6 @@ class TextPassDumperTest extends DumpTestCase {
 
 		// The dump (hopefully) did take long enough to produce more than one
 		// checkpoint file.
-		//
 		// We now check all the checkpoint files for validity.
 
 		$files = scandir( $nameOutputDir );
@@ -614,4 +616,62 @@ class BackupTextPassTestModelHandler extends TextContentHandler {
 		return strtoupper( $text );
 	}
 
+}
+
+/**
+ * Tests for TextPassDumper that do not rely on the database
+ *
+ * (As the Database group is only detected at class level (not method level), we
+ * cannot bring this test case's tests into the above main test case.)
+ *
+ * @group Dump
+ * @covers TextPassDumper
+ */
+class TextPassDumperDatabaselessTest extends MediaWikiLangTestCase {
+	/**
+	 * Ensures that setting the buffer size is effective.
+	 *
+	 * @dataProvider bufferSizeProvider
+	 */
+	function testBufferSizeSetting( $expected, $size, $msg ) {
+		$dumper = new TextPassDumperAccessor( array( "--buffersize=" . $size ) );
+		$this->assertEquals( $expected, $dumper->getBufferSize(), $msg );
+	}
+
+	/**
+	 * Ensures that setting the buffer size is effective.
+	 *
+	 * @dataProvider bufferSizeProvider
+	 */
+	function bufferSizeProvider() {
+		// expected, bufferSize to initialize with, message
+		return array(
+			array( 512 * 1024, 512 * 1024, "Setting 512KB is not effective" ),
+			array( 8192, 8192, "Setting 8KB is not effective" ),
+			array( 4096, 2048, "Could set buffer size below lower bound" )
+		);
+	}
+}
+
+/**
+ * Accessor for internal state of TextPassDumper
+ *
+ * Do not warrentless add getters here.
+ */
+class TextPassDumperAccessor extends TextPassDumper {
+	/**
+	 * Gets the bufferSize.
+	 *
+	 * If bufferSize setting does not work correctly, testCheckpoint... tests
+	 * fail and point in the wrong direction. To aid in troubleshooting when
+	 * testCheckpoint... tests break at some point in the future, we test the
+	 * bufferSize setting, hence need this accessor.
+	 *
+	 * (Yes, bufferSize is internal state of the TextPassDumper, but aiding
+	 * debugging of testCheckpoint... in the future seems to be worth testing
+	 * against it nonetheless.)
+	 */
+	public function getBufferSize() {
+		return $this->bufferSize;
+	}
 }

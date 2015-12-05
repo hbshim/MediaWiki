@@ -19,20 +19,23 @@
  *
  * @file
  * @ingroup Upload
+ * @ingroup JobQueue
  */
 
 /**
  * Upload a file from the upload stash into the local file repo.
  *
  * @ingroup Upload
+ * @ingroup JobQueue
  */
 class PublishStashedFileJob extends Job {
-	public function __construct( $title, $params ) {
+	public function __construct( Title $title, array $params ) {
 		parent::__construct( 'PublishStashedFile', $title, $params );
 		$this->removeDuplicates = true;
 	}
 
 	public function run() {
+		/** @noinspection PhpUnusedLocalVariableInspection */
 		$scope = RequestContext::importScopedSession( $this->params['session'] );
 		$context = RequestContext::getMain();
 		$user = $context->getUser();
@@ -118,7 +121,7 @@ class PublishStashedFileJob extends Job {
 					'status' => Status::newFatal( 'api-error-publishfailed' )
 				)
 			);
-			$this->setLastError( get_class( $e ) . ": " . $e->getText() );
+			$this->setLastError( get_class( $e ) . ": " . $e->getMessage() );
 			// To prevent potential database referential integrity issues.
 			// See bug 32551.
 			MWExceptionHandler::rollbackMasterChangesAndLog( $e );

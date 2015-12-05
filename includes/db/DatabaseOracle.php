@@ -185,7 +185,7 @@ class ORAField implements Field {
 /**
  * @ingroup Database
  */
-class DatabaseOracle extends DatabaseBase {
+class DatabaseOracle extends Database {
 	/** @var resource */
 	protected $mLastResult = null;
 
@@ -220,9 +220,9 @@ class DatabaseOracle extends DatabaseBase {
 
 	function __destruct() {
 		if ( $this->mOpened ) {
-			wfSuppressWarnings();
+			MediaWiki\suppressWarnings();
 			$this->close();
-			wfRestoreWarnings();
+			MediaWiki\restoreWarnings();
 		}
 	}
 
@@ -306,7 +306,7 @@ class DatabaseOracle extends DatabaseBase {
 
 		$session_mode = $this->mFlags & DBO_SYSDBA ? OCI_SYSDBA : OCI_DEFAULT;
 
-		wfSuppressWarnings();
+		MediaWiki\suppressWarnings();
 		if ( $this->mFlags & DBO_PERSISTENT ) {
 			$this->mConn = oci_pconnect(
 				$this->mUser,
@@ -332,10 +332,10 @@ class DatabaseOracle extends DatabaseBase {
 				$session_mode
 			);
 		}
-		wfRestoreWarnings();
+		MediaWiki\restoreWarnings();
 
 		if ( $this->mUser != $this->mDBname ) {
-			//change current schema in session
+			// change current schema in session
 			$this->selectDB( $this->mDBname );
 		}
 
@@ -393,9 +393,10 @@ class DatabaseOracle extends DatabaseBase {
 			$explain_count
 		);
 
-		wfSuppressWarnings();
+		MediaWiki\suppressWarnings();
 
-		if ( ( $this->mLastResult = $stmt = oci_parse( $this->mConn, $sql ) ) === false ) {
+		$this->mLastResult = $stmt = oci_parse( $this->mConn, $sql );
+		if ( $stmt === false ) {
 			$e = oci_error( $this->mConn );
 			$this->reportQueryError( $e['message'], $e['code'], $sql, __METHOD__ );
 
@@ -411,7 +412,7 @@ class DatabaseOracle extends DatabaseBase {
 			}
 		}
 
-		wfRestoreWarnings();
+		MediaWiki\restoreWarnings();
 
 		if ( $explain_count > 0 ) {
 			return $this->doQuery( 'SELECT id, cardinality "ROWS" FROM plan_table ' .
@@ -637,7 +638,8 @@ class DatabaseOracle extends DatabaseBase {
 		}
 		$sql .= ')';
 
-		if ( ( $this->mLastResult = $stmt = oci_parse( $this->mConn, $sql ) ) === false ) {
+		$this->mLastResult = $stmt = oci_parse( $this->mConn, $sql );
+		if ( $stmt === false ) {
 			$e = oci_error( $this->mConn );
 			$this->reportQueryError( $e['message'], $e['code'], $sql, __METHOD__ );
 
@@ -668,7 +670,8 @@ class DatabaseOracle extends DatabaseBase {
 				}
 			} else {
 				/** @var OCI_Lob[] $lob */
-				if ( ( $lob[$col] = oci_new_descriptor( $this->mConn, OCI_D_LOB ) ) === false ) {
+				$lob[$col] = oci_new_descriptor( $this->mConn, OCI_D_LOB );
+				if ( $lob[$col] === false ) {
 					$e = oci_error( $stmt );
 					throw new DBUnexpectedError( $this, "Cannot create LOB descriptor: " . $e['message'] );
 				}
@@ -687,7 +690,7 @@ class DatabaseOracle extends DatabaseBase {
 			}
 		}
 
-		wfSuppressWarnings();
+		MediaWiki\suppressWarnings();
 
 		if ( oci_execute( $stmt, $this->execFlags() ) === false ) {
 			$e = oci_error( $stmt );
@@ -702,7 +705,7 @@ class DatabaseOracle extends DatabaseBase {
 			$this->mAffectedRows = oci_num_rows( $stmt );
 		}
 
-		wfRestoreWarnings();
+		MediaWiki\restoreWarnings();
 
 		if ( isset( $lob ) ) {
 			foreach ( $lob as $lob_v ) {
@@ -731,7 +734,8 @@ class DatabaseOracle extends DatabaseBase {
 			$srcTable = $this->tableName( $srcTable );
 		}
 
-		if ( ( $sequenceData = $this->getSequenceData( $destTable ) ) !== false &&
+		$sequenceData = $this->getSequenceData( $destTable );
+		if ( $sequenceData !== false &&
 			!isset( $varMap[$sequenceData['column']] )
 		) {
 			$varMap[$sequenceData['column']] = 'GET_SEQUENCE_VALUE(\'' . $sequenceData['sequence'] . '\')';
@@ -971,20 +975,6 @@ class DatabaseOracle extends DatabaseBase {
 		return $valuedata;
 	}
 
-	function reportQueryError( $error, $errno, $sql, $fname, $tempIgnore = false ) {
-		# Ignore errors during error handling to avoid infinite
-		# recursion
-		$ignore = $this->ignoreErrors( true );
-		++$this->mErrorCount;
-
-		if ( $ignore || $tempIgnore ) {
-			wfDebug( "SQL ERROR (ignored): $error\n" );
-			$this->ignoreErrors( $ignore );
-		} else {
-			throw new DBQueryError( $this, $error, $errno, $sql, $fname );
-		}
-	}
-
 	/**
 	 * @return string Wikitext of a link to the server software's web site
 	 */
@@ -996,12 +986,13 @@ class DatabaseOracle extends DatabaseBase {
 	 * @return string Version information from the database
 	 */
 	function getServerVersion() {
-		//better version number, fallback on driver
+		// better version number, fallback on driver
 		$rset = $this->doQuery(
 			'SELECT version FROM product_component_version ' .
 				'WHERE UPPER(product) LIKE \'ORACLE DATABASE%\''
 		);
-		if ( !( $row = $rset->fetchRow() ) ) {
+		$row = $rset->fetchRow();
+		if ( !$row ) {
 			return oci_server_version( $this->mConn );
 		}
 
@@ -1250,9 +1241,9 @@ class DatabaseOracle extends DatabaseBase {
 		}
 		$sql = 'ALTER SESSION SET CURRENT_SCHEMA=' . strtoupper( $db );
 		$stmt = oci_parse( $this->mConn, $sql );
-		wfSuppressWarnings();
+		MediaWiki\suppressWarnings();
 		$success = oci_execute( $stmt );
-		wfRestoreWarnings();
+		MediaWiki\restoreWarnings();
 		if ( !$success ) {
 			$e = oci_error( $stmt );
 			if ( $e['code'] != '1435' ) {
@@ -1442,7 +1433,8 @@ class DatabaseOracle extends DatabaseBase {
 			$sql .= ' WHERE ' . $this->makeList( $conds, LIST_AND );
 		}
 
-		if ( ( $this->mLastResult = $stmt = oci_parse( $this->mConn, $sql ) ) === false ) {
+		$this->mLastResult = $stmt = oci_parse( $this->mConn, $sql );
+		if ( $stmt === false ) {
 			$e = oci_error( $this->mConn );
 			$this->reportQueryError( $e['message'], $e['code'], $sql, __METHOD__ );
 
@@ -1472,7 +1464,8 @@ class DatabaseOracle extends DatabaseBase {
 				}
 			} else {
 				/** @var OCI_Lob[] $lob */
-				if ( ( $lob[$col] = oci_new_descriptor( $this->mConn, OCI_D_LOB ) ) === false ) {
+				$lob[$col] = oci_new_descriptor( $this->mConn, OCI_D_LOB );
+				if ( $lob[$col] === false ) {
 					$e = oci_error( $stmt );
 					throw new DBUnexpectedError( $this, "Cannot create LOB descriptor: " . $e['message'] );
 				}
@@ -1491,7 +1484,7 @@ class DatabaseOracle extends DatabaseBase {
 			}
 		}
 
-		wfSuppressWarnings();
+		MediaWiki\suppressWarnings();
 
 		if ( oci_execute( $stmt, $this->execFlags() ) === false ) {
 			$e = oci_error( $stmt );
@@ -1506,7 +1499,7 @@ class DatabaseOracle extends DatabaseBase {
 			$this->mAffectedRows = oci_num_rows( $stmt );
 		}
 
-		wfRestoreWarnings();
+		MediaWiki\restoreWarnings();
 
 		if ( isset( $lob ) ) {
 			foreach ( $lob as $lob_v ) {

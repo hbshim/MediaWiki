@@ -80,10 +80,6 @@ class ApiExpandTemplates extends ApiBase {
 		$retval = array();
 
 		if ( isset( $prop['parsetree'] ) || $params['generatexml'] ) {
-			if ( !isset( $prop['parsetree'] ) ) {
-				$this->logFeatureUsage( 'action=expandtemplates&generatexml' );
-			}
-
 			$wgParser->startExternalParse( $title_obj, $options, Parser::OT_PREPROCESS );
 			$dom = $wgParser->preprocessToDom( $params['text'] );
 			if ( is_callable( array( $dom, 'saveXML' ) ) ) {
@@ -96,9 +92,8 @@ class ApiExpandTemplates extends ApiBase {
 				$retval['parsetree'] = $xml;
 			} else {
 				// the old way
-				$xml_result = array();
-				ApiResult::setContent( $xml_result, $xml );
-				$result->addValue( null, 'parsetree', $xml_result );
+				$result->addValue( null, 'parsetree', $xml );
+				$result->addValue( null, ApiResult::META_BC_SUBELEMENTS, array( 'parsetree' ) );
 			}
 		}
 
@@ -110,38 +105,33 @@ class ApiExpandTemplates extends ApiBase {
 			$wikitext = $wgParser->preprocess( $params['text'], $title_obj, $options, $revid, $frame );
 			if ( $params['prop'] === null ) {
 				// the old way
-				ApiResult::setContent( $retval, $wikitext );
+				ApiResult::setContentValue( $retval, 'wikitext', $wikitext );
 			} else {
+				$p_output = $wgParser->getOutput();
 				if ( isset( $prop['categories'] ) ) {
-					$categories = $wgParser->getOutput()->getCategories();
+					$categories = $p_output->getCategories();
 					if ( $categories ) {
 						$categories_result = array();
 						foreach ( $categories as $category => $sortkey ) {
 							$entry = array();
 							$entry['sortkey'] = $sortkey;
-							ApiResult::setContent( $entry, $category );
+							ApiResult::setContentValue( $entry, 'category', (string)$category );
 							$categories_result[] = $entry;
 						}
-						$result->setIndexedTagName( $categories_result, 'category' );
+						ApiResult::setIndexedTagName( $categories_result, 'category' );
 						$retval['categories'] = $categories_result;
 					}
 				}
 				if ( isset( $prop['properties'] ) ) {
-					$properties = $wgParser->getOutput()->getProperties();
+					$properties = $p_output->getProperties();
 					if ( $properties ) {
-						$properties_result = array();
-						foreach ( $properties as $name => $value ) {
-							$entry = array();
-							$entry['name'] = $name;
-							ApiResult::setContent( $entry, $value );
-							$properties_result[] = $entry;
-						}
-						$result->setIndexedTagName( $properties_result, 'property' );
-						$retval['properties'] = $properties_result;
+						ApiResult::setArrayType( $properties, 'BCkvp', 'name' );
+						ApiResult::setIndexedTagName( $properties, 'property' );
+						$retval['properties'] = $properties;
 					}
 				}
-				if ( isset( $prop['volatile'] ) && $frame->isVolatile() ) {
-					$retval['volatile'] = '';
+				if ( isset( $prop['volatile'] ) ) {
+					$retval['volatile'] = $frame->isVolatile();
 				}
 				if ( isset( $prop['ttl'] ) && $frame->getTTL() !== null ) {
 					$retval['ttl'] = $frame->getTTL();
@@ -149,9 +139,30 @@ class ApiExpandTemplates extends ApiBase {
 				if ( isset( $prop['wikitext'] ) ) {
 					$retval['wikitext'] = $wikitext;
 				}
+				if ( isset( $prop['modules'] ) ) {
+					$retval['modules'] = array_values( array_unique( $p_output->getModules() ) );
+					$retval['modulescripts'] = array_values( array_unique( $p_output->getModuleScripts() ) );
+					$retval['modulestyles'] = array_values( array_unique( $p_output->getModuleStyles() ) );
+				}
+				if ( isset( $prop['jsconfigvars'] ) ) {
+					$retval['jsconfigvars'] =
+						ApiResult::addMetadataToResultVars( $p_output->getJsConfigVars() );
+				}
+				if ( isset( $prop['encodedjsconfigvars'] ) ) {
+					$retval['encodedjsconfigvars'] = FormatJson::encode(
+						$p_output->getJsConfigVars(), false, FormatJson::ALL_OK
+					);
+					$retval[ApiResult::META_SUBELEMENTS][] = 'encodedjsconfigvars';
+				}
+				if ( isset( $prop['modules'] ) &&
+					!isset( $prop['jsconfigvars'] ) && !isset( $prop['encodedjsconfigvars'] ) ) {
+					$this->setWarning( "Property 'modules' was set but not 'jsconfigvars' " .
+						"or 'encodedjsconfigvars'. Configuration variables are necessary " .
+						"for proper module usage." );
+				}
 			}
 		}
-		$result->setSubelements( $retval, array( 'wikitext', 'parsetree' ) );
+		ApiResult::setSubelementsList( $retval, array( 'wikitext', 'parsetree' ) );
 		$result->addValue( null, $this->getModuleName(), $retval );
 	}
 
@@ -161,7 +172,7 @@ class ApiExpandTemplates extends ApiBase {
 				ApiBase::PARAM_DFLT => 'API',
 			),
 			'text' => array(
-				ApiBase::PARAM_TYPE => 'string',
+				ApiBase::PARAM_TYPE => 'text',
 				ApiBase::PARAM_REQUIRED => true,
 			),
 			'revid' => array(
@@ -174,9 +185,13 @@ class ApiExpandTemplates extends ApiBase {
 					'properties',
 					'volatile',
 					'ttl',
+					'modules',
+					'jsconfigvars',
+					'encodedjsconfigvars',
 					'parsetree',
 				),
 				ApiBase::PARAM_ISMULTI => true,
+				ApiBase::PARAM_HELP_MSG_PER_VALUE => array(),
 			),
 			'includecomments' => false,
 			'generatexml' => array(

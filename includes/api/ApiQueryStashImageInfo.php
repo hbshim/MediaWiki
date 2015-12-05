@@ -47,7 +47,6 @@ class ApiQueryStashImageInfo extends ApiQueryImageInfo {
 
 		// Alias sessionkey to filekey, but give an existing filekey precedence.
 		if ( !$params['filekey'] && $params['sessionkey'] ) {
-			$this->logFeatureUsage( 'prop=stashimageinfo&siisessionkey' );
 			$params['filekey'] = $params['sessionkey'];
 		}
 
@@ -59,11 +58,9 @@ class ApiQueryStashImageInfo extends ApiQueryImageInfo {
 				$finalThumbParam = $this->mergeThumbParams( $file, $scale, $params['urlparam'] );
 				$imageInfo = ApiQueryImageInfo::getInfo( $file, $prop, $result, $finalThumbParam );
 				$result->addValue( array( 'query', $this->getModuleName() ), null, $imageInfo );
-				$result->setIndexedTagName_internal( array( 'query', $this->getModuleName() ), $modulePrefix );
+				$result->addIndexedTagName( array( 'query', $this->getModuleName() ), $modulePrefix );
 			}
 		// @todo Update exception handling here to understand current getFile exceptions
-		} catch ( UploadStashNotAvailableException $e ) {
-			$this->dieUsage( "Session not available: " . $e->getMessage(), "nosession" );
 		} catch ( UploadStashFileNotFoundException $e ) {
 			$this->dieUsage( "File not found: " . $e->getMessage(), "invalidsessiondata" );
 		} catch ( UploadStashBadPathException $e ) {
@@ -80,12 +77,10 @@ class ApiQueryStashImageInfo extends ApiQueryImageInfo {
 		return array(
 			'filekey' => array(
 				ApiBase::PARAM_ISMULTI => true,
-				ApiBase::PARAM_DFLT => null
 			),
 			'sessionkey' => array(
 				ApiBase::PARAM_ISMULTI => true,
 				ApiBase::PARAM_DEPRECATED => true,
-				ApiBase::PARAM_DFLT => null
 			),
 			'prop' => array(
 				ApiBase::PARAM_ISMULTI => true,
@@ -123,5 +118,9 @@ class ApiQueryStashImageInfo extends ApiQueryImageInfo {
 				'siiurlwidth=120&siiprop=url'
 				=> 'apihelp-query+stashimageinfo-example-params',
 		);
+	}
+
+	public function getHelpUrls() {
+		return 'https://www.mediawiki.org/wiki/API:Stashimageinfo';
 	}
 }

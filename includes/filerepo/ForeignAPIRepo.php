@@ -21,6 +21,8 @@
  * @ingroup FileRepo
  */
 
+use MediaWiki\Logger\LoggerFactory;
+
 /**
  * A foreign repository with a remote MediaWiki with an API thingy
  *
@@ -29,7 +31,7 @@
  * $wgForeignFileRepos[] = array(
  *   'class'                  => 'ForeignAPIRepo',
  *   'name'                   => 'shared',
- *   'apibase'                => 'http://en.wikipedia.org/w/api.php',
+ *   'apibase'                => 'https://en.wikipedia.org/w/api.php',
  *   'fetchDescription'       => true, // Optional
  *   'descriptionCacheExpiry' => 3600,
  * );
@@ -53,11 +55,11 @@ class ForeignAPIRepo extends FileRepo {
 	);
 
 	protected $fileFactory = array( 'ForeignAPIFile', 'newFromTitle' );
-	/** @var int Check back with Commons after a day (24*60*60) */
-	protected $apiThumbCacheExpiry = 86400;
+	/** @var int Check back with Commons after this expiry */
+	protected $apiThumbCacheExpiry = 86400; // 1 day (24*3600)
 
-	/** @var int Redownload thumbnail files after a month (86400*30) */
-	protected $fileCacheExpiry = 2592000;
+	/** @var int Redownload thumbnail files after this expiry */
+	protected $fileCacheExpiry = 2592000; // 1 month (30*24*3600)
 
 	/** @var array */
 	protected $mFileExists = array();
@@ -72,7 +74,7 @@ class ForeignAPIRepo extends FileRepo {
 		global $wgLocalFileRepo;
 		parent::__construct( $info );
 
-		// http://commons.wikimedia.org/w/api.php
+		// https://commons.wikimedia.org/w/api.php
 		$this->mApiBase = isset( $info['apibase'] ) ? $info['apibase'] : null;
 
 		if ( isset( $info['apiThumbCacheExpiry'] ) ) {
@@ -327,7 +329,7 @@ class ForeignAPIRepo extends FileRepo {
 	 * @return bool|string
 	 */
 	function getThumbUrlFromCache( $name, $width, $height, $params = "" ) {
-		global $wgMemc;
+		$cache = ObjectCache::getMainWANInstance();
 		// We can't check the local cache using FileRepo functions because
 		// we override fileExistsBatch(). We have to use the FileBackend directly.
 		$backend = $this->getBackend(); // convenience
@@ -340,7 +342,7 @@ class ForeignAPIRepo extends FileRepo {
 		$sizekey = "$width:$height:$params";
 
 		/* Get the array of urls that we already know */
-		$knownThumbUrls = $wgMemc->get( $key );
+		$knownThumbUrls = $cache->get( $key );
 		if ( !$knownThumbUrls ) {
 			/* No knownThumbUrls for this file */
 			$knownThumbUrls = array();
@@ -386,7 +388,7 @@ class ForeignAPIRepo extends FileRepo {
 			if ( $remoteModified < $modified && $diff < $this->fileCacheExpiry ) {
 				/* Use our current and already downloaded thumbnail */
 				$knownThumbUrls[$sizekey] = $localUrl;
-				$wgMemc->set( $key, $knownThumbUrls, $this->apiThumbCacheExpiry );
+				$cache->set( $key, $knownThumbUrls, $this->apiThumbCacheExpiry );
 
 				return $localUrl;
 			}
@@ -408,7 +410,7 @@ class ForeignAPIRepo extends FileRepo {
 			return $foreignUrl;
 		}
 		$knownThumbUrls[$sizekey] = $localUrl;
-		$wgMemc->set( $key, $knownThumbUrls, $this->apiThumbCacheExpiry );
+		$cache->set( $key, $knownThumbUrls, $this->apiThumbCacheExpiry );
 		wfDebug( __METHOD__ . " got local thumb $localUrl, saving to cache \n" );
 
 		return $localUrl;
@@ -514,13 +516,15 @@ class ForeignAPIRepo extends FileRepo {
 			$options['timeout'] = 'default';
 		}
 
-		$req = MWHttpRequest::factory( $url, $options );
+		$req = MWHttpRequest::factory( $url, $options, __METHOD__ );
 		$req->setUserAgent( ForeignAPIRepo::getUserAgent() );
 		$status = $req->execute();
 
 		if ( $status->isOK() ) {
 			return $req->getContent();
 		} else {
+			$logger = LoggerFactory::getInstance( 'http' );
+			$logger->warning( $status->getWikiText(), array( 'caller' => 'ForeignAPIRepo::httpGet' ) );
 			return false;
 		}
 	}
@@ -548,19 +552,16 @@ class ForeignAPIRepo extends FileRepo {
 		}
 
 		if ( !isset( $this->mQueryCache[$url] ) ) {
-			global $wgMemc;
-
-			$key = $this->getLocalCacheKey( get_class( $this ), $target, md5( $url ) );
-			$data = $wgMemc->get( $key );
+			$data = ObjectCache::getMainWANInstance()->getWithSetCallback(
+				$this->getLocalCacheKey( get_class( $this ), $target, md5( $url ) ),
+				$cacheTTL,
+				function () use ( $url ) {
+					return ForeignAPIRepo::httpGet( $url );
+				}
+			);
 
 			if ( !$data ) {
-				$data = self::httpGet( $url );
-
-				if ( !$data ) {
-					return null;
-				}
-
-				$wgMemc->set( $key, $data, $cacheTTL );
+				return null;
 			}
 
 			if ( count( $this->mQueryCache ) > 100 ) {

@@ -102,7 +102,6 @@ abstract class LockManager {
 	 * @since 1.22
 	 */
 	final public function lockByType( array $pathsByType, $timeout = 0 ) {
-		$status = Status::newGood();
 		$pathsByType = $this->normalizePathsByType( $pathsByType );
 		$msleep = array( 0, 50, 100, 300, 500 ); // retry backoff times
 		$start = microtime( true );
@@ -153,7 +152,7 @@ abstract class LockManager {
 	 * @return string
 	 */
 	final protected function sha1Base36Absolute( $path ) {
-		return wfBaseConvert( sha1( "{$this->domain}:{$path}" ), 16, 36, 31 );
+		return Wikimedia\base_convert( sha1( "{$this->domain}:{$path}" ), 16, 36, 31 );
 	}
 
 	/**

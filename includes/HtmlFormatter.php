@@ -63,13 +63,19 @@ class HtmlFormatter {
 	 */
 	public function getDoc() {
 		if ( !$this->doc ) {
-			$html = mb_convert_encoding( $this->html, 'HTML-ENTITIES', 'UTF-8' );
+			// DOMDocument::loadHTML apparently isn't very good with encodings, so
+			// convert input to ASCII by encoding everything above 128 as entities.
+			if ( function_exists( 'mb_convert_encoding' ) ) {
+				$html = mb_convert_encoding( $this->html, 'HTML-ENTITIES', 'UTF-8' );
+			} else {
+				$html = preg_replace_callback( '/[\x{80}-\x{10ffff}]/u', function ( $m ) {
+					return '&#' . UtfNormal\Utils::utf8ToCodepoint( $m[0] ) . ';';
+				}, $this->html );
+			}
 
 			// Workaround for bug that caused spaces before references
-			// to disappear during processing:
-			// https://bugzilla.wikimedia.org/show_bug.cgi?id=53086
-			//
-			// Please replace with a better fix if one can be found.
+			// to disappear during processing: https://phabricator.wikimedia.org/T55086
+			// TODO: Please replace with a better fix if one can be found.
 			$html = str_replace( ' <', '&#32;<', $html );
 
 			libxml_use_internal_errors( true );
@@ -244,7 +250,14 @@ class HtmlFormatter {
 			) );
 		}
 		$html = $replacements->replace( $html );
-		$html = mb_convert_encoding( $html, 'UTF-8', 'HTML-ENTITIES' );
+
+		if ( function_exists( 'mb_convert_encoding' ) ) {
+			// Just in case the conversion in getDoc() above used named
+			// entities that aren't known to html_entity_decode().
+			$html = mb_convert_encoding( $html, 'UTF-8', 'HTML-ENTITIES' );
+		} else {
+			$html = html_entity_decode( $html, ENT_COMPAT, 'utf-8' );
+		}
 		return $html;
 	}
 
@@ -280,7 +293,6 @@ class HtmlFormatter {
 			$html = $this->fixLibXml( $html );
 			if ( wfIsWindows() ) {
 				// Cleanup for CRLF misprocessing of unknown origin on Windows.
-				//
 				// If this error continues in the future, please track it down in the
 				// XML code paths if possible and fix there.
 				$html = str_replace( '&#13;', '', $html );

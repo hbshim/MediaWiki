@@ -18,6 +18,7 @@
  * http://www.gnu.org/copyleft/gpl.html
  *
  * @file
+ * @ingroup JobQueue
  * @ingroup Cache
  */
 
@@ -28,31 +29,39 @@
  *   - a) Recursive jobs to purge caches for backlink pages for a given title.
  *        These jobs have (recursive:true,table:<table>) set.
  *   - b) Jobs to purge caches for a set of titles (the job title is ignored).
- *	      These jobs have (pages:(<page ID>:(<namespace>,<title>),...) set.
+ *        These jobs have (pages:(<page ID>:(<namespace>,<title>),...) set.
  *
  * @ingroup JobQueue
  */
 class HTMLCacheUpdateJob extends Job {
-	function __construct( $title, $params = '' ) {
+	function __construct( Title $title, array $params ) {
 		parent::__construct( 'htmlCacheUpdate', $title, $params );
 		// Base backlink purge jobs can be de-duplicated
 		$this->removeDuplicates = ( !isset( $params['range'] ) && !isset( $params['pages'] ) );
 	}
 
+	/**
+	 * @param Title $title Title to purge backlink pages from
+	 * @param string $table Backlink table name
+	 * @return HTMLCacheUpdateJob
+	 */
+	public static function newForBacklinks( Title $title, $table ) {
+		return new self(
+			$title,
+			array(
+				'table' => $table,
+				'recursive' => true
+			) + Job::newRootJobParams( // "overall" refresh links job info
+				"htmlCacheUpdate:{$table}:{$title->getPrefixedText()}"
+			)
+		);
+	}
+
 	function run() {
 		global $wgUpdateRowsPerJob, $wgUpdateRowsPerQuery;
 
-		static $expected = array( 'recursive', 'pages' ); // new jobs have one of these
-
-		$oldRangeJob = false;
-		if ( !array_intersect( array_keys( $this->params ), $expected ) ) {
-			// B/C for older job params formats that lack these fields:
-			// a) base jobs with just ("table") and b) range jobs with ("table","start","end")
-			if ( isset( $this->params['start'] ) && isset( $this->params['end'] ) ) {
-				$oldRangeJob = true;
-			} else {
-				$this->params['recursive'] = true; // base job
-			}
+		if ( isset( $this->params['table'] ) && !isset( $this->params['pages'] ) ) {
+			$this->params['recursive'] = true; // b/c; base job
 		}
 
 		// Job to purge all (or a range of) backlink pages for a page
@@ -70,26 +79,12 @@ class HTMLCacheUpdateJob extends Job {
 		// Job to purge pages for a set of titles
 		} elseif ( isset( $this->params['pages'] ) ) {
 			$this->invalidateTitles( $this->params['pages'] );
-		// B/C for job to purge a range of backlink pages for a given page
-		} elseif ( $oldRangeJob ) {
-			$titleArray = $this->title->getBacklinkCache()->getLinks(
-				$this->params['table'], $this->params['start'], $this->params['end'] );
-
-			$pages = array(); // same format BacklinkJobUtils uses
-			foreach ( $titleArray as $tl ) {
-				$pages[$tl->getArticleId()] = array( $tl->getNamespace(), $tl->getDbKey() );
-			}
-
-			$jobs = array();
-			foreach ( array_chunk( $pages, $wgUpdateRowsPerJob ) as $pageChunk ) {
-				$jobs[] = new HTMLCacheUpdateJob( $this->title,
-					array(
-						'table' => $this->params['table'],
-						'pages' => $pageChunk
-					) + $this->getRootJobParams() // carry over information for de-duplication
-				);
-			}
-			JobQueueGroup::singleton()->push( $jobs );
+		// Job to update a single title
+		} else {
+			$t = $this->title;
+			$this->invalidateTitles( array(
+				$t->getArticleID() => array( $t->getNamespace(), $t->getDBkey() )
+			) );
 		}
 
 		return true;
@@ -99,15 +94,13 @@ class HTMLCacheUpdateJob extends Job {
 	 * @param array $pages Map of (page ID => (namespace, DB key)) entries
 	 */
 	protected function invalidateTitles( array $pages ) {
-		global $wgUpdateRowsPerQuery, $wgUseFileCache, $wgUseSquid;
+		global $wgUpdateRowsPerQuery, $wgUseFileCache;
 
 		// Get all page IDs in this query into an array
 		$pageIds = array_keys( $pages );
 		if ( !$pageIds ) {
 			return;
 		}
-
-		$dbw = wfGetDB( DB_MASTER );
 
 		// The page_touched field will need to be bumped for these pages.
 		// Only bump it to the present time if no "rootJobTimestamp" was known.
@@ -122,9 +115,13 @@ class HTMLCacheUpdateJob extends Job {
 			$touchTimestamp = wfTimestampNow();
 		}
 
+		$dbw = wfGetDB( DB_MASTER );
 		// Update page_touched (skipping pages already touched since the root job).
 		// Check $wgUpdateRowsPerQuery for sanity; batch jobs are sized by that already.
 		foreach ( array_chunk( $pageIds, $wgUpdateRowsPerQuery ) as $batch ) {
+			$dbw->commit( __METHOD__, 'flush' );
+			wfWaitForSlaves();
+
 			$dbw->update( 'page',
 				array( 'page_touched' => $dbw->timestamp( $touchTimestamp ) ),
 				array( 'page_id' => $batch,
@@ -143,10 +140,8 @@ class HTMLCacheUpdateJob extends Job {
 		) );
 
 		// Update squid
-		if ( $wgUseSquid ) {
-			$u = SquidUpdate::newFromTitles( $titleArray );
-			$u->doUpdate();
-		}
+		$u = SquidUpdate::newFromTitles( $titleArray );
+		$u->doUpdate();
 
 		// Update file cache
 		if ( $wgUseFileCache ) {

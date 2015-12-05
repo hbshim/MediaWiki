@@ -1,6 +1,7 @@
 <?php
 
 /**
+ * @group LinksUpdate
  * @group Database
  * ^--- make sure temporary tables are used.
  */
@@ -19,7 +20,8 @@ class LinksUpdateTest extends MediaWikiTestCase {
 				'externallinks',
 				'imagelinks',
 				'templatelinks',
-				'iwlinks'
+				'iwlinks',
+				'recentchanges',
 			)
 		);
 	}
@@ -39,6 +41,13 @@ class LinksUpdateTest extends MediaWikiTestCase {
 				'iw_wikiid' => 'linksupdatetest',
 			)
 		);
+		$this->setMwGlobals( 'wgRCWatchCategoryMembership', true );
+	}
+
+	public function addDBData() {
+		$this->insertPage( 'Testing' );
+		$this->insertPage( 'Some_other_page' );
+		$this->insertPage( 'Template:TestingTemplate' );
 	}
 
 	protected function makeTitleAndParserOutput( $name, $id ) {
@@ -131,6 +140,76 @@ class LinksUpdateTest extends MediaWikiTestCase {
 		$this->assertLinksUpdate( $t, $po, 'categorylinks', 'cl_to, cl_sortkey', 'cl_from = 111', array(
 			array( 'Foo', "FOO\nTESTING" ),
 		) );
+	}
+
+	public function testOnAddingAndRemovingCategory_recentChangesRowIsAdded() {
+		$this->setMwGlobals( 'wgCategoryCollation', 'uppercase' );
+
+		$title = Title::newFromText( 'Testing' );
+		$wikiPage = new WikiPage( $title );
+		$wikiPage->doEditContent( new WikitextContent( '[[Category:Foo]]' ), 'added category' );
+		$this->runAllRelatedJobs();
+
+		$this->assertRecentChangeByCategorization(
+			$title,
+			$wikiPage->getParserOutput( new ParserOptions() ),
+			Title::newFromText( 'Category:Foo' ),
+			array( array( 'Foo', '[[:Testing]] added to category' ) )
+		);
+
+		$wikiPage->doEditContent( new WikitextContent( '[[Category:Bar]]' ), 'replaced category' );
+		$this->runAllRelatedJobs();
+
+		$this->assertRecentChangeByCategorization(
+			$title,
+			$wikiPage->getParserOutput( new ParserOptions() ),
+			Title::newFromText( 'Category:Foo' ),
+			array(
+				array( 'Foo', '[[:Testing]] added to category' ),
+				array( 'Foo', '[[:Testing]] removed from category' ),
+			)
+		);
+
+		$this->assertRecentChangeByCategorization(
+			$title,
+			$wikiPage->getParserOutput( new ParserOptions() ),
+			Title::newFromText( 'Category:Bar' ),
+			array(
+				array( 'Bar', '[[:Testing]] added to category' ),
+			)
+		);
+	}
+
+	public function testOnAddingAndRemovingCategoryToTemplates_embeddingPagesAreIgnored() {
+		$this->setMwGlobals( 'wgCategoryCollation', 'uppercase' );
+
+		$templateTitle = Title::newFromText( 'Template:TestingTemplate' );
+		$templatePage = new WikiPage( $templateTitle );
+
+		$wikiPage = new WikiPage( Title::newFromText( 'Testing' ) );
+		$wikiPage->doEditContent( new WikitextContent( '{{TestingTemplate}}' ), 'added template' );
+		$this->runAllRelatedJobs();
+
+		$otherWikiPage = new WikiPage( Title::newFromText( 'Some_other_page' ) );
+		$otherWikiPage->doEditContent( new WikitextContent( '{{TestingTemplate}}' ), 'added template' );
+		$this->runAllRelatedJobs();
+
+		$this->assertRecentChangeByCategorization(
+			$templateTitle,
+			$templatePage->getParserOutput( new ParserOptions() ),
+			Title::newFromText( 'Baz' ),
+			array()
+		);
+
+		$templatePage->doEditContent( new WikitextContent( '[[Category:Baz]]' ), 'added category' );
+		$this->runAllRelatedJobs();
+
+		$this->assertRecentChangeByCategorization(
+			$templateTitle,
+			$templatePage->getParserOutput( new ParserOptions() ),
+			Title::newFromText( 'Baz' ),
+			array( array( 'Baz', '[[:Template:TestingTemplate]] and 2 pages added to category' ) )
+		);
 	}
 
 	/**
@@ -255,12 +334,39 @@ class LinksUpdateTest extends MediaWikiTestCase {
 	) {
 		$update = new LinksUpdate( $title, $parserOutput );
 
-		//NOTE: make sure LinksUpdate does not generate warnings when called inside a transaction.
+		// NOTE: make sure LinksUpdate does not generate warnings when called inside a transaction.
 		$update->beginTransaction();
 		$update->doUpdate();
 		$update->commitTransaction();
 
 		$this->assertSelect( $table, $fields, $condition, $expectedRows );
 		return $update;
+	}
+
+	protected function assertRecentChangeByCategorization(
+		Title $pageTitle, ParserOutput $parserOutput, Title $categoryTitle, $expectedRows
+	) {
+		$this->assertSelect(
+			'recentchanges',
+			'rc_title, rc_comment',
+			array(
+				'rc_type' => RC_CATEGORIZE,
+				'rc_namespace' => NS_CATEGORY,
+				'rc_title' => $categoryTitle->getDBkey()
+			),
+			$expectedRows
+		);
+	}
+
+	private function runAllRelatedJobs() {
+		$queueGroup = JobQueueGroup::singleton();
+		while ( $job = $queueGroup->pop( 'refreshLinksPrioritized' ) ) {
+			$job->run();
+			$queueGroup->ack( $job );
+		}
+		while ( $job = $queueGroup->pop( 'categoryMembershipChange' ) ) {
+			$job->run();
+			$queueGroup->ack( $job );
+		}
 	}
 }

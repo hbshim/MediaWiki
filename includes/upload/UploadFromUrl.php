@@ -175,7 +175,6 @@ class UploadFromUrl extends UploadBase {
 		$url = $request->getVal( 'wpUploadFileURL' );
 
 		return !empty( $url )
-			&& Http::isValidURI( $url )
 			&& $wgUser->isAllowed( 'upload_by_url' );
 	}
 
@@ -195,7 +194,7 @@ class UploadFromUrl extends UploadBase {
 	 */
 	public function fetchFile( $httpOptions = array() ) {
 		if ( !Http::isValidURI( $this->mUrl ) ) {
-			return Status::newFatal( 'http-invalid-url' );
+			return Status::newFatal( 'http-invalid-url', $this->mUrl );
 		}
 
 		if ( !self::isAllowedHost( $this->mUrl ) ) {
@@ -241,7 +240,7 @@ class UploadFromUrl extends UploadBase {
 			wfDebugLog(
 				'fileupload',
 				'Short write ' . $this->nbytes . '/' . strlen( $buffer ) .
-					' bytes, aborting with '  . $this->mFileSize . ' uploaded so far'
+					' bytes, aborting with ' . $this->mFileSize . ' uploaded so far'
 			);
 			fclose( $this->mTmpHandle );
 			$this->mTmpHandle = false;
@@ -287,7 +286,7 @@ class UploadFromUrl extends UploadBase {
 			'Starting download from "' . $this->mUrl . '" ' .
 				'<' . implode( ',', array_keys( array_filter( $options ) ) ) . '>'
 		);
-		$req = MWHttpRequest::factory( $this->mUrl, $options );
+		$req = MWHttpRequest::factory( $this->mUrl, $options, __METHOD__ );
 		$req->setCallback( array( $this, 'saveTempFileChunk' ) );
 		$status = $req->execute();
 

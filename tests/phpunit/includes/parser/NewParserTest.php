@@ -27,7 +27,7 @@ class NewParserTest extends MediaWikiTestCase {
 	public $functionHooks = array();
 	public $transparentHooks = array();
 
-	//Fuzz test
+	// Fuzz test
 	public $maxFuzzTestLength = 300;
 	public $fuzzSeed = 0;
 	public $memoryLimit = 50;
@@ -54,7 +54,7 @@ class NewParserTest extends MediaWikiTestCase {
 
 		parent::setUp();
 
-		//Setup CLI arguments
+		// Setup CLI arguments
 		if ( $this->getCliArg( 'regex' ) ) {
 			$this->regex = $this->getCliArg( 'regex' );
 		} else {
@@ -91,7 +91,7 @@ class NewParserTest extends MediaWikiTestCase {
 		);
 		$tmpGlobals['wgForeignFileRepos'] = array();
 		$tmpGlobals['wgDefaultExternalStore'] = array();
-		$tmpGlobals['wgEnableParserCache'] = false;
+		$tmpGlobals['wgParserCacheType'] = CACHE_NONE;
 		$tmpGlobals['wgCapitalLinks'] = true;
 		$tmpGlobals['wgNoFollowLinks'] = true;
 		$tmpGlobals['wgNoFollowDomainExceptions'] = array();
@@ -106,7 +106,6 @@ class NewParserTest extends MediaWikiTestCase {
 		$tmpGlobals['wgAdaptiveMessageCache'] = true;
 		$tmpGlobals['wgUseDatabaseMessages'] = true;
 		$tmpGlobals['wgLocaltimezone'] = 'UTC';
-		$tmpGlobals['wgDeferredUpdateList'] = array();
 		$tmpGlobals['wgGroupPermissions'] = array(
 			'*' => array(
 				'createaccount' => true,
@@ -160,13 +159,10 @@ class NewParserTest extends MediaWikiTestCase {
 		$this->djVuSupport = new DjVuSupport();
 		// Tidy support
 		$this->tidySupport = new TidySupport();
-		// We always set 'wgUseTidy' to false when parsing, but certain
-		// test-running modes still use tidy if available, so ensure
-		// that the tidy-related options are all set to their defaults.
+		$tmpGlobals['wgTidyConfig'] = null;
 		$tmpGlobals['wgUseTidy'] = false;
-		$tmpGlobals['wgAlwaysUseTidy'] = false;
 		$tmpGlobals['wgDebugTidy'] = false;
-		$tmpGlobals['wgTidyConf'] = $IP . '/includes/tidy.conf';
+		$tmpGlobals['wgTidyConf'] = $IP . '/includes/tidy/tidy.conf';
 		$tmpGlobals['wgTidyOpts'] = '';
 		$tmpGlobals['wgTidyInternal'] = $this->tidySupport->isInternal();
 
@@ -187,6 +183,8 @@ class NewParserTest extends MediaWikiTestCase {
 
 		$wgNamespaceAliases['Image'] = $this->savedWeirdGlobals['image_alias'];
 		$wgNamespaceAliases['Image_talk'] = $this->savedWeirdGlobals['image_talk_alias'];
+
+		MWTidy::destroySingleton();
 
 		// Restore backends
 		RepoGroup::destroySingleton();
@@ -212,7 +210,7 @@ class NewParserTest extends MediaWikiTestCase {
 	function addDBData() {
 		$this->tablesUsed[] = 'site_stats';
 		# disabled for performance
-		#$this->tablesUsed[] = 'image';
+		# $this->tablesUsed[] = 'image';
 
 		# Update certain things in site_stats
 		$this->db->insert( 'site_stats',
@@ -245,7 +243,7 @@ class NewParserTest extends MediaWikiTestCase {
 					'media_type' => MEDIATYPE_BITMAP,
 					'mime' => 'image/jpeg',
 					'metadata' => serialize( array() ),
-					'sha1' => wfBaseConvert( '1', 16, 36, 31 ),
+					'sha1' => Wikimedia\base_convert( '1', 16, 36, 31 ),
 					'fileExists' => true ),
 				$this->db->timestamp( '20010115123500' ), $user
 			);
@@ -265,7 +263,7 @@ class NewParserTest extends MediaWikiTestCase {
 					'media_type' => MEDIATYPE_BITMAP,
 					'mime' => 'image/png',
 					'metadata' => serialize( array() ),
-					'sha1' => wfBaseConvert( '2', 16, 36, 31 ),
+					'sha1' => Wikimedia\base_convert( '2', 16, 36, 31 ),
 					'fileExists' => true ),
 				$this->db->timestamp( '20130225203040' ), $user
 			);
@@ -286,7 +284,7 @@ class NewParserTest extends MediaWikiTestCase {
 					'media_type' => MEDIATYPE_BITMAP,
 					'mime' => 'image/jpeg',
 					'metadata' => serialize( array() ),
-					'sha1' => wfBaseConvert( '3', 16, 36, 31 ),
+					'sha1' => Wikimedia\base_convert( '3', 16, 36, 31 ),
 					'fileExists' => true ),
 				$this->db->timestamp( '20010115123500' ), $user
 			);
@@ -301,7 +299,7 @@ class NewParserTest extends MediaWikiTestCase {
 					'media_type'  => MEDIATYPE_DRAWING,
 					'mime'        => 'image/svg+xml',
 					'metadata'    => serialize( array() ),
-					'sha1'        => wfBaseConvert( '', 16, 36, 31 ),
+					'sha1'        => Wikimedia\base_convert( '', 16, 36, 31 ),
 					'fileExists'  => true
 			), $this->db->timestamp( '20010115123500' ), $user );
 		}
@@ -342,13 +340,13 @@ class NewParserTest extends MediaWikiTestCase {
 </OBJECT>
 </BODY>
 </DjVuXML>',
-				'sha1' => wfBaseConvert( '', 16, 36, 31 ),
+				'sha1' => Wikimedia\base_convert( '', 16, 36, 31 ),
 				'fileExists' => true
 			), $this->db->timestamp( '20140115123600' ), $user );
 		}
 	}
 
-	//ParserTest setup/teardown functions
+	// ParserTest setup/teardown functions
 
 	/**
 	 * Set up the global variables for a consistent environment for each test.
@@ -419,6 +417,7 @@ class NewParserTest extends MediaWikiTestCase {
 			'wgMathDirectory' => $uploadDir . '/math',
 			'wgDefaultLanguageVariant' => $variant,
 			'wgLinkHolderBatchSize' => $linkHolderBatchSize,
+			'wgUseTidy' => isset( $opts['tidy'] ),
 		);
 
 		if ( $config ) {
@@ -427,7 +426,7 @@ class NewParserTest extends MediaWikiTestCase {
 			foreach ( $configLines as $line ) {
 				list( $var, $value ) = explode( '=', $line, 2 );
 
-				$settings[$var] = eval( "return $value;" ); //???
+				$settings[$var] = eval( "return $value;" ); // ???
 			}
 		}
 
@@ -456,6 +455,7 @@ class NewParserTest extends MediaWikiTestCase {
 			$GLOBALS[$var] = $val;
 		}
 
+		MWTidy::destroySingleton();
 		MagicWord::clearCache();
 
 		# The entries saved into RepoGroup cache with previous globals will be wrong.
@@ -640,11 +640,12 @@ class NewParserTest extends MediaWikiTestCase {
 			$backend->delete( array( 'src' => $file ), array( 'force' => 1 ) );
 		}
 		foreach ( $files as $file ) {
-			$tmp = $file;
-			while ( $tmp = FileBackend::parentStoragePath( $tmp ) ) {
+			$tmp = FileBackend::parentStoragePath( $file );
+			while ( $tmp ) {
 				if ( !$backend->clean( array( 'dir' => $tmp ) )->isOK() ) {
 					break;
 				}
+				$tmp = FileBackend::parentStoragePath( $tmp );
 			}
 		}
 	}
@@ -672,6 +673,7 @@ class NewParserTest extends MediaWikiTestCase {
 
 	/**
 	 * @group medium
+	 * @group ParserTests
 	 * @dataProvider parserTestProvider
 	 * @param string $desc
 	 * @param string $input
@@ -682,7 +684,7 @@ class NewParserTest extends MediaWikiTestCase {
 	public function testParserTest( $desc, $input, $result, $opts, $config ) {
 		if ( $this->regex != '' && !preg_match( '/' . $this->regex . '/', $desc ) ) {
 			$this->assertTrue( true ); // XXX: don't flood output with "test made no assertions"
-			//$this->markTestSkipped( 'Filtered out by the user' );
+			// $this->markTestSkipped( 'Filtered out by the user' );
 			return;
 		}
 
@@ -727,9 +729,18 @@ class NewParserTest extends MediaWikiTestCase {
 					. "Current configuration is:\n\$wgTexvc = '$wgTexvc'" );
 			}
 		}
+
 		if ( isset( $opts['djvu'] ) ) {
 			if ( !$this->djVuSupport->isEnabled() ) {
 				$this->markTestSkipped( "SKIPPED: djvu binaries do not exist or are not executable.\n" );
+			}
+		}
+
+		if ( isset( $opts['tidy'] ) ) {
+			if ( !$this->tidySupport->isEnabled() ) {
+				$this->markTestSkipped( "SKIPPED: tidy extension is not installed.\n" );
+			} else {
+				$options->setTidy( true );
 			}
 		}
 
@@ -753,12 +764,7 @@ class NewParserTest extends MediaWikiTestCase {
 			$output->setTOCEnabled( !isset( $opts['notoc'] ) );
 			$out = $output->getText();
 			if ( isset( $opts['tidy'] ) ) {
-				if ( !$this->tidySupport->isEnabled() ) {
-					$this->markTestSkipped( "SKIPPED: tidy extension is not installed.\n" );
-				} else {
-					$out = MWTidy::tidy( $out );
-					$out = preg_replace( '/\s+$/', '', $out );
-				}
+				$out = preg_replace( '/\s+$/', '', $out );
 			}
 
 			if ( isset( $opts['showtitle'] ) ) {
@@ -767,6 +773,14 @@ class NewParserTest extends MediaWikiTestCase {
 				}
 
 				$out = "$title\n$out";
+			}
+
+			if ( isset( $opts['showindicators'] ) ) {
+				$indicators = '';
+				foreach ( $output->getIndicators() as $id => $content ) {
+					$indicators .= "$id=$content\n";
+				}
+				$out = $indicators . $out;
 			}
 
 			if ( isset( $opts['ill'] ) ) {
@@ -853,7 +867,7 @@ class NewParserTest extends MediaWikiTestCase {
 
 			if ( $id % 100 == 0 ) {
 				$usage = intval( memory_get_usage( true ) / $this->memoryLimit / 1048576 * 100 );
-				//echo "{$this->fuzzSeed}: $numSuccess/$numTotal (mem: $usage%)\n";
+				// echo "{$this->fuzzSeed}: $numSuccess/$numTotal (mem: $usage%)\n";
 				if ( $usage > 90 ) {
 					$ret = "Out of memory:\n";
 					$memStats = $this->getMemoryBreakdown();
@@ -870,7 +884,7 @@ class NewParserTest extends MediaWikiTestCase {
 		}
 	}
 
-	//Various getter functions
+	// Various getter functions
 
 	/**
 	 * Get an input dictionary from a set of parser test files
@@ -944,7 +958,7 @@ class NewParserTest extends MediaWikiTestCase {
 		return $parser;
 	}
 
-	//Various action functions
+	// Various action functions
 
 	public function addArticle( $name, $text, $line ) {
 		self::$articles[$name] = array( $text, $line );
@@ -987,7 +1001,7 @@ class NewParserTest extends MediaWikiTestCase {
 		return isset( $wgParser->mTransparentTagHooks[$name] );
 	}
 
-	//Various "cleanup" functions
+	// Various "cleanup" functions
 
 	/**
 	 * Remove last character if it is a newline
@@ -1002,7 +1016,7 @@ class NewParserTest extends MediaWikiTestCase {
 		}
 	}
 
-	//Test options parser functions
+	// Test options parser functions
 
 	protected function parseOptions( $instring ) {
 		$opts = array();

@@ -24,8 +24,14 @@ phpunit.php enables colors for other OSs at runtime
 		<testsuite name="languages">
 			<directory>languages</directory>
 		</testsuite>
+		<testsuite name="parsertests">
+			<file>includes/parser/MediaWikiParserTest.php</file>
+			<file>suites/ExtensionsParserTestSuite.php</file>
+		</testsuite>
 		<testsuite name="skins">
 			<directory>skins</directory>
+			<directory>structure</directory>
+			<file>suites/LessTestSuite.php</file>
 		</testsuite>
 		<!-- As there is a class Maintenance, we cannot use the
 		     name "maintenance" directly -->

@@ -49,8 +49,10 @@ class TraditionalImageGallery extends ImageGalleryBase {
 
 		if ( $this->mParser ) {
 			$this->mParser->getOutput()->addModules( $modules );
+			$this->mParser->getOutput()->addModuleStyles( 'mediawiki.page.gallery.styles' );
 		} else {
 			$this->getOutput()->addModules( $modules );
+			$this->getOutput()->addModuleStyles( 'mediawiki.page.gallery.styles' );
 		}
 		$output = Xml::openElement( 'ul', $attribs );
 		if ( $this->mCaption ) {
@@ -109,48 +111,51 @@ class TraditionalImageGallery extends ImageGalleryBase {
 						htmlspecialchars( $nt->getText() )
 					) .
 					'</div>';
-			} elseif ( !( $thumb = $img->transform( $transformOptions ) ) ) {
-				# Error generating thumbnail.
-				$thumbhtml = "\n\t\t\t" . '<div class="thumb" style="height: '
-					. ( $this->getThumbPadding() + $this->mHeights ) . 'px;">'
-					. htmlspecialchars( $img->getLastError() ) . '</div>';
 			} else {
-				/** @var MediaTransformOutput $thumb */
-				$vpad = $this->getVPad( $this->mHeights, $thumb->getHeight() );
+				$thumb = $img->transform( $transformOptions );
+				if ( !$thumb ) {
+					# Error generating thumbnail.
+					$thumbhtml = "\n\t\t\t" . '<div class="thumb" style="height: '
+						. ( $this->getThumbPadding() + $this->mHeights ) . 'px;">'
+						. htmlspecialchars( $img->getLastError() ) . '</div>';
+				} else {
+					/** @var MediaTransformOutput $thumb */
+					$vpad = $this->getVPad( $this->mHeights, $thumb->getHeight() );
 
-				$imageParameters = array(
-					'desc-link' => true,
-					'desc-query' => $descQuery,
-					'alt' => $alt,
-					'custom-url-link' => $link
-				);
+					$imageParameters = array(
+						'desc-link' => true,
+						'desc-query' => $descQuery,
+						'alt' => $alt,
+						'custom-url-link' => $link
+					);
 
-				// In the absence of both alt text and caption, fall back on
-				// providing screen readers with the filename as alt text
-				if ( $alt == '' && $text == '' ) {
-					$imageParameters['alt'] = $nt->getText();
-				}
+					// In the absence of both alt text and caption, fall back on
+					// providing screen readers with the filename as alt text
+					if ( $alt == '' && $text == '' ) {
+						$imageParameters['alt'] = $nt->getText();
+					}
 
-				$this->adjustImageParameters( $thumb, $imageParameters );
+					$this->adjustImageParameters( $thumb, $imageParameters );
 
-				Linker::processResponsiveImages( $img, $thumb, $transformOptions );
+					Linker::processResponsiveImages( $img, $thumb, $transformOptions );
 
-				# Set both fixed width and min-height.
-				$thumbhtml = "\n\t\t\t"
-					. '<div class="thumb" style="width: '
-					. $this->getThumbDivWidth( $thumb->getWidth() ) . 'px;">'
-					# Auto-margin centering for block-level elements. Needed
-					# now that we have video handlers since they may emit block-
-					# level elements as opposed to simple <img> tags. ref
-					# http://css-discuss.incutio.com/?page=CenteringBlockElement
-					. '<div style="margin:' . $vpad . 'px auto;">'
-					. $thumb->toHtml( $imageParameters ) . '</div></div>';
+					# Set both fixed width and min-height.
+					$thumbhtml = "\n\t\t\t"
+						. '<div class="thumb" style="width: '
+						. $this->getThumbDivWidth( $thumb->getWidth() ) . 'px;">'
+						# Auto-margin centering for block-level elements. Needed
+						# now that we have video handlers since they may emit block-
+						# level elements as opposed to simple <img> tags. ref
+						# http://css-discuss.incutio.com/?page=CenteringBlockElement
+						. '<div style="margin:' . $vpad . 'px auto;">'
+						. $thumb->toHtml( $imageParameters ) . '</div></div>';
 
-				// Call parser transform hook
-				/** @var MediaHandler $handler */
-				$handler = $img->getHandler();
-				if ( $this->mParser && $handler ) {
-					$handler->parserTransformHook( $this->mParser, $img );
+					// Call parser transform hook
+					/** @var MediaHandler $handler */
+					$handler = $img->getHandler();
+					if ( $this->mParser && $handler ) {
+						$handler->parserTransformHook( $this->mParser, $img );
+					}
 				}
 			}
 
@@ -205,7 +210,7 @@ class TraditionalImageGallery extends ImageGalleryBase {
 	protected function wrapGalleryText( $galleryText, $thumb ) {
 		# ATTENTION: The newline after <div class="gallerytext"> is needed to
 		# accommodate htmltidy which in version 4.8.6 generated crackpot html in
-		# its absence, see: http://bugzilla.wikimedia.org/show_bug.cgi?id=1765
+		# its absence, see: https://phabricator.wikimedia.org/T3765
 		# -Ævar
 
 		return "\n\t\t\t" . '<div class="gallerytext">' . "\n"

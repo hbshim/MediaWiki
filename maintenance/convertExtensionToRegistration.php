@@ -6,12 +6,32 @@ class ConvertExtensionToRegistration extends Maintenance {
 
 	protected $custom = array(
 		'MessagesDirs' => 'handleMessagesDirs',
-		'ExtensionMessagesFiles' => 'removeAbsolutePath',
+		'ExtensionMessagesFiles' => 'handleExtensionMessagesFiles',
 		'AutoloadClasses' => 'removeAbsolutePath',
 		'ExtensionCredits' => 'handleCredits',
 		'ResourceModules' => 'handleResourceModules',
+		'ResourceModuleSkinStyles' => 'handleResourceModules',
 		'Hooks' => 'handleHooks',
 		'ExtensionFunctions' => 'handleExtensionFunctions',
+		'ParserTestFiles' => 'removeAbsolutePath',
+	);
+
+	/**
+	 * Things that were formerly globals and should still be converted
+	 *
+	 * @var array
+	 */
+	protected $formerGlobals = array(
+		'TrackingCategories',
+	);
+
+	/**
+	 * No longer supported globals (with reason) should not be converted and emit a warning
+	 *
+	 * @var array
+	 */
+	protected $noLongerSupportedGlobals = array(
+		'SpecialPageGroups' => 'deprecated', // Deprecated 1.21, removed in 1.26
 	);
 
 	/**
@@ -31,12 +51,13 @@ class ConvertExtensionToRegistration extends Maintenance {
 		'type',
 	);
 
-	private $json, $dir;
+	private $json, $dir, $hasWarning = false;
 
 	public function __construct() {
 		parent::__construct();
 		$this->mDescription = 'Converts extension entry points to the new JSON registration format';
-		$this->addArg( 'path', 'Location to the PHP entry point you wish to convert', /* $required = */ true );
+		$this->addArg( 'path', 'Location to the PHP entry point you wish to convert',
+			/* $required = */ true );
 		$this->addOption( 'skin', 'Whether to write to skin.json', false, false );
 	}
 
@@ -44,13 +65,16 @@ class ConvertExtensionToRegistration extends Maintenance {
 		$processor = new ReflectionClass( 'ExtensionProcessor' );
 		$settings = $processor->getProperty( 'globalSettings' );
 		$settings->setAccessible( true );
-		return $settings->getValue();
+		return $settings->getValue() + $this->formerGlobals;
 	}
 
 	public function execute() {
 		// Extensions will do stuff like $wgResourceModules += array(...) which is a
 		// fatal unless an array is already set. So set an empty value.
-		foreach ( array_merge( $this->getAllGlobals(), array_keys( $this->custom ) ) as $var ) {
+		// And use the weird $__settings name to avoid any conflicts
+		// with real poorly named settings.
+		$__settings = array_merge( $this->getAllGlobals(), array_keys( $this->custom ) );
+		foreach ( $__settings as $var ) {
 			$var = 'wg' . $var;
 			$$var = array();
 		}
@@ -59,19 +83,28 @@ class ConvertExtensionToRegistration extends Maintenance {
 		// Try not to create any local variables before this line
 		$vars = get_defined_vars();
 		unset( $vars['this'] );
+		unset( $vars['__settings'] );
 		$this->dir = dirname( realpath( $this->getArg( 0 ) ) );
 		$this->json = array();
 		$globalSettings = $this->getAllGlobals();
 		foreach ( $vars as $name => $value ) {
-			// If an empty array, assume it's the default we set, so skip it
-			if ( is_array( $value ) && count( $value ) === 0 ) {
+			$realName = substr( $name, 2 ); // Strip 'wg'
+
+			// If it's an empty array that we likely set, skip it
+			if ( is_array( $value ) && count( $value ) === 0 && in_array( $realName, $__settings ) ) {
 				continue;
 			}
-			$realName = substr( $name, 2 ); // Strip 'wg'
+
 			if ( isset( $this->custom[$realName] ) ) {
-				call_user_func_array( array( $this, $this->custom[$realName] ), array( $realName, $value ) );
+				call_user_func_array( array( $this, $this->custom[$realName] ),
+					array( $realName, $value, $vars ) );
 			} elseif ( in_array( $realName, $globalSettings ) ) {
 				$this->json[$realName] = $value;
+			} elseif ( array_key_exists( $realName, $this->noLongerSupportedGlobals ) ) {
+				$this->output( 'Warning: Skipped global "' . $name . '" (' .
+					$this->noLongerSupportedGlobals[$realName] . '). ' .
+					"Please update the entry point before convert to registration.\n" );
+				$this->hasWarning = true;
 			} elseif ( strpos( $name, 'wg' ) === 0 ) {
 				// Most likely a config setting
 				$this->json['config'][$realName] = $value;
@@ -87,18 +120,24 @@ class ConvertExtensionToRegistration extends Maintenance {
 			}
 		}
 		$out += $this->json;
-
+		// Put this at the bottom
+		$out['manifest_version'] = ExtensionRegistry::MANIFEST_VERSION;
 		$type = $this->hasOption( 'skin' ) ? 'skin' : 'extension';
 		$fname = "{$this->dir}/$type.json";
 		$prettyJSON = FormatJson::encode( $out, "\t", FormatJson::ALL_OK );
 		file_put_contents( $fname, $prettyJSON . "\n" );
 		$this->output( "Wrote output to $fname.\n" );
+		if ( $this->hasWarning ) {
+			$this->output( "Found warnings! Please resolve the warnings and rerun this script.\n" );
+		}
 	}
 
 	protected function handleExtensionFunctions( $realName, $value ) {
 		foreach ( $value as $func ) {
 			if ( $func instanceof Closure ) {
-				$this->error( "Error: Closures cannot be converted to JSON. Please move your extension function somewhere else.", 1 );
+				$this->error( "Error: Closures cannot be converted to JSON. " .
+					"Please move your extension function somewhere else.", 1
+				);
 			}
 		}
 
@@ -109,6 +148,21 @@ class ConvertExtensionToRegistration extends Maintenance {
 		foreach ( $value as $key => $dirs ) {
 			foreach ( (array)$dirs as $dir ) {
 				$this->json[$realName][$key][] = $this->stripPath( $dir, $this->dir );
+			}
+		}
+	}
+
+	protected function handleExtensionMessagesFiles( $realName, $value, $vars ) {
+		foreach ( $value as $key => $file ) {
+			$strippedFile = $this->stripPath( $file, $this->dir );
+			if ( isset( $vars['wgMessagesDirs'][$key] ) ) {
+				$this->output(
+					"Note: Ignoring PHP shim $strippedFile. " .
+					"If your extension no longer supports versions of MediaWiki " .
+					"older than 1.23.0, you can safely delete it.\n"
+				);
+			} else {
+				$this->json[$realName][$key] = $strippedFile;
 			}
 		}
 	}
@@ -132,7 +186,7 @@ class ConvertExtensionToRegistration extends Maintenance {
 		$this->json[$realName] = $out;
 	}
 
-	protected function handleCredits( $realName, $value) {
+	protected function handleCredits( $realName, $value ) {
 		$keys = array_keys( $value );
 		$this->json['type'] = $keys[0];
 		$values = array_values( $value );
@@ -147,7 +201,9 @@ class ConvertExtensionToRegistration extends Maintenance {
 		foreach ( $value as $hookName => $handlers ) {
 			foreach ( $handlers as $func ) {
 				if ( $func instanceof Closure ) {
-					$this->error( "Error: Closures cannot be converted to JSON. Please move the handler for $hookName somewhere else.", 1 );
+					$this->error( "Error: Closures cannot be converted to JSON. " .
+						"Please move the handler for $hookName somewhere else.", 1
+					);
 				}
 			}
 		}
@@ -178,7 +234,6 @@ class ConvertExtensionToRegistration extends Maintenance {
 					}
 				}
 			}
-
 
 			$this->json[$realName][$name] = $data;
 		}

@@ -51,6 +51,7 @@
  *    'id'                  -- HTML id attribute
  *    'cssclass'            -- CSS class
  *    'csshelpclass'        -- CSS class used to style help text
+ *    'dir'                 -- Direction of the element.
  *    'options'             -- associative array mapping labels to values.
  *                             Some field types support multi-level arrays.
  *    'options-messages'    -- associative array mapping message keys to values.
@@ -75,14 +76,35 @@
  *    'size'                -- the length of text fields
  *    'filter-callback      -- a function name to give you the chance to
  *                             massage the inputted value before it's processed.
- *                             @see HTMLForm::filter()
+ *                             @see HTMLFormField::filter()
  *    'validation-callback' -- a function name to give you the chance
  *                             to impose extra validation on the field input.
- *                             @see HTMLForm::validate()
+ *                             @see HTMLFormField::validate()
  *    'name'                -- By default, the 'name' attribute of the input field
  *                             is "wp{$fieldname}".  If you want a different name
  *                             (eg one without the "wp" prefix), specify it here and
  *                             it will be used without modification.
+ *    'hide-if'             -- expression given as an array stating when the field
+ *                             should be hidden. The first array value has to be the
+ *                             expression's logic operator. Supported expressions:
+ *                               'NOT'
+ *                                 [ 'NOT', array $expression ]
+ *                                 To hide a field if a given expression is not true.
+ *                               '==='
+ *                                 [ '===', string $fieldName, string $value ]
+ *                                 To hide a field if another field identified by
+ *                                 $field has the value $value.
+ *                               '!=='
+ *                                 [ '!==', string $fieldName, string $value ]
+ *                                 Same as [ 'NOT', [ '===', $fieldName, $value ]
+ *                               'OR', 'AND', 'NOR', 'NAND'
+ *                                 [ 'XXX', array $expression1, ..., array $expressionN ]
+ *                                 To hide a field if one or more (OR), all (AND),
+ *                                 neither (NOR) or not all (NAND) given expressions
+ *                                 are evaluated as true.
+ *                             The expressions will be given to a JavaScript frontend
+ *                             module which will continually update the field's
+ *                             visibility.
  *
  * Since 1.20, you can chain mutators to ease the form generation:
  * @par Example:
@@ -103,8 +125,10 @@ class HTMLForm extends ContextSource {
 	public static $typeMappings = array(
 		'api' => 'HTMLApiField',
 		'text' => 'HTMLTextField',
+		'textwithbutton' => 'HTMLTextFieldWithButton',
 		'textarea' => 'HTMLTextAreaField',
 		'select' => 'HTMLSelectField',
+		'combobox' => 'HTMLComboboxField',
 		'radio' => 'HTMLRadioField',
 		'multiselect' => 'HTMLMultiSelectField',
 		'limitselect' => 'HTMLSelectLimitField',
@@ -116,6 +140,7 @@ class HTMLForm extends ContextSource {
 		'selectorother' => 'HTMLSelectOrOtherField',
 		'selectandother' => 'HTMLSelectAndOtherField',
 		'namespaceselect' => 'HTMLSelectNamespace',
+		'namespaceselectwithbutton' => 'HTMLSelectNamespaceWithButton',
 		'tagfilter' => 'HTMLTagFilter',
 		'submit' => 'HTMLSubmitField',
 		'hidden' => 'HTMLHiddenField',
@@ -129,6 +154,8 @@ class HTMLForm extends ContextSource {
 		'email' => 'HTMLTextField',
 		'password' => 'HTMLTextField',
 		'url' => 'HTMLTextField',
+		'title' => 'HTMLTitleTextField',
+		'user' => 'HTMLUserTextField',
 	);
 
 	public $mFieldData;
@@ -141,7 +168,7 @@ class HTMLForm extends ContextSource {
 	protected $mFieldTree;
 	protected $mShowReset = false;
 	protected $mShowSubmit = true;
-	protected $mSubmitModifierClass = 'mw-ui-constructive';
+	protected $mSubmitFlags = array( 'constructive', 'primary' );
 
 	protected $mSubmitCallback;
 	protected $mValidationErrorMessage;
@@ -207,6 +234,7 @@ class HTMLForm extends ContextSource {
 		'table',
 		'div',
 		'raw',
+		'inline',
 	);
 
 	/**
@@ -215,12 +243,12 @@ class HTMLForm extends ContextSource {
 	 */
 	protected $availableSubclassDisplayFormats = array(
 		'vform',
+		'ooui',
 	);
 
 	/**
 	 * Construct a HTMLForm object for given display type. May return a HTMLForm subclass.
 	 *
-	 * @throws MWException When the display format requested is not known
 	 * @param string $displayFormat
 	 * @param mixed $arguments... Additional arguments to pass to the constructor.
 	 * @return HTMLForm
@@ -232,6 +260,9 @@ class HTMLForm extends ContextSource {
 		switch ( $displayFormat ) {
 			case 'vform':
 				$reflector = new ReflectionClass( 'VFormHTMLForm' );
+				return $reflector->newInstanceArgs( $arguments );
+			case 'ooui':
+				$reflector = new ReflectionClass( 'OOUIHTMLForm' );
 				return $reflector->newInstanceArgs( $arguments );
 			default:
 				$reflector = new ReflectionClass( 'HTMLForm' );
@@ -265,7 +296,10 @@ class HTMLForm extends ContextSource {
 		}
 
 		// Evil hack for mobile :(
-		if ( !$this->getConfig()->get( 'HTMLFormAllowTableFormat' ) && $this->displayFormat === 'table' ) {
+		if (
+			!$this->getConfig()->get( 'HTMLFormAllowTableFormat' )
+			&& $this->displayFormat === 'table'
+		) {
 			$this->displayFormat = 'div';
 		}
 
@@ -356,6 +390,7 @@ class HTMLForm extends ContextSource {
 	 * @return bool
 	 */
 	public function isVForm() {
+		wfDeprecated( __METHOD__, '1.25' );
 		return false;
 	}
 
@@ -403,7 +438,9 @@ class HTMLForm extends ContextSource {
 	 * @throws MWException
 	 * @return HTMLFormField Instance of a subclass of HTMLFormField
 	 */
-	public static function loadInputFromParameters( $fieldname, $descriptor, HTMLForm $parent = null ) {
+	public static function loadInputFromParameters( $fieldname, $descriptor,
+		HTMLForm $parent = null
+	) {
 		$class = static::getClassFromDescriptor( $fieldname, $descriptor );
 
 		$descriptor['fieldname'] = $fieldname;
@@ -501,6 +538,12 @@ class HTMLForm extends ContextSource {
 	 *       params) or strings (message keys)
 	 */
 	function trySubmit() {
+		$valid = true;
+		$hoistedErrors = array();
+		$hoistedErrors[] = isset( $this->mValidationErrorMessage )
+			? $this->mValidationErrorMessage
+			: array( 'htmlform-invalid-input' );
+
 		$this->mWasSubmitted = true;
 
 		# Check for cancelled submission
@@ -522,15 +565,20 @@ class HTMLForm extends ContextSource {
 			if ( $field->isHidden( $this->mFieldData ) ) {
 				continue;
 			}
-			if ( $field->validate(
-					$this->mFieldData[$fieldname],
-					$this->mFieldData )
-				!== true
-			) {
-				return isset( $this->mValidationErrorMessage )
-					? $this->mValidationErrorMessage
-					: array( 'htmlform-invalid-input' );
+			$res = $field->validate( $this->mFieldData[$fieldname], $this->mFieldData );
+			if ( $res !== true ) {
+				$valid = false;
+				if ( $res !== false && !$field->canDisplayErrors() ) {
+					$hoistedErrors[] = array( 'rawmessage', $res );
+				}
 			}
+		}
+
+		if ( !$valid ) {
+			if ( count( $hoistedErrors ) === 1 ) {
+				$hoistedErrors = $hoistedErrors[0];
+			}
+			return $hoistedErrors;
 		}
 
 		$callback = $this->mSubmitCallback;
@@ -675,6 +723,21 @@ class HTMLForm extends ContextSource {
 	}
 
 	/**
+	 * Get header text.
+	 *
+	 * @param string|null $section The section to get the header text for
+	 * @since 1.26
+	 * @return string
+	 */
+	function getHeaderText( $section = null ) {
+		if ( is_null( $section ) ) {
+			return $this->mHeader;
+		} else {
+			return isset( $this->mSectionHeaders[$section] ) ? $this->mSectionHeaders[$section] : '';
+		}
+	}
+
+	/**
 	 * Add footer text, inside the form.
 	 *
 	 * @param string $msg Complete text of message to display
@@ -712,6 +775,21 @@ class HTMLForm extends ContextSource {
 		}
 
 		return $this;
+	}
+
+	/**
+	 * Get footer text.
+	 *
+	 * @param string|null $section The section to get the footer text for
+	 * @since 1.26
+	 * @return string
+	 */
+	function getFooterText( $section = null ) {
+		if ( is_null( $section ) ) {
+			return $this->mFooter;
+		} else {
+			return isset( $this->mSectionFooters[$section] ) ? $this->mSectionFooters[$section] : '';
+		}
 	}
 
 	/**
@@ -832,14 +910,15 @@ class HTMLForm extends ContextSource {
 		# For good measure (it is the default)
 		$this->getOutput()->preventClickjacking();
 		$this->getOutput()->addModules( 'mediawiki.htmlform' );
+		$this->getOutput()->addModuleStyles( 'mediawiki.htmlform.styles' );
 
 		$html = ''
 			. $this->getErrors( $submitResult )
-			. $this->mHeader
+			. $this->getHeaderText()
 			. $this->getBody()
 			. $this->getHiddenFields()
 			. $this->getButtons()
-			. $this->mFooter;
+			. $this->getFooterText();
 
 		$html = $this->wrapForm( $html );
 
@@ -859,7 +938,6 @@ class HTMLForm extends ContextSource {
 		$attribs = array(
 			'action' => $this->getAction(),
 			'method' => $this->getMethod(),
-			'class' => array( 'visualClear' ),
 			'enctype' => $encType,
 		);
 		if ( !empty( $this->mId ) ) {
@@ -878,10 +956,15 @@ class HTMLForm extends ContextSource {
 	function wrapForm( $html ) {
 		# Include a <fieldset> wrapper for style, if requested.
 		if ( $this->mWrapperLegend !== false ) {
-			$html = Xml::fieldset( $this->mWrapperLegend, $html );
+			$legend = is_string( $this->mWrapperLegend ) ? $this->mWrapperLegend : false;
+			$html = Xml::fieldset( $legend, $html );
 		}
 
-		return Html::rawElement( 'form', $this->getFormAttributes(), $html );
+		return Html::rawElement(
+			'form',
+			$this->getFormAttributes() + array( 'class' => 'visualClear' ),
+			$html
+		);
 	}
 
 	/**
@@ -938,7 +1021,10 @@ class HTMLForm extends ContextSource {
 			$attribs['class'] = array( 'mw-htmlform-submit' );
 
 			if ( $useMediaWikiUIEverywhere ) {
-				array_push( $attribs['class'], 'mw-ui-button', $this->mSubmitModifierClass );
+				foreach ( $this->mSubmitFlags as $flag ) {
+					array_push( $attribs['class'], 'mw-ui-' . $flag );
+				}
+				array_push( $attribs['class'], 'mw-ui-button' );
 			}
 
 			$buttons .= Xml::submitButton( $this->getSubmitText(), $attribs ) . "\n";
@@ -1065,7 +1151,7 @@ class HTMLForm extends ContextSource {
 	 * @since 1.24
 	 */
 	public function setSubmitDestructive() {
-		$this->mSubmitModifierClass = 'mw-ui-destructive';
+		$this->mSubmitFlags = array( 'destructive', 'primary' );
 	}
 
 	/**
@@ -1073,7 +1159,7 @@ class HTMLForm extends ContextSource {
 	 * @since 1.25
 	 */
 	public function setSubmitProgressive() {
-		$this->mSubmitModifierClass = 'mw-ui-progressive';
+		$this->mSubmitFlags = array( 'progressive', 'primary' );
 	}
 
 	/**
@@ -1185,9 +1271,10 @@ class HTMLForm extends ContextSource {
 	 * Prompt the whole form to be wrapped in a "<fieldset>", with
 	 * this text as its "<legend>" element.
 	 *
-	 * @param string|bool $legend HTML to go inside the "<legend>" element, or
-	 * false for no <legend>
-	 *     Will be escaped
+	 * @param string|bool $legend If false, no wrapper or legend will be displayed.
+	 *     If true, a wrapper will be displayed, but no legend.
+	 *     If a string, a wrapper will be displayed with that string as a legend.
+	 *     The string will be escaped before being output (this doesn't support HTML).
 	 *
 	 * @return HTMLForm $this for chaining calls (since 1.20)
 	 */
@@ -1261,13 +1348,28 @@ class HTMLForm extends ContextSource {
 	 * @return HTMLForm $this for chaining calls (since 1.20)
 	 */
 	public function setMethod( $method = 'post' ) {
-		$this->mMethod = $method;
+		$this->mMethod = strtolower( $method );
 
 		return $this;
 	}
 
+	/**
+	 * @return string Always lowercase
+	 */
 	public function getMethod() {
 		return $this->mMethod;
+	}
+
+	/**
+	 * Wraps the given $section into an user-visible fieldset.
+	 *
+	 * @param string $legend Legend text for the fieldset
+	 * @param string $section The section content in plain Html
+	 * @param array $attributes Additional attributes for the fieldset
+	 * @return string The fieldset's Html
+	 */
+	protected function wrapFieldSetSection( $legend, $section, $attributes ) {
+		return Xml::fieldset( $legend, $section, $attributes ) . "\n";
 	}
 
 	/**
@@ -1289,7 +1391,7 @@ class HTMLForm extends ContextSource {
 		&$hasUserVisibleFields = false ) {
 		$displayFormat = $this->getDisplayFormat();
 
-		$html = '';
+		$html = array();
 		$subsectionHtml = '';
 		$hasLabel = false;
 
@@ -1301,16 +1403,19 @@ class HTMLForm extends ContextSource {
 				$v = empty( $value->mParams['nodata'] )
 					? $this->mFieldData[$key]
 					: $value->getDefault();
-				$html .= $value->$getFieldHtmlMethod( $v );
 
-				$labelValue = trim( $value->getLabel() );
-				if ( $labelValue != '&#160;' && $labelValue !== '' ) {
-					$hasLabel = true;
-				}
+				$retval = $value->$getFieldHtmlMethod( $v );
 
-				if ( get_class( $value ) !== 'HTMLHiddenField' &&
-					get_class( $value ) !== 'HTMLApiField'
-				) {
+				// check, if the form field should be added to
+				// the output.
+				if ( $value->hasVisibleOutput() ) {
+					$html[] = $retval;
+
+					$labelValue = trim( $value->getLabel() );
+					if ( $labelValue != '&#160;' && $labelValue !== '' ) {
+						$hasLabel = true;
+					}
+
 					$hasUserVisibleFields = true;
 				}
 			} elseif ( is_array( $value ) ) {
@@ -1328,18 +1433,15 @@ class HTMLForm extends ContextSource {
 
 					$legend = $this->getLegend( $key );
 
-					if ( isset( $this->mSectionHeaders[$key] ) ) {
-						$section = $this->mSectionHeaders[$key] . $section;
-					}
-					if ( isset( $this->mSectionFooters[$key] ) ) {
-						$section .= $this->mSectionFooters[$key];
-					}
+					$section = $this->getHeaderText( $key ) .
+						$section .
+						$this->getFooterText( $key );
 
 					$attributes = array();
 					if ( $fieldsetIDPrefix ) {
 						$attributes['id'] = Sanitizer::escapeId( "$fieldsetIDPrefix$key" );
 					}
-					$subsectionHtml .= Xml::fieldset( $legend, $section, $attributes ) . "\n";
+					$subsectionHtml .= $this->wrapFieldSetSection( $legend, $section, $attributes );
 				} else {
 					// Just return the inputs, nothing fancy.
 					$subsectionHtml .= $section;
@@ -1347,34 +1449,56 @@ class HTMLForm extends ContextSource {
 			}
 		}
 
-		if ( $displayFormat !== 'raw' ) {
-			$classes = array();
+		$html = $this->formatSection( $html, $sectionName, $hasLabel );
 
-			if ( !$hasLabel ) { // Avoid strange spacing when no labels exist
-				$classes[] = 'mw-htmlform-nolabel';
-			}
-
-			$attribs = array(
-				'class' => implode( ' ', $classes ),
-			);
-
-			if ( $sectionName ) {
-				$attribs['id'] = Sanitizer::escapeId( $sectionName );
-			}
-
-			if ( $displayFormat === 'table' ) {
-				$html = Html::rawElement( 'table',
-						$attribs,
-						Html::rawElement( 'tbody', array(), "\n$html\n" ) ) . "\n";
+		if ( $subsectionHtml ) {
+			if ( $this->mSubSectionBeforeFields ) {
+				return $subsectionHtml . "\n" . $html;
 			} else {
-				$html = Html::rawElement( 'div', $attribs, "\n$html\n" );
+				return $html . "\n" . $subsectionHtml;
 			}
+		} else {
+			return $html;
+		}
+	}
+
+	/**
+	 * Put a form section together from the individual fields' HTML, merging it and wrapping.
+	 * @param array $fieldsHtml
+	 * @param string $sectionName
+	 * @param bool $anyFieldHasLabel
+	 * @return string HTML
+	 */
+	protected function formatSection( array $fieldsHtml, $sectionName, $anyFieldHasLabel ) {
+		$displayFormat = $this->getDisplayFormat();
+		$html = implode( '', $fieldsHtml );
+
+		if ( $displayFormat === 'raw' ) {
+			return $html;
 		}
 
-		if ( $this->mSubSectionBeforeFields ) {
-			return $subsectionHtml . "\n" . $html;
+		$classes = array();
+
+		if ( !$anyFieldHasLabel ) { // Avoid strange spacing when no labels exist
+			$classes[] = 'mw-htmlform-nolabel';
+		}
+
+		$attribs = array(
+			'class' => implode( ' ', $classes ),
+		);
+
+		if ( $sectionName ) {
+			$attribs['id'] = Sanitizer::escapeId( $sectionName );
+		}
+
+		if ( $displayFormat === 'table' ) {
+			return Html::rawElement( 'table',
+					$attribs,
+					Html::rawElement( 'tbody', array(), "\n$html\n" ) ) . "\n";
+		} elseif ( $displayFormat === 'inline' ) {
+			return Html::rawElement( 'span', $attribs, "\n$html\n" );
 		} else {
-			return $html . "\n" . $subsectionHtml;
+			return Html::rawElement( 'div', $attribs, "\n$html\n" );
 		}
 	}
 

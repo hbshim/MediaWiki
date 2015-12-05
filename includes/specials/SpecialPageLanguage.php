@@ -87,11 +87,14 @@ class SpecialPageLanguage extends FormSpecialPage {
 	}
 
 	protected function postText() {
-		return $this->showLogFragment( $this->par );
+		if ( $this->par ) {
+			return $this->showLogFragment( $this->par );
+		}
+		return '';
 	}
 
 	protected function getDisplayFormat() {
-		return 'vform';
+		return 'ooui';
 	}
 
 	public function alterForm( HTMLForm $form ) {
@@ -193,5 +196,9 @@ class SpecialPageLanguage extends FormSpecialPage {
 		$out2 = '';
 		LogEventsList::showLogExtract( $out2, 'pagelang', $title );
 		return $out1 . $out2;
+	}
+
+	protected function getGroupName() {
+		return 'pagetools';
 	}
 }

@@ -225,8 +225,6 @@ class ApiQueryImageInfo extends ApiQueryBase {
 	 * @return array|null Key-val array of 'width' and 'height', or null
 	 */
 	public function getScale( $params ) {
-		$p = $this->getModulePrefix();
-
 		if ( $params['urlwidth'] != -1 ) {
 			$scale = array();
 			$scale['width'] = $params['urlwidth'];
@@ -339,7 +337,8 @@ class ApiQueryImageInfo extends ApiQueryBase {
 		// in the actual normalised version, only if we can actually normalise them,
 		// so we use the functions scope to throw away the normalisations.
 		if ( !$h->normaliseParams( $image, $finalParams ) ) {
-			$this->dieUsage( "Could not normalise image parameters for " . $image->getName(), "urlparamnormal" );
+			$this->dieUsage( 'Could not normalise image parameters for ' .
+				$image->getName(), 'urlparamnormal' );
 		}
 	}
 
@@ -373,7 +372,9 @@ class ApiQueryImageInfo extends ApiQueryBase {
 			);
 		}
 		$version = $opts['version'];
-		$vals = array();
+		$vals = array(
+			ApiResult::META_TYPE => 'assoc',
+		);
 		// Timestamp is shown even if the file is revdelete'd in interface
 		// so do same here.
 		if ( isset( $prop['timestamp'] ) ) {
@@ -397,7 +398,7 @@ class ApiQueryImageInfo extends ApiQueryBase {
 
 		if ( $user || $userid ) {
 			if ( $file->isDeleted( File::DELETED_USER ) ) {
-				$vals['userhidden'] = '';
+				$vals['userhidden'] = true;
 				$anyHidden = true;
 			}
 			if ( $canShowField( File::DELETED_USER ) ) {
@@ -408,7 +409,7 @@ class ApiQueryImageInfo extends ApiQueryBase {
 					$vals['userid'] = $file->getUser( 'id' );
 				}
 				if ( !$file->getUser( 'id' ) ) {
-					$vals['anon'] = '';
+					$vals['anon'] = true;
 				}
 			}
 		}
@@ -438,7 +439,7 @@ class ApiQueryImageInfo extends ApiQueryBase {
 
 		if ( $pcomment || $comment ) {
 			if ( $file->isDeleted( File::DELETED_COMMENT ) ) {
-				$vals['commenthidden'] = '';
+				$vals['commenthidden'] = true;
 				$anyHidden = true;
 			}
 			if ( $canShowField( File::DELETED_COMMENT ) ) {
@@ -469,7 +470,7 @@ class ApiQueryImageInfo extends ApiQueryBase {
 		}
 
 		if ( $file->isDeleted( File::DELETED_FILE ) ) {
-			$vals['filehidden'] = '';
+			$vals['filehidden'] = true;
 			$anyHidden = true;
 		}
 
@@ -478,7 +479,7 @@ class ApiQueryImageInfo extends ApiQueryBase {
 		}
 
 		if ( !$canShowField( File::DELETED_FILE ) ) {
-			//Early return, tidier than indenting all following things one level
+			// Early return, tidier than indenting all following things one level
 			return $vals;
 		}
 
@@ -512,18 +513,18 @@ class ApiQueryImageInfo extends ApiQueryBase {
 					$vals['thumberror'] = $mto->toText();
 				}
 			}
-			$vals['url'] = wfExpandUrl( $file->getFullURL(), PROTO_CURRENT );
+			$vals['url'] = wfExpandUrl( $file->getFullUrl(), PROTO_CURRENT );
 			$vals['descriptionurl'] = wfExpandUrl( $file->getDescriptionUrl(), PROTO_CURRENT );
 		}
 
 		if ( $sha1 ) {
-			$vals['sha1'] = wfBaseConvert( $file->getSha1(), 36, 16, 40 );
+			$vals['sha1'] = Wikimedia\base_convert( $file->getSha1(), 36, 16, 40 );
 		}
 
 		if ( $meta ) {
-			wfSuppressWarnings();
+			MediaWiki\suppressWarnings();
 			$metadata = unserialize( $file->getMetadata() );
-			wfRestoreWarnings();
+			MediaWiki\restoreWarnings();
 			if ( $metadata && $version !== 'latest' ) {
 				$metadata = $file->convertMetadataVersion( $metadata, $version );
 			}
@@ -590,7 +591,10 @@ class ApiQueryImageInfo extends ApiQueryBase {
 		$retval = array();
 		if ( is_array( $metadata ) ) {
 			foreach ( $metadata as $key => $value ) {
-				$r = array( 'name' => $key );
+				$r = array(
+					'name' => $key,
+					ApiResult::META_BC_BOOLS => array( 'value' ),
+				);
 				if ( is_array( $value ) ) {
 					$r['value'] = self::processMetaData( $value, $result );
 				} else {
@@ -599,7 +603,7 @@ class ApiQueryImageInfo extends ApiQueryBase {
 				$retval[] = $r;
 			}
 		}
-		$result->setIndexedTagName( $retval, 'metadata' );
+		ApiResult::setIndexedTagName( $retval, 'metadata' );
 
 		return $retval;
 	}
@@ -793,6 +797,6 @@ class ApiQueryImageInfo extends ApiQueryBase {
 	}
 
 	public function getHelpUrls() {
-		return 'https://www.mediawiki.org/wiki/API:Properties#imageinfo_.2F_ii';
+		return 'https://www.mediawiki.org/wiki/API:Imageinfo';
 	}
 }

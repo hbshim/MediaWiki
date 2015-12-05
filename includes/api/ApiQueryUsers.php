@@ -48,6 +48,7 @@ class ApiQueryUsers extends ApiQueryBase {
 		'registration',
 		'emailable',
 		'gender',
+		'centralids',
 	);
 
 	public function __construct( ApiQuery $query, $moduleName ) {
@@ -67,8 +68,9 @@ class ApiQueryUsers extends ApiQueryBase {
 			return $this->tokenFunctions;
 		}
 
-		// If we're in JSON callback mode, no tokens can be obtained
-		if ( !is_null( $this->getMain()->getRequest()->getVal( 'callback' ) ) ) {
+		// If we're in a mode that breaks the same-origin policy, no tokens can
+		// be obtained
+		if ( $this->lacksSameOriginSecurity() ) {
 			return array();
 		}
 
@@ -109,7 +111,7 @@ class ApiQueryUsers extends ApiQueryBase {
 		foreach ( $users as $u ) {
 			$n = User::getCanonicalName( $u );
 			if ( $n === false || $n === '' ) {
-				$vals = array( 'name' => $u, 'invalid' => '' );
+				$vals = array( 'name' => $u, 'invalid' => true );
 				$fit = $result->addValue( array( 'query', $this->getModuleName() ),
 					null, $vals );
 				if ( !$fit ) {
@@ -189,19 +191,19 @@ class ApiQueryUsers extends ApiQueryBase {
 					$data[$name]['rights'] = $user->getRights();
 				}
 				if ( $row->ipb_deleted ) {
-					$data[$name]['hidden'] = '';
+					$data[$name]['hidden'] = true;
 				}
 				if ( isset( $this->prop['blockinfo'] ) && !is_null( $row->ipb_by_text ) ) {
-					$data[$name]['blockid'] = $row->ipb_id;
+					$data[$name]['blockid'] = (int)$row->ipb_id;
 					$data[$name]['blockedby'] = $row->ipb_by_text;
-					$data[$name]['blockedbyid'] = $row->ipb_by;
+					$data[$name]['blockedbyid'] = (int)$row->ipb_by;
 					$data[$name]['blockedtimestamp'] = wfTimestamp( TS_ISO_8601, $row->ipb_timestamp );
 					$data[$name]['blockreason'] = $row->ipb_reason;
 					$data[$name]['blockexpiry'] = $row->ipb_expiry;
 				}
 
-				if ( isset( $this->prop['emailable'] ) && $user->canReceiveEmail() ) {
-					$data[$name]['emailable'] = '';
+				if ( isset( $this->prop['emailable'] ) ) {
+					$data[$name]['emailable'] = $user->canReceiveEmail();
 				}
 
 				if ( isset( $this->prop['gender'] ) ) {
@@ -210,6 +212,12 @@ class ApiQueryUsers extends ApiQueryBase {
 						$gender = 'unknown';
 					}
 					$data[$name]['gender'] = $gender;
+				}
+
+				if ( isset( $this->prop['centralids'] ) ) {
+					$data[$name] += ApiQueryUserInfo::getCentralUserInfo(
+						$this->getConfig(), $user, $params['attachedwiki']
+					);
 				}
 
 				if ( !is_null( $params['token'] ) ) {
@@ -236,7 +244,7 @@ class ApiQueryUsers extends ApiQueryBase {
 				$iwUser = $urPage->fetchUser( $u );
 
 				if ( $iwUser instanceof UserRightsProxy ) {
-					$data[$u]['interwiki'] = '';
+					$data[$u]['interwiki'] = true;
 
 					if ( !is_null( $params['token'] ) ) {
 						$tokenFunctions = $this->getTokenFunctions();
@@ -251,17 +259,20 @@ class ApiQueryUsers extends ApiQueryBase {
 						}
 					}
 				} else {
-					$data[$u]['missing'] = '';
+					$data[$u]['missing'] = true;
 				}
 			} else {
 				if ( isset( $this->prop['groups'] ) && isset( $data[$u]['groups'] ) ) {
-					$result->setIndexedTagName( $data[$u]['groups'], 'g' );
+					ApiResult::setArrayType( $data[$u]['groups'], 'array' );
+					ApiResult::setIndexedTagName( $data[$u]['groups'], 'g' );
 				}
 				if ( isset( $this->prop['implicitgroups'] ) && isset( $data[$u]['implicitgroups'] ) ) {
-					$result->setIndexedTagName( $data[$u]['implicitgroups'], 'g' );
+					ApiResult::setArrayType( $data[$u]['implicitgroups'], 'array' );
+					ApiResult::setIndexedTagName( $data[$u]['implicitgroups'], 'g' );
 				}
 				if ( isset( $this->prop['rights'] ) && isset( $data[$u]['rights'] ) ) {
-					$result->setIndexedTagName( $data[$u]['rights'], 'r' );
+					ApiResult::setArrayType( $data[$u]['rights'], 'array' );
+					ApiResult::setIndexedTagName( $data[$u]['rights'], 'r' );
 				}
 			}
 
@@ -274,7 +285,7 @@ class ApiQueryUsers extends ApiQueryBase {
 			}
 			$done[] = $u;
 		}
-		$result->setIndexedTagName_internal( array( 'query', $this->getModuleName() ), 'user' );
+		$result->addIndexedTagName( array( 'query', $this->getModuleName() ), 'user' );
 	}
 
 	public function getCacheMode( $params ) {
@@ -290,7 +301,6 @@ class ApiQueryUsers extends ApiQueryBase {
 	public function getAllowedParams() {
 		return array(
 			'prop' => array(
-				ApiBase::PARAM_DFLT => null,
 				ApiBase::PARAM_ISMULTI => true,
 				ApiBase::PARAM_TYPE => array(
 					'blockinfo',
@@ -301,8 +311,11 @@ class ApiQueryUsers extends ApiQueryBase {
 					'registration',
 					'emailable',
 					'gender',
-				)
+					'centralids',
+				),
+				ApiBase::PARAM_HELP_MSG_PER_VALUE => array(),
 			),
+			'attachedwiki' => null,
 			'users' => array(
 				ApiBase::PARAM_ISMULTI => true
 			),

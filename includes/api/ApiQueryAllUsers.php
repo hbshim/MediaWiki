@@ -41,17 +41,12 @@ class ApiQueryAllUsers extends ApiQueryBase {
 	 * @return string
 	 */
 	private function getCanonicalUserName( $name ) {
-		return str_replace( '_', ' ', $name );
+		return strtr( $name, '_', ' ' );
 	}
 
 	public function execute() {
 		$params = $this->extractRequestParams();
 		$activeUserDays = $this->getConfig()->get( 'ActiveUserDays' );
-
-		if ( $params['activeusers'] ) {
-			// Update active user cache
-			SpecialActiveUsers::mergeActiveUsers( 300, $activeUserDays );
-		}
 
 		$db = $this->getDB();
 
@@ -64,9 +59,10 @@ class ApiQueryAllUsers extends ApiQueryBase {
 			$fld_rights = isset( $prop['rights'] );
 			$fld_registration = isset( $prop['registration'] );
 			$fld_implicitgroups = isset( $prop['implicitgroups'] );
+			$fld_centralids = isset( $prop['centralids'] );
 		} else {
 			$fld_blockinfo = $fld_editcount = $fld_groups = $fld_registration =
-				$fld_rights = $fld_implicitgroups = false;
+				$fld_rights = $fld_implicitgroups = $fld_centralids = false;
 		}
 
 		$limit = $params['limit'];
@@ -100,7 +96,7 @@ class ApiQueryAllUsers extends ApiQueryBase {
 
 			// no group with the given right(s) exists, no need for a query
 			if ( !count( $groups ) ) {
-				$this->getResult()->setIndexedTagName_internal( array( 'query', $this->getModuleName() ), '' );
+				$this->getResult()->addIndexedTagName( array( 'query', $this->getModuleName() ), '' );
 
 				return;
 			}
@@ -240,20 +236,26 @@ class ApiQueryAllUsers extends ApiQueryBase {
 			}
 
 			$data = array(
-				'userid' => $row->user_id,
+				'userid' => (int)$row->user_id,
 				'name' => $row->user_name,
 			);
 
+			if ( $fld_centralids ) {
+				$data += ApiQueryUserInfo::getCentralUserInfo(
+					$this->getConfig(), User::newFromId( $row->user_id ), $params['attachedwiki']
+				);
+			}
+
 			if ( $fld_blockinfo && !is_null( $row->ipb_by_text ) ) {
-				$data['blockid'] = $row->ipb_id;
+				$data['blockid'] = (int)$row->ipb_id;
 				$data['blockedby'] = $row->ipb_by_text;
-				$data['blockedbyid'] = $row->ipb_by;
+				$data['blockedbyid'] = (int)$row->ipb_by;
 				$data['blockedtimestamp'] = wfTimestamp( TS_ISO_8601, $row->ipb_timestamp );
 				$data['blockreason'] = $row->ipb_reason;
 				$data['blockexpiry'] = $row->ipb_expiry;
 			}
 			if ( $row->ipb_deleted ) {
-				$data['hidden'] = '';
+				$data['hidden'] = true;
 			}
 			if ( $fld_editcount ) {
 				$data['editcount'] = intval( $row->user_editcount );
@@ -269,7 +271,6 @@ class ApiQueryAllUsers extends ApiQueryBase {
 			}
 
 			if ( $fld_implicitgroups || $fld_groups || $fld_rights ) {
-				$user = User::newFromId( $row->user_id );
 				$implicitGroups = User::newFromId( $row->user_id )->getAutomaticGroups();
 				if ( isset( $row->groups ) && $row->groups !== '' ) {
 					$groups = array_merge( $implicitGroups, explode( '|', $row->groups ) );
@@ -279,17 +280,20 @@ class ApiQueryAllUsers extends ApiQueryBase {
 
 				if ( $fld_groups ) {
 					$data['groups'] = $groups;
-					$result->setIndexedTagName( $data['groups'], 'g' );
+					ApiResult::setIndexedTagName( $data['groups'], 'g' );
+					ApiResult::setArrayType( $data['groups'], 'array' );
 				}
 
 				if ( $fld_implicitgroups ) {
 					$data['implicitgroups'] = $implicitGroups;
-					$result->setIndexedTagName( $data['implicitgroups'], 'g' );
+					ApiResult::setIndexedTagName( $data['implicitgroups'], 'g' );
+					ApiResult::setArrayType( $data['implicitgroups'], 'array' );
 				}
 
 				if ( $fld_rights ) {
 					$data['rights'] = User::getGroupPermissions( $groups );
-					$result->setIndexedTagName( $data['rights'], 'r' );
+					ApiResult::setIndexedTagName( $data['rights'], 'r' );
+					ApiResult::setArrayType( $data['rights'], 'array' );
 				}
 			}
 
@@ -300,7 +304,7 @@ class ApiQueryAllUsers extends ApiQueryBase {
 			}
 		}
 
-		$result->setIndexedTagName_internal( array( 'query', $this->getModuleName() ), 'u' );
+		$result->addIndexedTagName( array( 'query', $this->getModuleName() ), 'u' );
 	}
 
 	public function getCacheMode( $params ) {
@@ -341,8 +345,10 @@ class ApiQueryAllUsers extends ApiQueryBase {
 					'implicitgroups',
 					'rights',
 					'editcount',
-					'registration'
-				)
+					'registration',
+					'centralids',
+				),
+				ApiBase::PARAM_HELP_MSG_PER_VALUE => array(),
 			),
 			'limit' => array(
 				ApiBase::PARAM_DFLT => 10,
@@ -359,6 +365,7 @@ class ApiQueryAllUsers extends ApiQueryBase {
 					$this->getConfig()->get( 'ActiveUserDays' )
 				),
 			),
+			'attachedwiki' => null,
 		);
 	}
 

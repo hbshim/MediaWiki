@@ -44,16 +44,6 @@ class MWCryptRand {
 	protected static $singleton = null;
 
 	/**
-	 * The hash algorithm being used
-	 */
-	protected $algo = null;
-
-	/**
-	 * The number of bytes outputted by the hash algorithm
-	 */
-	protected $hashLength = null;
-
-	/**
 	 * A boolean indicating whether the previous random generation was done using
 	 * cryptographically strong random number generator or not.
 	 */
@@ -96,9 +86,9 @@ class MWCryptRand {
 		}
 
 		foreach ( $files as $file ) {
-			wfSuppressWarnings();
+			MediaWiki\suppressWarnings();
 			$stat = stat( $file );
-			wfRestoreWarnings();
+			MediaWiki\restoreWarnings();
 			if ( $stat ) {
 				// stat() duplicates data into numeric and string keys so kill off all the numeric ones
 				foreach ( $stat as $k => $v ) {
@@ -107,7 +97,8 @@ class MWCryptRand {
 					}
 				}
 				// The absolute filename itself will differ from install to install so don't leave it out
-				if ( ( $path = realpath( $file ) ) !== false ) {
+				$path = realpath( $file );
+				if ( $path !== false ) {
 					$state .= $path;
 				} else {
 					$state .= $file;
@@ -156,7 +147,7 @@ class MWCryptRand {
 		// loop to gather little entropy)
 		$minIterations = self::MIN_ITERATIONS;
 		// Duration of time to spend doing calculations (in seconds)
-		$duration = ( self::MSEC_PER_BYTE / 1000 ) * $this->hashLength();
+		$duration = ( self::MSEC_PER_BYTE / 1000 ) * MWCryptHash::hashLength();
 		// Create a buffer to use to trigger memory operations
 		$bufLength = 10000000;
 		$buffer = str_repeat( ' ', $bufLength );
@@ -183,7 +174,7 @@ class MWCryptRand {
 			$iterations++;
 		}
 		$timeTaken = $currentTime - $startTime;
-		$data = $this->hash( $data );
+		$data = MWCryptHash::hash( $data );
 
 		wfDebug( __METHOD__ . ": Clock drift calculation " .
 			"(time-taken=" . ( $timeTaken * 1000 ) . "ms, " .
@@ -203,80 +194,13 @@ class MWCryptRand {
 			// Initialize the state with whatever unstable data we can find
 			// It's important that this data is hashed right afterwards to prevent
 			// it from being leaked into the output stream
-			$state = $this->hash( $this->initialRandomState() );
+			$state = MWCryptHash::hash( $this->initialRandomState() );
 		}
 		// Generate a new random state based on the initial random state or previous
 		// random state by combining it with clock drift
 		$state = $this->driftHash( $state );
 
 		return $state;
-	}
-
-	/**
-	 * Decide on the best acceptable hash algorithm we have available for hash()
-	 * @throws MWException
-	 * @return string A hash algorithm
-	 */
-	protected function hashAlgo() {
-		if ( !is_null( $this->algo ) ) {
-			return $this->algo;
-		}
-
-		$algos = hash_algos();
-		$preference = array( 'whirlpool', 'sha256', 'sha1', 'md5' );
-
-		foreach ( $preference as $algorithm ) {
-			if ( in_array( $algorithm, $algos ) ) {
-				$this->algo = $algorithm;
-				wfDebug( __METHOD__ . ": Using the {$this->algo} hash algorithm.\n" );
-
-				return $this->algo;
-			}
-		}
-
-		// We only reach here if no acceptable hash is found in the list, this should
-		// be a technical impossibility since most of php's hash list is fixed and
-		// some of the ones we list are available as their own native functions
-		// But since we already require at least 5.2 and hash() was default in
-		// 5.1.2 we don't bother falling back to methods like sha1 and md5.
-		throw new MWException( "Could not find an acceptable hashing function in hash_algos()" );
-	}
-
-	/**
-	 * Return the byte-length output of the hash algorithm we are
-	 * using in self::hash and self::hmac.
-	 *
-	 * @return int Number of bytes the hash outputs
-	 */
-	protected function hashLength() {
-		if ( is_null( $this->hashLength ) ) {
-			$this->hashLength = strlen( $this->hash( '' ) );
-		}
-
-		return $this->hashLength;
-	}
-
-	/**
-	 * Generate an acceptably unstable one-way-hash of some text
-	 * making use of the best hash algorithm that we have available.
-	 *
-	 * @param string $data
-	 * @return string A raw hash of the data
-	 */
-	protected function hash( $data ) {
-		return hash( $this->hashAlgo(), $data, true );
-	}
-
-	/**
-	 * Generate an acceptably unstable one-way-hmac of some text
-	 * making use of the best hash algorithm that we have available.
-	 *
-	 * @param string $data
-	 * @param string $key
-	 * @return string A raw hash of the data
-	 */
-	protected function hmac( $data, $key ) {
-		return hash_hmac( $this->hashAlgo(), $data, $key, true );
 	}
 
 	/**
@@ -363,9 +287,9 @@ class MWCryptRand {
 			}
 			// /dev/urandom is generally considered the best possible commonly
 			// available random source, and is available on most *nix systems.
-			wfSuppressWarnings();
+			MediaWiki\suppressWarnings();
 			$urandom = fopen( "/dev/urandom", "rb" );
-			wfRestoreWarnings();
+			MediaWiki\restoreWarnings();
 
 			// Attempt to read all our random data from urandom
 			// php's fread always does buffered reads based on the stream's chunk_size
@@ -407,7 +331,7 @@ class MWCryptRand {
 				": Falling back to using a pseudo random state to generate randomness.\n" );
 		}
 		while ( strlen( $buffer ) < $bytes ) {
-			$buffer .= $this->hmac( $this->randomState(), mt_rand() );
+			$buffer .= MWCryptHash::hmac( $this->randomState(), mt_rand() );
 			// This code is never really cryptographically strong, if we use it
 			// at all, then set strong to false.
 			$this->strong = false;

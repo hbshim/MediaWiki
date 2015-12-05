@@ -38,6 +38,8 @@ class ApiFileRevert extends ApiBase {
 	protected $params;
 
 	public function execute() {
+		$this->useTransactionalTimeLimit();
+
 		$this->params = $this->extractRequestParams();
 		// Extract the file and archiveName from the request parameters
 		$this->validateParameters();
@@ -61,7 +63,7 @@ class ApiFileRevert extends ApiBase {
 		} else {
 			$result = array(
 				'result' => 'Failure',
-				'errors' => $this->getResult()->convertStatusToArray( $status ),
+				'errors' => $this->getErrorFormatter()->arrayFromStatus( $status ),
 			);
 		}
 

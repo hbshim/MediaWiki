@@ -175,10 +175,12 @@ class OldLocalFile extends LocalFile {
 	}
 
 	function loadFromDB( $flags = 0 ) {
-
 		$this->dataLoaded = true;
 
-		$dbr = $this->repo->getSlaveDB();
+		$dbr = ( $flags & self::READ_LATEST )
+			? $this->repo->getMasterDB()
+			: $this->repo->getSlaveDB();
+
 		$conds = array( 'oi_name' => $this->getName() );
 		if ( is_null( $this->requestedTime ) ) {
 			$conds['oi_archive_name'] = $this->archive_name;
@@ -362,9 +364,8 @@ class OldLocalFile extends LocalFile {
 	 * @param User $user User who did this upload
 	 * @return bool
 	 */
-	function recordOldUpload( $srcPath, $archiveName, $timestamp, $comment, $user ) {
+	protected function recordOldUpload( $srcPath, $archiveName, $timestamp, $comment, $user ) {
 		$dbw = $this->repo->getMasterDB();
-		$dbw->begin( __METHOD__ );
 
 		$dstPath = $this->repo->getZonePath( 'public' ) . '/' . $this->getRel();
 		$props = $this->repo->getFileProps( $dstPath );
@@ -391,8 +392,6 @@ class OldLocalFile extends LocalFile {
 				'oi_sha1' => $props['sha1'],
 			), __METHOD__
 		);
-
-		$dbw->commit( __METHOD__ );
 
 		return true;
 	}

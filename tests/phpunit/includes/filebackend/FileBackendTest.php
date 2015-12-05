@@ -1478,7 +1478,7 @@ class FileBackendTest extends MediaWikiTestCase {
 		$url = $this->backend->getFileHttpUrl( array( 'src' => $source ) );
 
 		if ( $url !== null ) { // supported
-			$data = Http::request( "GET", $url );
+			$data = Http::request( "GET", $url, array(), __METHOD__ );
 			$this->assertEquals( $content, $data,
 				"HTTP GET of URL has right contents ($backendName)." );
 		}
@@ -1517,7 +1517,7 @@ class FileBackendTest extends MediaWikiTestCase {
 			array( "$base/unittest-cont1/e/a/z/some_file1.txt", true ),
 			array( "$base/unittest-cont2/a/z/some_file2.txt", true ),
 			# Specific to FS backend with no basePath field set
-			#array( "$base/unittest-cont3/a/z/some_file3.txt", false ),
+			# array( "$base/unittest-cont3/a/z/some_file3.txt", false ),
 		);
 	}
 
@@ -1711,7 +1711,7 @@ class FileBackendTest extends MediaWikiTestCase {
 		$this->assertEquals( strlen( $fileBContents ),
 			$this->backend->getFileSize( array( 'src' => $fileC ) ),
 			"Correct file size of $fileC" );
-		$this->assertEquals( wfBaseConvert( sha1( $fileBContents ), 16, 36, 31 ),
+		$this->assertEquals( Wikimedia\base_convert( sha1( $fileBContents ), 16, 36, 31 ),
 			$this->backend->getFileSha1Base36( array( 'src' => $fileC ) ),
 			"Correct file SHA-1 of $fileC" );
 	}
@@ -1810,7 +1810,7 @@ class FileBackendTest extends MediaWikiTestCase {
 		$this->assertEquals( strlen( $fileBContents ),
 			$this->backend->getFileSize( array( 'src' => $fileC ) ),
 			"Correct file size of $fileC" );
-		$this->assertEquals( wfBaseConvert( sha1( $fileBContents ), 16, 36, 31 ),
+		$this->assertEquals( Wikimedia\base_convert( sha1( $fileBContents ), 16, 36, 31 ),
 			$this->backend->getFileSha1Base36( array( 'src' => $fileC ) ),
 			"Correct file SHA-1 of $fileC" );
 	}
@@ -1887,7 +1887,7 @@ class FileBackendTest extends MediaWikiTestCase {
 		$this->assertEquals( strlen( $fileBContents ),
 			$this->backend->getFileSize( array( 'src' => $fileA ) ),
 			"Correct file size of $fileA" );
-		$this->assertEquals( wfBaseConvert( sha1( $fileBContents ), 16, 36, 31 ),
+		$this->assertEquals( Wikimedia\base_convert( sha1( $fileBContents ), 16, 36, 31 ),
 			$this->backend->getFileSha1Base36( array( 'src' => $fileA ) ),
 			"Correct file SHA-1 of $fileA" );
 	}
@@ -2347,7 +2347,7 @@ class FileBackendTest extends MediaWikiTestCase {
 			$this->assertEquals( true, $status->isOK(),
 				"Locking of files succeeded with OK status ($backendName) ($i)." );
 
-			## Flip the acquire/release ordering around ##
+			# # Flip the acquire/release ordering around ##
 
 			$status = $this->backend->lockFiles( $paths, LockManager::LOCK_SH );
 			$this->assertEquals( print_r( array(), true ), print_r( $status->errors, true ),
@@ -2376,7 +2376,7 @@ class FileBackendTest extends MediaWikiTestCase {
 
 		$status = Status::newGood();
 		$sl = $this->backend->getScopedFileLocks( $paths, LockManager::LOCK_EX, $status );
-		$this->assertType( 'ScopedLock', $sl,
+		$this->assertInstanceOf( 'ScopedLock', $sl,
 			"Scoped locking of files succeeded ($backendName)." );
 		$this->assertEquals( array(), $status->errors,
 			"Scoped locking of files succeeded ($backendName)." );
@@ -2390,6 +2390,170 @@ class FileBackendTest extends MediaWikiTestCase {
 			"Scoped unlocking of files succeeded ($backendName)." );
 		$this->assertEquals( true, $status->isOK(),
 			"Scoped unlocking of files succeeded with OK status ($backendName)." );
+	}
+
+	/**
+	 * @dataProvider provider_testGetContentType
+	 */
+	public function testGetContentType( $mimeCallback, $mimeFromString ) {
+		global $IP;
+
+		$be = TestingAccessWrapper::newFromObject( new MemoryFileBackend(
+			array(
+				'name' => 'testing',
+				'class' => 'MemoryFileBackend',
+				'wikiId' => 'meow',
+				'mimeCallback' => $mimeCallback
+			)
+		) );
+
+		$dst = 'mwstore://testing/container/path/to/file_no_ext';
+		$src = "$IP/tests/phpunit/data/media/srgb.jpg";
+		$this->assertEquals( 'image/jpeg', $be->getContentType( $dst, null, $src ) );
+		$this->assertEquals(
+			$mimeFromString ? 'image/jpeg' : 'unknown/unknown',
+			$be->getContentType( $dst, file_get_contents( $src ), null ) );
+
+		$src = "$IP/tests/phpunit/data/media/Png-native-test.png";
+		$this->assertEquals( 'image/png', $be->getContentType( $dst, null, $src ) );
+		$this->assertEquals(
+			$mimeFromString ? 'image/png' : 'unknown/unknown',
+			$be->getContentType( $dst, file_get_contents( $src ), null ) );
+	}
+
+	public static function provider_testGetContentType() {
+		return array(
+			array( null, false ),
+			array( array( FileBackendGroup::singleton(), 'guessMimeInternal' ), true )
+		);
+	}
+
+	public function testReadAffinity() {
+		$be = TestingAccessWrapper::newFromObject(
+			new FileBackendMultiWrite( array(
+				'name' => 'localtesting',
+				'wikiId' => wfWikiId() . mt_rand(),
+				'backends' => array(
+					array( // backend 0
+						'name' => 'multitesting0',
+						'class' => 'MemoryFileBackend',
+						'isMultiMaster' => false,
+						'readAffinity' => true
+					),
+					array( // backend 1
+						'name' => 'multitesting1',
+						'class' => 'MemoryFileBackend',
+						'isMultiMaster' => true
+					)
+				)
+			) )
+		);
+
+		$this->assertEquals(
+			1,
+			$be->getReadIndexFromParams( array( 'latest' => 1 ) ),
+			'Reads with "latest" flag use backend 1'
+		);
+		$this->assertEquals(
+			0,
+			$be->getReadIndexFromParams( array( 'latest' => 0 ) ),
+			'Reads without "latest" flag use backend 0'
+		);
+
+		$p = 'container/test-cont/file.txt';
+		$be->backends[0]->quickCreate( array(
+			'dst' => "mwstore://multitesting0/$p", 'content' => 'cattitude' ) );
+		$be->backends[1]->quickCreate( array(
+			'dst' => "mwstore://multitesting1/$p", 'content' => 'princess of power' ) );
+
+		$this->assertEquals(
+			'cattitude',
+			$be->getFileContents( array( 'src' => "mwstore://localtesting/$p" ) ),
+			"Non-latest read came from backend 0"
+		);
+		$this->assertEquals(
+			'princess of power',
+			$be->getFileContents( array( 'src' => "mwstore://localtesting/$p", 'latest' => 1 ) ),
+			"Latest read came from backend1"
+		);
+	}
+
+	public function testAsyncWrites() {
+		$be = TestingAccessWrapper::newFromObject(
+			new FileBackendMultiWrite( array(
+				'name' => 'localtesting',
+				'wikiId' => wfWikiId() . mt_rand(),
+				'backends' => array(
+					array( // backend 0
+						'name' => 'multitesting0',
+						'class' => 'MemoryFileBackend',
+						'isMultiMaster' => false
+					),
+					array( // backend 1
+						'name' => 'multitesting1',
+						'class' => 'MemoryFileBackend',
+						'isMultiMaster' => true
+					)
+				),
+				'replication' => 'async'
+			) )
+		);
+
+		$this->setMwGlobals( 'wgCommandLineMode', false );
+
+		$p = 'container/test-cont/file.txt';
+		$be->quickCreate( array(
+			'dst' => "mwstore://localtesting/$p", 'content' => 'cattitude' ) );
+
+		$this->assertEquals(
+			false,
+			$be->backends[0]->getFileContents( array( 'src' => "mwstore://multitesting0/$p" ) ),
+			"File not yet written to backend 0"
+		);
+		$this->assertEquals(
+			'cattitude',
+			$be->backends[1]->getFileContents( array( 'src' => "mwstore://multitesting1/$p" ) ),
+			"File already written to backend 1"
+		);
+
+		DeferredUpdates::doUpdates();
+
+		$this->assertEquals(
+			'cattitude',
+			$be->backends[0]->getFileContents( array( 'src' => "mwstore://multitesting0/$p" ) ),
+			"File now written to backend 0"
+		);
+	}
+
+	public function testSanitizeOpHeaders() {
+		$be = TestingAccessWrapper::newFromObject( new MemoryFileBackend( array(
+			'name' => 'localtesting',
+			'wikiId' => wfWikiID()
+		) ) );
+
+		$name = wfRandomString( 300 );
+
+		$input = array(
+			'headers' => array(
+				'content-Disposition' => FileBackend::makeContentDisposition( 'inline', $name ),
+				'Content-dUration' => 25.6,
+				'X-LONG-VALUE' => str_pad( '0', 300 ),
+				'CONTENT-LENGTH' => 855055,
+			)
+		);
+		$expected = array(
+			'headers' => array(
+				'content-disposition' => FileBackend::makeContentDisposition( 'inline', $name ),
+				'content-duration' => 25.6,
+				'content-length' => 855055
+			)
+		);
+
+		MediaWiki\suppressWarnings();
+		$actual = $be->sanitizeOpHeaders( $input );
+		MediaWiki\restoreWarnings();
+
+		$this->assertEquals( $expected, $actual, "Header sanitized properly" );
 	}
 
 	// helper function

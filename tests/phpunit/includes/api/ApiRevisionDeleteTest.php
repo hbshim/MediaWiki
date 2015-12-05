@@ -14,18 +14,22 @@ class ApiRevisionDeleteTest extends ApiTestCase {
 
 	protected function setUp() {
 		// Needs to be before setup since this gets cached
-		$this->mergeMwGlobalArrayValue( 'wgGroupPermissions', array( 'sysop' => array( 'deleterevision' => true ) ) );
+		$this->mergeMwGlobalArrayValue(
+			'wgGroupPermissions',
+			array( 'sysop' => array( 'deleterevision' => true ) )
+		);
 		parent::setUp();
 		// Make a few edits for us to play with
 		for ( $i = 1; $i <= 5; $i++ ) {
 			self::editPage( self::$page, MWCryptRand::generateHex( 10 ), 'summary' );
-			$this->revs[] = Title::newFromText( self::$page )->getLatestRevID( Title::GAID_FOR_UPDATE );
+			$this->revs[] = Title::newFromText( self::$page )
+				->getLatestRevID( Title::GAID_FOR_UPDATE );
 		}
 
 	}
 
 	public function testHidingRevisions() {
-		$user = self::$users['sysop']->user;
+		$user = self::$users['sysop']->getUser();
 		$revid = array_shift( $this->revs );
 		$out = $this->doApiRequest( array(
 			'action' => 'revisiondelete',
@@ -80,7 +84,7 @@ class ApiRevisionDeleteTest extends ApiTestCase {
 	}
 
 	public function testUnhidingOutput() {
-		$user = self::$users['sysop']->user;
+		$user = self::$users['sysop']->getUser();
 		$revid = array_shift( $this->revs );
 		// Hide revisions
 		$this->doApiRequest( array(

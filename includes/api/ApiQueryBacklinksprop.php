@@ -143,8 +143,12 @@ class ApiQueryBacklinksprop extends ApiQueryGeneratorBase {
 		}
 		$miser_ns = null;
 		if ( $params['namespace'] !== null ) {
-			if ( empty( $settings['from_namespace'] ) && $this->getConfig()->get( 'MiserMode' ) ) {
-				$miser_ns = $params['namespace'];
+			if ( empty( $settings['from_namespace'] ) ) {
+				if ( $this->getConfig()->get( 'MiserMode' ) ) {
+					$miser_ns = $params['namespace'];
+				} else {
+					$this->addWhereFld( 'page_namespace', $params['namespace'] );
+				}
 			} else {
 				$this->addWhereFld( "{$p}_from_namespace", $params['namespace'] );
 				if ( !empty( $settings['from_namespace'] ) && count( $params['namespace'] ) > 1 ) {
@@ -277,7 +281,7 @@ class ApiQueryBacklinksprop extends ApiQueryGeneratorBase {
 
 				$vals = array();
 				if ( $fld_pageid ) {
-					$vals['pageid'] = $row->page_id;
+					$vals['pageid'] = (int)$row->page_id;
 				}
 				if ( $fld_title ) {
 					ApiQueryBase::addTitleInfo( $vals,
@@ -287,8 +291,8 @@ class ApiQueryBacklinksprop extends ApiQueryGeneratorBase {
 				if ( $fld_fragment && $row->rd_fragment !== null && $row->rd_fragment !== '' ) {
 					$vals['fragment'] = $row->rd_fragment;
 				}
-				if ( $fld_redirect && $row->page_is_redirect ) {
-					$vals['redirect'] = '';
+				if ( $fld_redirect ) {
+					$vals['redirect'] = (bool)$row->page_is_redirect;
 				}
 				$fit = $this->addPageSubItem( $id, $vals );
 				if ( !$fit ) {
@@ -335,6 +339,7 @@ class ApiQueryBacklinksprop extends ApiQueryGeneratorBase {
 				),
 				ApiBase::PARAM_ISMULTI => true,
 				ApiBase::PARAM_DFLT => 'pageid|title',
+				ApiBase::PARAM_HELP_MSG_PER_VALUE => array(),
 			),
 			'namespace' => array(
 				ApiBase::PARAM_ISMULTI => true,
@@ -405,8 +410,7 @@ class ApiQueryBacklinksprop extends ApiQueryGeneratorBase {
 	}
 
 	public function getHelpUrls() {
-		$name = $this->getModuleName();
-		$prefix = $this->getModulePrefix();
-		return "https://www.mediawiki.org/wiki/API:Properties#{$name}_.2F_{$prefix}";
+		$name = ucfirst( $this->getModuleName() );
+		return "https://www.mediawiki.org/wiki/API:{$name}";
 	}
 }

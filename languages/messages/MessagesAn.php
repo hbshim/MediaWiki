@@ -33,8 +33,11 @@ $namespaceAliases = array(
 	'Espezial' => NS_SPECIAL,
 );
 
-// Remove Spanish gender aliases (bug 37090)
-$namespaceGenderAliases = array();
+// T113890: Setting $namespaceGenderAliases for Aragonese (an)
+$namespaceGenderAliases = array(
+	NS_USER => array( 'male' => 'Usuario', 'female' => 'Usuaria' ),
+	NS_USER_TALK => array( 'male' => 'Descusión_usuario', 'female' => 'Descusión_usuaria' ),
+);
 
 $magicWords = array(
 	'redirect'                  => array( '0', '#ENDRECERA', '#REENDRECERA', '#REDIRECCIÓN', '#REDIRECCION', '#REDIRECT' ),
@@ -88,7 +91,6 @@ $specialPageAliases = array(
 	'Mytalk'                    => array( 'A_mía_descusión', 'A_mía_pachina_de_descusión' ),
 	'Newimages'                 => array( 'Nuevos_fichers', 'Nuevas_imáchens', 'Nuevas_imachens', 'Nuebas_imachens' ),
 	'Newpages'                  => array( 'Pachinas_nuevas', 'Pachinas_recients', 'Pachinas_nuebas', 'Pachinas_más_nuebas', 'Pachinas_más_rezients', 'Pachinas_rezients' ),
-	'Popularpages'              => array( 'Pachinas_populars', 'Pachinas_más_populars' ),
 	'Preferences'               => array( 'Preferencias' ),
 	'Prefixindex'               => array( 'Pachinas_por_prefixo', 'Mirar_por_prefixo' ),
 	'Protectedpages'            => array( 'Pachinas_protechitas', 'Pachinas_protechidas' ),

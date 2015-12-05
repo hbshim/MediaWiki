@@ -103,8 +103,13 @@ abstract class MediaWikiTestCase extends PHPUnit_Framework_TestCase {
 		 */
 		ObjectCache::$instances[CACHE_DB] = new HashBagOStuff;
 
+		// Sandbox APC by replacing with in-process hash instead.
+		// Ensures values are removed between tests.
+		ObjectCache::$instances['apc'] =
+		ObjectCache::$instances['xcache'] =
+		ObjectCache::$instances['wincache'] = new HashBagOStuff;
+
 		$needsResetDB = false;
-		$logName = get_class( $this ) . '::' . $this->getName( false );
 
 		if ( $this->needsDB() ) {
 			// set up a DB connection for this test to use
@@ -176,7 +181,6 @@ abstract class MediaWikiTestCase extends PHPUnit_Framework_TestCase {
 		$fileName = $this->getNewTempFile();
 
 		// Converting the temporary /file/ to a /directory/
-		//
 		// The following is not atomic, but at least we now have a single place,
 		// where temporary directory creation is bundled and can be improved
 		unlink( $fileName );
@@ -203,15 +207,13 @@ abstract class MediaWikiTestCase extends PHPUnit_Framework_TestCase {
 		if ( $this->needsDB() && $this->db ) {
 			// Clean up open transactions
 			while ( $this->db->trxLevel() > 0 ) {
-				$this->db->rollback();
+				$this->db->rollback( __METHOD__, 'flush' );
 			}
-
-			// don't ignore DB errors
-			$this->db->ignoreErrors( false );
 		}
 
 		DeferredUpdates::clearPendingUpdates();
 
+		ob_start( 'MediaWikiTestCase::wfResetOutputBuffersBarrier' );
 	}
 
 	protected function addTmpFiles( $files ) {
@@ -219,6 +221,13 @@ abstract class MediaWikiTestCase extends PHPUnit_Framework_TestCase {
 	}
 
 	protected function tearDown() {
+		$status = ob_get_status();
+		if ( isset( $status['name'] ) &&
+			$status['name'] === 'MediaWikiTestCase::wfResetOutputBuffersBarrier'
+		) {
+			ob_end_flush();
+		}
+
 		$this->called['tearDown'] = true;
 		// Cleaning up temporary files
 		foreach ( $this->tmpFiles as $fileName ) {
@@ -232,11 +241,8 @@ abstract class MediaWikiTestCase extends PHPUnit_Framework_TestCase {
 		if ( $this->needsDB() && $this->db ) {
 			// Clean up open transactions
 			while ( $this->db->trxLevel() > 0 ) {
-				$this->db->rollback();
+				$this->db->rollback( __METHOD__, 'flush' );
 			}
-
-			// don't ignore DB errors
-			$this->db->ignoreErrors( false );
 		}
 
 		// Restore mw globals
@@ -430,7 +436,7 @@ abstract class MediaWikiTestCase extends PHPUnit_Framework_TestCase {
 	protected function insertPage( $pageName, $text = 'Sample page for unit test.' ) {
 		$title = Title::newFromText( $pageName, 0 );
 
-		$user = User::newFromName( 'WikiSysop' );
+		$user = User::newFromName( 'UTSysop' );
 		$comment = __METHOD__ . ': Sample page for unit test.';
 
 		// Avoid memory leak...?
@@ -486,12 +492,12 @@ abstract class MediaWikiTestCase extends PHPUnit_Framework_TestCase {
 
 		if ( $user->idForName() == 0 ) {
 			$user->addToDatabase();
-			$user->setPassword( 'UTSysopPassword' );
-
-			$user->addGroup( 'sysop' );
-			$user->addGroup( 'bureaucrat' );
-			$user->saveSettings();
+			TestUser::setPasswordForUser( $user, 'UTSysopPassword' );
 		}
+
+		// Always set groups, because $this->resetDB() wipes them out
+		$user->addGroup( 'sysop' );
+		$user->addGroup( 'bureaucrat' );
 
 		// Make 1 page with 1 revision
 		$page = WikiPage::factory( Title::newFromText( 'UTPage' ) );
@@ -501,7 +507,7 @@ abstract class MediaWikiTestCase extends PHPUnit_Framework_TestCase {
 				'UTPageSummary',
 				EDIT_NEW,
 				false,
-				User::newFromName( 'UTSysop' )
+				$user
 			);
 		}
 	}
@@ -632,7 +638,7 @@ abstract class MediaWikiTestCase extends PHPUnit_Framework_TestCase {
 	 * @param string $msg
 	 */
 	private function assertEmpty2( $value, $msg ) {
-		return $this->assertTrue( $value == '', $msg );
+		$this->assertTrue( $value == '', $msg );
 	}
 
 	private static function unprefixTable( $tableName ) {
@@ -648,7 +654,7 @@ abstract class MediaWikiTestCase extends PHPUnit_Framework_TestCase {
 	/**
 	 * @since 1.18
 	 *
-	 * @param DataBaseBase $db
+	 * @param DatabaseBase $db
 	 *
 	 * @return array
 	 */
@@ -717,9 +723,9 @@ abstract class MediaWikiTestCase extends PHPUnit_Framework_TestCase {
 	 * @param string $function
 	 */
 	public function hideDeprecated( $function ) {
-		wfSuppressWarnings();
+		MediaWiki\suppressWarnings();
 		wfDeprecated( $function );
-		wfRestoreWarnings();
+		MediaWiki\restoreWarnings();
 	}
 
 	/**
@@ -1003,9 +1009,9 @@ abstract class MediaWikiTestCase extends PHPUnit_Framework_TestCase {
 
 		# This check may also protect against code injection in
 		# case of broken installations.
-		wfSuppressWarnings();
+		MediaWiki\suppressWarnings();
 		$haveDiff3 = $wgDiff3 && file_exists( $wgDiff3 );
-		wfRestoreWarnings();
+		MediaWiki\restoreWarnings();
 
 		if ( !$haveDiff3 ) {
 			$this->markTestSkipped( "Skip test, since diff3 is not configured" );
@@ -1118,7 +1124,7 @@ abstract class MediaWikiTestCase extends PHPUnit_Framework_TestCase {
 		// of tidy. In that case however, we can not reliably detect whether a failing validation
 		// is due to malformed HTML, or caused by tidy not being installed as a command line tool.
 		// That would cause all HTML assertions to fail on a system that has no tidy installed.
-		if ( !$GLOBALS['wgTidyInternal'] ) {
+		if ( !$GLOBALS['wgTidyInternal'] || !MWTidy::isEnabled() ) {
 			$this->markTestSkipped( 'Tidy extension not installed' );
 		}
 
@@ -1152,7 +1158,7 @@ abstract class MediaWikiTestCase extends PHPUnit_Framework_TestCase {
 
 	/**
 	 * Note: we are overriding this method to remove the deprecated error
-	 * @see https://bugzilla.wikimedia.org/show_bug.cgi?id=69505
+	 * @see https://phabricator.wikimedia.org/T71505
 	 * @see https://github.com/sebastianbergmann/phpunit/issues/1292
 	 * @deprecated
 	 *
@@ -1162,7 +1168,7 @@ abstract class MediaWikiTestCase extends PHPUnit_Framework_TestCase {
 	 * @param bool $isHtml
 	 */
 	public static function assertTag( $matcher, $actual, $message = '', $isHtml = true ) {
-		//trigger_error(__METHOD__ . ' is deprecated', E_USER_DEPRECATED);
+		// trigger_error(__METHOD__ . ' is deprecated', E_USER_DEPRECATED);
 
 		self::assertTrue( self::tagMatch( $matcher, $actual, $isHtml ), $message );
 	}
@@ -1177,8 +1183,16 @@ abstract class MediaWikiTestCase extends PHPUnit_Framework_TestCase {
 	 * @param bool $isHtml
 	 */
 	public static function assertNotTag( $matcher, $actual, $message = '', $isHtml = true ) {
-		//trigger_error(__METHOD__ . ' is deprecated', E_USER_DEPRECATED);
+		// trigger_error(__METHOD__ . ' is deprecated', E_USER_DEPRECATED);
 
 		self::assertFalse( self::tagMatch( $matcher, $actual, $isHtml ), $message );
+	}
+
+	/**
+	 * Used as a marker to prevent wfResetOutputBuffers from breaking PHPUnit.
+	 * @return string
+	 */
+	public static function wfResetOutputBuffersBarrier( $buffer ) {
+		return $buffer;
 	}
 }

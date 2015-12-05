@@ -458,8 +458,11 @@ class TestFileIterator implements Iterator {
 			$this->sectionData['config'] = '';
 		}
 
-		$isDisabled = preg_match( '/\\bdisabled\\b/i', $this->sectionData['options'] ) && !$this->parserTest->runDisabled;
-		$isParsoidOnly = preg_match( '/\\bparsoid\\b/i', $this->sectionData['options'] ) && $result == 'html' && !$this->parserTest->runParsoid;
+		$isDisabled = preg_match( '/\\bdisabled\\b/i', $this->sectionData['options'] ) &&
+			!$this->parserTest->runDisabled;
+		$isParsoidOnly = preg_match( '/\\bparsoid\\b/i', $this->sectionData['options'] ) &&
+			$result == 'html' &&
+			!$this->parserTest->runParsoid;
 		$isFiltered = !preg_match( "/" . $this->parserTest->regex . "/i", $this->sectionData['test'] );
 		if ( $input == false || $result == false || $isDisabled || $isParsoidOnly || $isFiltered ) {
 			# disabled test
@@ -695,7 +698,7 @@ class DelayedParserTest {
 	 * @throws MWException
 	 */
 	public function unleash( &$parserTest ) {
-		if ( !( $parserTest instanceof ParserTest || $parserTest instanceof NewParserTest )	) {
+		if ( !( $parserTest instanceof ParserTest || $parserTest instanceof NewParserTest ) ) {
 			throw new MWException( __METHOD__ . " must be passed an instance of ParserTest or "
 				. "NewParserTest classes\n" );
 		}

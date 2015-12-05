@@ -28,7 +28,7 @@
  */
 class MovePageForm extends UnlistedSpecialPage {
 	/** @var Title */
-	protected $oldTitle;
+	protected $oldTitle = null;
 
 	/** @var Title */
 	protected $newTitle;
@@ -64,6 +64,8 @@ class MovePageForm extends UnlistedSpecialPage {
 	}
 
 	public function execute( $par ) {
+		$this->useTransactionalTimeLimit();
+
 		$this->checkReadOnly();
 
 		$this->setHeaders();
@@ -77,7 +79,8 @@ class MovePageForm extends UnlistedSpecialPage {
 		$oldTitleText = $request->getVal( 'wpOldTitle', $target );
 		$this->oldTitle = Title::newFromText( $oldTitleText );
 
-		if ( is_null( $this->oldTitle ) ) {
+		if ( !$this->oldTitle ) {
+			// Either oldTitle wasn't passed, or newFromText returned null
 			throw new ErrorPageError( 'notargettitle', 'notargettext' );
 		}
 		if ( !$this->oldTitle->exists() ) {
@@ -99,7 +102,9 @@ class MovePageForm extends UnlistedSpecialPage {
 		$permErrors = $this->oldTitle->getUserPermissionsErrors( 'move', $user );
 		if ( count( $permErrors ) ) {
 			// Auto-block user's IP if the account was "hard" blocked
-			$user->spreadAnyEditBlock();
+			DeferredUpdates::addCallableUpdate( function() use ( $user ) {
+				$user->spreadAnyEditBlock();
+			} );
 			throw new PermissionsError( 'move', $permErrors );
 		}
 
@@ -135,11 +140,30 @@ class MovePageForm extends UnlistedSpecialPage {
 
 		$this->getSkin()->setRelevantTitle( $this->oldTitle );
 
-		$oldTitleLink = Linker::link( $this->oldTitle );
-
 		$out = $this->getOutput();
 		$out->setPageTitle( $this->msg( 'move-page', $this->oldTitle->getPrefixedText() ) );
 		$out->addModules( 'mediawiki.special.movePage' );
+		$out->addModuleStyles( 'mediawiki.special.movePage.styles' );
+		$this->addHelpLink( 'Help:Moving a page' );
+
+		if ( $this->oldTitle->getNamespace() == NS_USER && !$this->oldTitle->isSubpage() ) {
+			$out->wrapWikiMsg(
+				"<div class=\"error mw-moveuserpage-warning\">\n$1\n</div>",
+				'moveuserpage-warning'
+			);
+		} elseif ( $this->oldTitle->getNamespace() == NS_CATEGORY ) {
+			$out->wrapWikiMsg(
+				"<div class=\"error mw-movecategorypage-warning\">\n$1\n</div>",
+				'movecategorypage-warning'
+			);
+		}
+
+		$out->addWikiMsg( $this->getConfig()->get( 'FixDoubleRedirects' ) ?
+			'movepagetext' :
+			'movepagetext-noredirectfixer'
+		);
+		$submitVar = 'wpMove';
+		$confirm = false;
 
 		$newTitle = $this->newTitle;
 
@@ -163,30 +187,9 @@ class MovePageForm extends UnlistedSpecialPage {
 			&& $newTitle->quickUserCan( 'delete', $user )
 		) {
 			$out->addWikiMsg( 'delete_and_move_text', $newTitle->getPrefixedText() );
-			$movepagebtn = $this->msg( 'delete_and_move' )->text();
 			$submitVar = 'wpDeleteAndMove';
 			$confirm = true;
 			$err = array();
-		} else {
-			if ( $this->oldTitle->getNamespace() == NS_USER && !$this->oldTitle->isSubpage() ) {
-				$out->wrapWikiMsg(
-					"<div class=\"error mw-moveuserpage-warning\">\n$1\n</div>",
-					'moveuserpage-warning'
-				);
-			} elseif ( $this->oldTitle->getNamespace() == NS_CATEGORY ) {
-				$out->wrapWikiMsg(
-					"<div class=\"error mw-movecategorypage-warning\">\n$1\n</div>",
-					'movecategorypage-warning'
-				);
-			}
-
-			$out->addWikiMsg( $this->getConfig()->get( 'FixDoubleRedirects' ) ?
-				'movepagetext' :
-				'movepagetext-noredirectfixer'
-			);
-			$movepagebtn = $this->msg( 'movepagebtn' )->text();
-			$submitVar = 'wpMove';
-			$confirm = false;
 		}
 
 		if ( count( $err ) == 1 && isset( $err[0][0] ) && $err[0][0] == 'file-exists-sharedrepo'
@@ -219,10 +222,6 @@ class MovePageForm extends UnlistedSpecialPage {
 				), __METHOD__ );
 		} else {
 			$hasRedirects = false;
-		}
-
-		if ( $considerTalk ) {
-			$out->addWikiMsg( 'movepagetalktext' );
 		}
 
 		if ( count( $err ) ) {
@@ -282,7 +281,6 @@ class MovePageForm extends UnlistedSpecialPage {
 		// is enforced in the mediawiki.special.movePage module
 
 		$immovableNamespaces = array();
-
 		foreach ( array_keys( $this->getLanguage()->getNamespaces() ) as $nsId ) {
 			if ( !MWNamespace::isMovable( $nsId ) ) {
 				$immovableNamespaces[] = $nsId;
@@ -291,202 +289,198 @@ class MovePageForm extends UnlistedSpecialPage {
 
 		$handler = ContentHandler::getForTitle( $this->oldTitle );
 
-		$out->addHTML(
-			Xml::openElement(
-				'form',
-				array(
-					'method' => 'post',
-					'action' => $this->getPageTitle()->getLocalURL( 'action=submit' ),
-					'id' => 'movepage'
-				)
-			) .
-			Xml::openElement( 'fieldset' ) .
-			Xml::element( 'legend', null, $this->msg( 'move-page-legend' )->text() ) .
-			Xml::openElement( 'table', array( 'id' => 'mw-movepage-table' ) )
+		$out->enableOOUI();
+		$fields = array();
+
+		$fields[] = new OOUI\FieldLayout(
+			new MediaWiki\Widget\ComplexTitleInputWidget( array(
+				'id' => 'wpNewTitle',
+				'namespace' => array(
+					'id' => 'wpNewTitleNs',
+					'name' => 'wpNewTitleNs',
+					'value' => $newTitle->getNamespace(),
+					'exclude' => $immovableNamespaces,
+				),
+				'title' => array(
+					'id' => 'wpNewTitleMain',
+					'name' => 'wpNewTitleMain',
+					'value' => $wgContLang->recodeForEdit( $newTitle->getText() ),
+					// Inappropriate, since we're expecting the user to input a non-existent page's title
+					'suggestions' => false,
+				),
+				'infusable' => true,
+			) ),
+			array(
+				'label' => $this->msg( 'newtitle' )->text(),
+				'align' => 'top',
+			)
 		);
 
-		$out->addHTML(
-			"<tr>
-				<td class='mw-label'>" .
-					$this->msg( 'movearticle' )->escaped() .
-				"</td>
-				<td class='mw-input'>
-					<strong>{$oldTitleLink}</strong>
-				</td>
-			</tr>
-			<tr>
-				<td class='mw-label'>" .
-					Xml::label( $this->msg( 'newtitle' )->text(), 'wpNewTitleMain' ) .
-				"</td>
-				<td class='mw-input'>" .
-					Html::namespaceSelector(
-						array(
-							'selected' => $newTitle->getNamespace(),
-							'exclude' => $immovableNamespaces
-						),
-						array( 'name' => 'wpNewTitleNs', 'id' => 'wpNewTitleNs' )
-					) .
-					Xml::input(
-						'wpNewTitleMain',
-						60,
-						$wgContLang->recodeForEdit( $newTitle->getText() ),
-						array(
-							'type' => 'text',
-							'id' => 'wpNewTitleMain',
-							'maxlength' => 255
-						)
-					) .
-					Html::hidden( 'wpOldTitle', $this->oldTitle->getPrefixedText() ) .
-				"</td>
-			</tr>
-			<tr>
-				<td class='mw-label'>" .
-					Xml::label( $this->msg( 'movereason' )->text(), 'wpReason' ) .
-				"</td>
-				<td class='mw-input'>" .
-					Xml::input( 'wpReason', 60, $this->reason, array(
-						'type' => 'text',
-						'id' => 'wpReason',
-						'maxlength' => 200,
-					) ) .
-				"</td>
-			</tr>"
+		$fields[] = new OOUI\FieldLayout(
+			new OOUI\TextInputWidget( array(
+				'name' => 'wpReason',
+				'id' => 'wpReason',
+				'maxLength' => 200,
+				'infusable' => true,
+				'value' => $this->reason,
+			) ),
+			array(
+				'label' => $this->msg( 'movereason' )->text(),
+				'align' => 'top',
+			)
 		);
 
 		if ( $considerTalk ) {
-			$out->addHTML( "
-				<tr>
-					<td></td>
-					<td class='mw-input'>" .
-						Xml::checkLabel(
-							$this->msg( 'movetalk' )->text(),
-							'wpMovetalk',
-							'wpMovetalk',
-							$this->moveTalk
-						) .
-					"</td>
-				</tr>"
+			$fields[] = new OOUI\FieldLayout(
+				new OOUI\CheckboxInputWidget( array(
+					'name' => 'wpMovetalk',
+					'id' => 'wpMovetalk',
+					'value' => '1',
+					'selected' => $this->moveTalk,
+				) ),
+				array(
+					'label' => $this->msg( 'movetalk' )->text(),
+					'help' => new OOUI\HtmlSnippet( $this->msg( 'movepagetalktext' )->parseAsBlock() ),
+					'align' => 'inline',
+					'infusable' => true,
+				)
 			);
 		}
 
 		if ( $user->isAllowed( 'suppressredirect' ) ) {
 			if ( $handler->supportsRedirects() ) {
 				$isChecked = $this->leaveRedirect;
-				$options = array();
+				$isDisabled = false;
 			} else {
 				$isChecked = false;
-				$options = array(
-					'disabled' => 'disabled'
-				);
+				$isDisabled = true;
 			}
-			$out->addHTML( "
-				<tr>
-					<td></td>
-					<td class='mw-input'>" .
-						Xml::checkLabel(
-							$this->msg( 'move-leave-redirect' )->text(),
-							'wpLeaveRedirect',
-							'wpLeaveRedirect',
-							$isChecked,
-							$options
-						) .
-					"</td>
-				</tr>"
+			$fields[] = new OOUI\FieldLayout(
+				new OOUI\CheckboxInputWidget( array(
+					'name' => 'wpLeaveRedirect',
+					'id' => 'wpLeaveRedirect',
+					'value' => '1',
+					'selected' => $isChecked,
+					'disabled' => $isDisabled,
+				) ),
+				array(
+					'label' => $this->msg( 'move-leave-redirect' )->text(),
+					'align' => 'inline',
+				)
 			);
 		}
 
 		if ( $hasRedirects ) {
-			$out->addHTML( "
-				<tr>
-					<td></td>
-					<td class='mw-input'>" .
-						Xml::checkLabel(
-							$this->msg( 'fix-double-redirects' )->text(),
-							'wpFixRedirects',
-							'wpFixRedirects',
-							$this->fixRedirects
-						) .
-					"</td>
-				</tr>"
+			$fields[] = new OOUI\FieldLayout(
+				new OOUI\CheckboxInputWidget( array(
+					'name' => 'wpFixRedirects',
+					'id' => 'wpFixRedirects',
+					'value' => '1',
+					'selected' => $this->fixRedirects,
+				) ),
+				array(
+					'label' => $this->msg( 'fix-double-redirects' )->text(),
+					'align' => 'inline',
+				)
 			);
 		}
 
 		if ( $canMoveSubpage ) {
 			$maximumMovedPages = $this->getConfig()->get( 'MaximumMovedPages' );
-			$out->addHTML( "
-				<tr>
-					<td></td>
-					<td class='mw-input'>" .
-						Xml::check(
-							'wpMovesubpages',
-							# Don't check the box if we only have talk subpages to
-							# move and we aren't moving the talk page.
-							$this->moveSubpages && ( $this->oldTitle->hasSubpages() || $this->moveTalk ),
-							array( 'id' => 'wpMovesubpages' )
-						) . '&#160;' .
-						Xml::tags(
-							'label',
-							array( 'for' => 'wpMovesubpages' ),
-							$this->msg(
-								( $this->oldTitle->hasSubpages()
-									? 'move-subpages'
-									: 'move-talk-subpages' )
-							)->numParams( $maximumMovedPages )->params( $maximumMovedPages )->parse()
-						) .
-					"</td>
-				</tr>"
+			$fields[] = new OOUI\FieldLayout(
+				new OOUI\CheckboxInputWidget( array(
+					'name' => 'wpMovesubpages',
+					'id' => 'wpMovesubpages',
+					'value' => '1',
+					# Don't check the box if we only have talk subpages to
+					# move and we aren't moving the talk page.
+					'selected' => $this->moveSubpages && ( $this->oldTitle->hasSubpages() || $this->moveTalk ),
+				) ),
+				array(
+					'label' => new OOUI\HtmlSnippet(
+						$this->msg(
+							( $this->oldTitle->hasSubpages()
+								? 'move-subpages'
+								: 'move-talk-subpages' )
+						)->numParams( $maximumMovedPages )->params( $maximumMovedPages )->parse()
+					),
+					'align' => 'inline',
+				)
 			);
 		}
 
-		$watchChecked = $user->isLoggedIn() && ( $this->watch || $user->getBoolOption( 'watchmoves' )
-			|| $user->isWatched( $this->oldTitle ) );
 		# Don't allow watching if user is not logged in
 		if ( $user->isLoggedIn() ) {
-			$out->addHTML( "
-				<tr>
-					<td></td>
-					<td class='mw-input'>" .
-						Xml::checkLabel(
-							$this->msg( 'move-watch' )->text(),
-							'wpWatch',
-							'watch',
-							$watchChecked
-						) .
-					"</td>
-				</tr>"
+			$watchChecked = $user->isLoggedIn() && ( $this->watch || $user->getBoolOption( 'watchmoves' )
+				|| $user->isWatched( $this->oldTitle ) );
+			$fields[] = new OOUI\FieldLayout(
+				new OOUI\CheckboxInputWidget( array(
+					'name' => 'wpWatch',
+					'id' => 'watch', # ew
+					'value' => '1',
+					'selected' => $watchChecked,
+				) ),
+				array(
+					'label' => $this->msg( 'move-watch' )->text(),
+					'align' => 'inline',
+				)
 			);
 		}
 
 		if ( $confirm ) {
-			$out->addHTML( "
-				<tr>
-					<td></td>
-					<td class='mw-input'>" .
-						Xml::checkLabel(
-							$this->msg( 'delete_and_move_confirm' )->text(),
-							'wpConfirm',
-							'wpConfirm'
-						) .
-					"</td>
-				</tr>"
+			$fields[] = new OOUI\FieldLayout(
+				new OOUI\CheckboxInputWidget( array(
+					'name' => 'wpConfirm',
+					'id' => 'wpConfirm',
+					'value' => '1',
+				) ),
+				array(
+					'label' => $this->msg( 'delete_and_move_confirm' )->text(),
+					'align' => 'inline',
+				)
 			);
 		}
 
-		$out->addHTML( "
-			<tr>
-				<td></td>
-				<td class='mw-submit'>" .
-					Xml::submitButton( $movepagebtn, array( 'name' => $submitVar ) ) .
-				"</td>
-			</tr>"
+		$fields[] = new OOUI\FieldLayout(
+			new OOUI\ButtonInputWidget( array(
+				'name' => $submitVar,
+				'value' => $this->msg( 'movepagebtn' )->text(),
+				'label' => $this->msg( 'movepagebtn' )->text(),
+				'flags' => array( 'constructive', 'primary' ),
+				'type' => 'submit',
+			) ),
+			array(
+				'align' => 'top',
+			)
+		);
+
+		$fieldset = new OOUI\FieldsetLayout( array(
+			'label' => $this->msg( 'move-page-legend' )->text(),
+			'id' => 'mw-movepage-table',
+			'items' => $fields,
+		) );
+
+		$form = new OOUI\FormLayout( array(
+			'method' => 'post',
+			'action' => $this->getPageTitle()->getLocalURL( 'action=submit' ),
+			'id' => 'movepage',
+		) );
+		$form->appendContent(
+			$fieldset,
+			new OOUI\HtmlSnippet(
+				Html::hidden( 'wpOldTitle', $this->oldTitle->getPrefixedText() ) .
+				Html::hidden( 'wpEditToken', $user->getEditToken() )
+			)
 		);
 
 		$out->addHTML(
-			Xml::closeElement( 'table' ) .
-			Html::hidden( 'wpEditToken', $user->getEditToken() ) .
-			Xml::closeElement( 'fieldset' ) .
-			Xml::closeElement( 'form' ) .
-			"\n"
+			new OOUI\PanelLayout( array(
+				'classes' => array( 'movepage-wrapper' ),
+				'expanded' => false,
+				'padded' => true,
+				'framed' => true,
+				'content' => $form,
+			) )
 		);
 
 		$this->showLogFragment( $this->oldTitle );
@@ -536,6 +530,7 @@ class MovePageForm extends UnlistedSpecialPage {
 			// Delete an associated image if there is
 			if ( $nt->getNamespace() == NS_FILE ) {
 				$file = wfLocalFile( $nt );
+				$file->load( File::READ_LATEST );
 				if ( $file->exists() ) {
 					$file->delete( $reason, false, $user );
 				}
@@ -603,7 +598,7 @@ class MovePageForm extends UnlistedSpecialPage {
 		$newText = $nt->getPrefixedText();
 
 		if ( $ot->exists() ) {
-			//NOTE: we assume that if the old title exists, it's because it was re-created as
+			// NOTE: we assume that if the old title exists, it's because it was re-created as
 			// a redirect to the new title. This is not safe, but what we did before was
 			// even worse: we just determined whether a redirect should have been created,
 			// and reported that it was created if it should have, without any checks.
@@ -630,17 +625,16 @@ class MovePageForm extends UnlistedSpecialPage {
 			$this->moveSubpages = false;
 		}
 
-		# Next make a list of id's.  This might be marginally less efficient
-		# than a more direct method, but this is not a highly performance-cri-
-		# tical code path and readable code is more important here.
-		#
-		# Note: this query works nicely on MySQL 5, but the optimizer in MySQL
-		# 4 might get confused.  If so, consider rewriting as a UNION.
-		#
-		# If the target namespace doesn't allow subpages, moving with subpages
-		# would mean that you couldn't move them back in one operation, which
-		# is bad.
-		# @todo FIXME: A specific error message should be given in this case.
+		/**
+		 * Next make a list of id's.  This might be marginally less efficient
+		 * than a more direct method, but this is not a highly performance-cri-
+		 * tical code path and readable code is more important here.
+		 *
+		 * If the target namespace doesn't allow subpages, moving with subpages
+		 * would mean that you couldn't move them back in one operation, which
+		 * is bad.
+		 * @todo FIXME: A specific error message should be given in this case.
+		 */
 
 		// @todo FIXME: Use Title::moveSubpages() here
 		$dbr = wfGetDB( DB_MASTER );

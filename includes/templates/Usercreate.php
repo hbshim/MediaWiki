@@ -38,8 +38,6 @@ class UsercreateTemplate extends BaseTemplate {
 	}
 
 	function execute() {
-		global $wgCookieExpiration;
-		$expirationDays = ceil( $wgCookieExpiration / ( 3600 * 24 ) );
 ?>
 <div class="mw-ui-container">
 	<?php if ( $this->haveData( 'languages' ) ) { ?>
@@ -72,6 +70,12 @@ class UsercreateTemplate extends BaseTemplate {
 					<?php $this->html( 'message' ); ?>
 			<?php } ?>
 			</div>
+
+			<?php if ( $this->data['formheader'] ) { ?>
+				<div class="mw-form-formheader">
+					<?php $this->html( 'formheader' ); /* extensions such as MobileFrontend add html here */ ?>
+				</div>
+			<?php } ?>
 
 			<div class="mw-ui-vform-field">
 				<label for='wpName2'>
@@ -218,7 +222,7 @@ class UsercreateTemplate extends BaseTemplate {
 										echo 'checked="checked"';
 									} ?>
 								><label for="<?php echo htmlspecialchars( $inputItem['name'] ); ?>">
-									<?php $this->msgHtml( $inputItem['msg'] ); ?>
+									<?php $this->msg( $inputItem['msg'] ); ?>
 								</label>
 							</div>
 						<?php
@@ -261,7 +265,7 @@ class UsercreateTemplate extends BaseTemplate {
 				<?php
 				echo Html::submitButton(
 					$this->getMsg( $this->data['loggedin'] ? 'createacct-another-submit' : 'createacct-submit' ),
-					$attrs = array(
+					array(
 						'id' => 'wpCreateaccount',
 						'name' => 'wpCreateaccount',
 						'tabindex' => $tabIndex++

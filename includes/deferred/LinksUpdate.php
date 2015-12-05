@@ -25,7 +25,7 @@
  *
  * @todo document (e.g. one-sentence top-level class description).
  */
-class LinksUpdate extends SqlDataUpdate {
+class LinksUpdate extends SqlDataUpdate implements EnqueueableDataUpdate {
 	// @todo make members protected, but make sure extensions don't break
 
 	/** @var int Page ID of the article linked from */
@@ -61,6 +61,12 @@ class LinksUpdate extends SqlDataUpdate {
 	/** @var bool Whether to queue jobs for recursive updates */
 	public $mRecursive;
 
+	/** @var bool Whether this job was triggered by a recursive update job */
+	private $mTriggeredRecursive;
+
+	/** @var Revision Revision for which this update has been triggered */
+	private $mRevision;
+
 	/**
 	 * @var null|array Added links if calculated.
 	 */
@@ -72,6 +78,11 @@ class LinksUpdate extends SqlDataUpdate {
 	private $linkDeletions = null;
 
 	/**
+	 * @var User|null
+	 */
+	private $user;
+
+	/**
 	 * Constructor
 	 *
 	 * @param Title $title Title of the page we're updating
@@ -79,25 +90,16 @@ class LinksUpdate extends SqlDataUpdate {
 	 * @param bool $recursive Queue jobs for recursive updates?
 	 * @throws MWException
 	 */
-	function __construct( $title, $parserOutput, $recursive = true ) {
+	function __construct( Title $title, ParserOutput $parserOutput, $recursive = true ) {
 		parent::__construct( false ); // no implicit transaction
-
-		if ( !( $title instanceof Title ) ) {
-			throw new MWException( "The calling convention to LinksUpdate::LinksUpdate() has changed. " .
-				"Please see Article::editUpdates() for an invocation example.\n" );
-		}
-
-		if ( !( $parserOutput instanceof ParserOutput ) ) {
-			throw new MWException( "The calling convention to LinksUpdate::__construct() has changed. " .
-				"Please see WikiPage::doEditUpdates() for an invocation example.\n" );
-		}
 
 		$this->mTitle = $title;
 		$this->mId = $title->getArticleID();
 
 		if ( !$this->mId ) {
-			throw new MWException( "The Title object did not provide an article " .
-				"ID. Perhaps the page doesn't exist?" );
+			throw new InvalidArgumentException(
+				"The Title object yields no ID. Perhaps the page doesn't exist?"
+			);
 		}
 
 		$this->mParserOutput = $parserOutput;
@@ -143,11 +145,14 @@ class LinksUpdate extends SqlDataUpdate {
 	public function doUpdate() {
 		Hooks::run( 'LinksUpdate', array( &$this ) );
 		$this->doIncrementalUpdate();
-		Hooks::run( 'LinksUpdateComplete', array( &$this ) );
+
+		$that = $this;
+		$this->mDb->onTransactionIdle( function() use ( $that ) {
+			Hooks::run( 'LinksUpdateComplete', array( &$that ) );
+		} );
 	}
 
 	protected function doIncrementalUpdate() {
-
 		# Page links
 		$existing = $this->getExistingLinks();
 		$this->linkDeletions = $this->getLinkDeletions( $existing );
@@ -243,7 +248,7 @@ class LinksUpdate extends SqlDataUpdate {
 		// Which ever runs first generally no-ops the other one.
 		$jobs = array();
 		foreach ( $bc->getCascadeProtectedLinks() as $title ) {
-			$jobs[] = new RefreshLinksJob( $title, array( 'prioritize' => true ) );
+			$jobs[] = RefreshLinksJob::newPrioritized( $title, array() );
 		}
 		JobQueueGroup::singleton()->push( $jobs );
 	}
@@ -267,7 +272,6 @@ class LinksUpdate extends SqlDataUpdate {
 			);
 
 			JobQueueGroup::singleton()->push( $job );
-			JobQueueGroup::singleton()->deduplicateRootJob( $job );
 		}
 	}
 
@@ -865,6 +869,44 @@ class LinksUpdate extends SqlDataUpdate {
 	}
 
 	/**
+	 * Set this object as being triggered by a recursive LinksUpdate
+	 *
+	 * @since 1.27
+	 */
+	public function setTriggeredRecursive() {
+		$this->mTriggeredRecursive = true;
+	}
+
+	/**
+	 * Set the revision corresponding to this LinksUpdate
+	 *
+	 * @since 1.27
+	 *
+	 * @param Revision $revision
+	 */
+	public function setRevision( Revision $revision ) {
+		$this->mRevision = $revision;
+	}
+
+	/**
+	 * Set the User who triggered this LinksUpdate
+	 *
+	 * @since 1.27
+	 * @param User $user
+	 */
+	public function setTriggeringUser( User $user ) {
+		$this->user = $user;
+	}
+
+	/**
+	 * @since 1.27
+	 * @return null|User
+	 */
+	public function getTriggeringUser() {
+		return $this->user;
+	}
+
+	/**
 	 * Invalidate any necessary link lists related to page property changes
 	 * @param array $changed
 	 */
@@ -878,8 +920,7 @@ class LinksUpdate extends SqlDataUpdate {
 					$inv = array( $inv );
 				}
 				foreach ( $inv as $table ) {
-					$update = new HTMLCacheUpdate( $this->mTitle, $table );
-					$update->doUpdate();
+					DeferredUpdates::addUpdate( new HTMLCacheUpdate( $this->mTitle, $table ) );
 				}
 			}
 		}
@@ -935,88 +976,37 @@ class LinksUpdate extends SqlDataUpdate {
 			);
 		}
 	}
-}
 
-/**
- * Update object handling the cleanup of links tables after a page was deleted.
- **/
-class LinksDeletionUpdate extends SqlDataUpdate {
-	/** @var WikiPage The WikiPage that was deleted */
-	protected $mPage;
-
-	/**
-	 * Constructor
-	 *
-	 * @param WikiPage $page Page we are updating
-	 * @throws MWException
-	 */
-	function __construct( WikiPage $page ) {
-		parent::__construct( false ); // no implicit transaction
-
-		$this->mPage = $page;
-
-		if ( !$page->exists() ) {
-			throw new MWException( "Page ID not known, perhaps the page doesn't exist?" );
-		}
-	}
-
-	/**
-	 * Do some database updates after deletion
-	 */
-	public function doUpdate() {
-		$title = $this->mPage->getTitle();
-		$id = $this->mPage->getId();
-
-		# Delete restrictions for it
-		$this->mDb->delete( 'page_restrictions', array( 'pr_page' => $id ), __METHOD__ );
-
-		# Fix category table counts
-		$cats = array();
-		$res = $this->mDb->select( 'categorylinks', 'cl_to', array( 'cl_from' => $id ), __METHOD__ );
-
-		foreach ( $res as $row ) {
-			$cats[] = $row->cl_to;
+	public function getAsJobSpecification() {
+		if ( $this->user ) {
+			$userInfo = array(
+				'userId' => $this->user->getId(),
+				'userName' => $this->user->getName(),
+			);
+		} else {
+			$userInfo = false;
 		}
 
-		$this->mPage->updateCategoryCounts( array(), $cats );
-
-		# If using cascading deletes, we can skip some explicit deletes
-		if ( !$this->mDb->cascadingDeletes() ) {
-			# Delete outgoing links
-			$this->mDb->delete( 'pagelinks', array( 'pl_from' => $id ), __METHOD__ );
-			$this->mDb->delete( 'imagelinks', array( 'il_from' => $id ), __METHOD__ );
-			$this->mDb->delete( 'categorylinks', array( 'cl_from' => $id ), __METHOD__ );
-			$this->mDb->delete( 'templatelinks', array( 'tl_from' => $id ), __METHOD__ );
-			$this->mDb->delete( 'externallinks', array( 'el_from' => $id ), __METHOD__ );
-			$this->mDb->delete( 'langlinks', array( 'll_from' => $id ), __METHOD__ );
-			$this->mDb->delete( 'iwlinks', array( 'iwl_from' => $id ), __METHOD__ );
-			$this->mDb->delete( 'redirect', array( 'rd_from' => $id ), __METHOD__ );
-			$this->mDb->delete( 'page_props', array( 'pp_page' => $id ), __METHOD__ );
+		if ( $this->mRevision ) {
+			$triggeringRevisionId = $this->mRevision->getId();
+		} else {
+			$triggeringRevisionId = false;
 		}
 
-		# If using cleanup triggers, we can skip some manual deletes
-		if ( !$this->mDb->cleanupTriggers() ) {
-			# Clean up recentchanges entries...
-			$this->mDb->delete( 'recentchanges',
-				array( 'rc_type != ' . RC_LOG,
-					'rc_namespace' => $title->getNamespace(),
-					'rc_title' => $title->getDBkey() ),
-				__METHOD__ );
-			$this->mDb->delete( 'recentchanges',
-				array( 'rc_type != ' . RC_LOG, 'rc_cur_id' => $id ),
-				__METHOD__ );
-		}
-	}
-
-	/**
-	 * Update all the appropriate counts in the category table.
-	 * @param array $added Associative array of category name => sort key
-	 * @param array $deleted Associative array of category name => sort key
-	 */
-	function updateCategoryCounts( $added, $deleted ) {
-		$a = WikiPage::factory( $this->mTitle );
-		$a->updateCategoryCounts(
-			array_keys( $added ), array_keys( $deleted )
+		return array(
+			'wiki' => $this->mDb->getWikiID(),
+			'job'  => new JobSpecification(
+				'refreshLinksPrioritized',
+				array(
+					// Reuse the parser cache if it was saved
+					'rootJobTimestamp' => $this->mParserOutput->getCacheTime(),
+					'useRecursiveLinksUpdate' => $this->mRecursive,
+					'triggeringUser' => $userInfo,
+					'triggeringRevisionId' => $triggeringRevisionId,
+				),
+				array( 'removeDuplicates' => true ),
+				$this->getTitle()
+			)
 		);
 	}
 }

@@ -11,6 +11,28 @@
  */
 class EditPageTest extends MediaWikiLangTestCase {
 
+	protected function setUp() {
+		global $wgExtraNamespaces, $wgNamespaceContentModels, $wgContentHandlers, $wgContLang;
+
+		parent::setUp();
+
+		$this->setMwGlobals( array(
+			'wgExtraNamespaces' => $wgExtraNamespaces,
+			'wgNamespaceContentModels' => $wgNamespaceContentModels,
+			'wgContentHandlers' => $wgContentHandlers,
+			'wgContLang' => $wgContLang,
+		) );
+
+		$wgExtraNamespaces[12312] = 'Dummy';
+		$wgExtraNamespaces[12313] = 'Dummy_talk';
+
+		$wgNamespaceContentModels[12312] = "testing";
+		$wgContentHandlers["testing"] = 'DummyContentHandlerForTesting';
+
+		MWNamespace::getCanonicalNamespaces( true ); # reset namespace cache
+		$wgContLang->resetNamespaces(); # reset namespace cache
+	}
+
 	/**
 	 * @dataProvider provideExtractSectionTitle
 	 * @covers EditPage::extractSectionTitle
@@ -116,7 +138,7 @@ class EditPageTest extends MediaWikiLangTestCase {
 			$page->doEditContent( $content, "base text for test" );
 			$this->forceRevisionDate( $page, '20120101000000' );
 
-			//sanity check
+			// sanity check
 			$page->clear();
 			$currentText = ContentHandler::getContentText( $page->getContent() );
 
@@ -217,7 +239,8 @@ class EditPageTest extends MediaWikiLangTestCase {
 				EditPage::AS_SUCCESS_NEW_ARTICLE,
 				''
 			),
-			array( 'expected registered MediaWiki: page whose default content is empty not being created if empty',
+			array( 'expected registered MediaWiki: page whose default content is empty'
+					. ' not being created if empty',
 				'MediaWiki:Ipb-default-expiry',
 				'UTSysop',
 				'',
@@ -246,7 +269,9 @@ class EditPageTest extends MediaWikiLangTestCase {
 	 * @dataProvider provideCreatePages
 	 * @covers EditPage
 	 */
-	public function testCreatePage( $desc, $pageTitle, $user, $editText, $expectedCode, $expectedText, $ignoreBlank = false ) {
+	public function testCreatePage(
+		$desc, $pageTitle, $user, $editText, $expectedCode, $expectedText, $ignoreBlank = false
+	) {
 		$edit = array( 'wpTextbox1' => $editText );
 		if ( $ignoreBlank ) {
 			$edit['wpIgnoreBlankArticle'] = 1;
@@ -310,7 +335,7 @@ hello
 		$textWithNewSectionAdded = "$text\n$newSection";
 
 		return array(
-			array( #0
+			array( # 0
 				$text,
 				'',
 				'hello',
@@ -318,7 +343,7 @@ hello
 				'hello'
 			),
 
-			array( #1
+			array( # 1
 				$text,
 				'1',
 				$sectionOne,
@@ -326,7 +351,7 @@ hello
 				$textWithNewSectionOne,
 			),
 
-			array( #2
+			array( # 2
 				$text,
 				'new',
 				'hello',
@@ -355,14 +380,14 @@ hello
 	public static function provideAutoMerge() {
 		$tests = array();
 
-		$tests[] = array( #0: plain conflict
+		$tests[] = array( # 0: plain conflict
 			"Elmo", # base edit user
 			"one\n\ntwo\n\nthree\n",
-			array( #adam's edit
+			array( # adam's edit
 				'wpStarttime' => 1,
 				'wpTextbox1' => "ONE\n\ntwo\n\nthree\n",
 			),
-			array( #berta's edit
+			array( # berta's edit
 				'wpStarttime' => 2,
 				'wpTextbox1' => "(one)\n\ntwo\n\nthree\n",
 			),
@@ -371,14 +396,14 @@ hello
 			'expected edit conflict', # message
 		);
 
-		$tests[] = array( #1: successful merge
+		$tests[] = array( # 1: successful merge
 			"Elmo", # base edit user
 			"one\n\ntwo\n\nthree\n",
-			array( #adam's edit
+			array( # adam's edit
 				'wpStarttime' => 1,
 				'wpTextbox1' => "ONE\n\ntwo\n\nthree\n",
 			),
-			array( #berta's edit
+			array( # berta's edit
 				'wpStarttime' => 2,
 				'wpTextbox1' => "one\n\ntwo\n\nTHREE\n",
 			),
@@ -399,15 +424,15 @@ hello
 		// generate expected text after merge
 		$expected = str_replace( 'one', 'ONE', str_replace( 'three', 'THREE', $text ) );
 
-		$tests[] = array( #2: merge in section
+		$tests[] = array( # 2: merge in section
 			"Elmo", # base edit user
 			$text,
-			array( #adam's edit
+			array( # adam's edit
 				'wpStarttime' => 1,
 				'wpTextbox1' => str_replace( 'one', 'ONE', $section ),
 				'wpSection' => '1'
 			),
-			array( #berta's edit
+			array( # berta's edit
 				'wpStarttime' => 2,
 				'wpTextbox1' => str_replace( 'three', 'THREE', $section ),
 				'wpSection' => '1'
@@ -440,7 +465,7 @@ hello
 	) {
 		$this->checkHasDiff3();
 
-		//create page
+		// create page
 		$ns = $this->getDefaultWikitextNS();
 		$title = Title::newFromText( 'EditPageTest_testAutoMerge', $ns );
 		$page = WikiPage::factory( $title );
@@ -496,4 +521,37 @@ hello
 		$this->assertEdit( 'EditPageTest_testAutoMerge', null, 'Berta', $bertasEdit,
 			$expectedCode, $expectedText, $message );
 	}
+
+	/**
+	 * @depends testAutoMerge
+	 */
+	public function testCheckDirectEditingDisallowed_forNonTextContent() {
+		$title = Title::newFromText( 'Dummy:NonTextPageForEditPage' );
+		$page = WikiPage::factory( $title );
+
+		$article = new Article( $title );
+		$article->getContext()->setTitle( $title );
+		$ep = new EditPage( $article );
+		$ep->setContextTitle( $title );
+
+		$user = $GLOBALS['wgUser'];
+
+		$edit = array(
+			'wpTextbox1' => serialize( 'non-text content' ),
+			'wpEditToken' => $user->getEditToken(),
+			'wpEdittime' => '',
+			'wpStarttime' => wfTimestampNow()
+		);
+
+		$req = new FauxRequest( $edit, true );
+		$ep->importFormData( $req );
+
+		$this->setExpectedException(
+			'MWException',
+			'This content model is not supported: testing'
+		);
+
+		$ep->internalAttemptSave( $result, false );
+	}
+
 }

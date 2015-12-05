@@ -27,7 +27,6 @@
  *
  * @covers SiteImporter
  *
- * @licence GNU GPL v2+
  * @author Daniel Kinzler
  */
 class SiteImporterTest extends PHPUnit_Framework_TestCase {
@@ -35,11 +34,11 @@ class SiteImporterTest extends PHPUnit_Framework_TestCase {
 	private function newSiteImporter( array $expectedSites, $errorCount ) {
 		$store = $this->getMock( 'SiteStore' );
 
-		$self = $this;
+		$that = $this;
 		$store->expects( $this->once() )
 			->method( 'saveSites' )
-			->will( $this->returnCallback( function ( $sites ) use ( $expectedSites, $self ) {
-				$self->assertSitesEqual( $expectedSites, $sites );
+			->will( $this->returnCallback( function ( $sites ) use ( $expectedSites, $that ) {
+				$that->assertSitesEqual( $expectedSites, $sites );
 			} ) );
 
 		$store->expects( $this->any() )
@@ -142,12 +141,12 @@ class SiteImporterTest extends PHPUnit_Framework_TestCase {
 	/**
 	 * @dataProvider provideImportFromXML
 	 */
-	public function testImportFromXML( $xml, array $expectedSites, $errorCount = 0 )  {
+	public function testImportFromXML( $xml, array $expectedSites, $errorCount = 0 ) {
 		$importer = $this->newSiteImporter( $expectedSites, $errorCount );
 		$importer->importFromXML( $xml );
 	}
 
-	public function testImportFromXML_malformed()  {
+	public function testImportFromXML_malformed() {
 		$this->setExpectedException( 'Exception' );
 
 		$store = $this->getMock( 'SiteStore' );
@@ -155,7 +154,7 @@ class SiteImporterTest extends PHPUnit_Framework_TestCase {
 		$importer->importFromXML( 'THIS IS NOT XML' );
 	}
 
-	public function testImportFromFile()  {
+	public function testImportFromFile() {
 		$foo = Site::newForType( Site::TYPE_UNKNOWN );
 		$foo->setGlobalId( 'Foo' );
 

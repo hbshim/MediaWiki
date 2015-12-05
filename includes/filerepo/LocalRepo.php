@@ -47,6 +47,20 @@ class LocalRepo extends FileRepo {
 	/** @var array */
 	protected $oldFileFactoryKey = array( 'OldLocalFile', 'newFromKey' );
 
+	function __construct( array $info = null ) {
+		parent::__construct( $info );
+
+		$this->hasSha1Storage = isset( $info['storageLayout'] ) && $info['storageLayout'] === 'sha1';
+
+		if ( $this->hasSha1Storage() ) {
+			$this->backend = new FileBackendDBRepoWrapper( array(
+				'backend'         => $this->backend,
+				'repoName'        => $this->name,
+				'dbHandleFactory' => $this->getDBFactory()
+			) );
+		}
+	}
+
 	/**
 	 * @throws MWException
 	 * @param stdClass $row
@@ -82,6 +96,11 @@ class LocalRepo extends FileRepo {
 	 * @return FileRepoStatus
 	 */
 	function cleanupDeletedBatch( array $storageKeys ) {
+		if ( $this->hasSha1Storage() ) {
+			wfDebug( __METHOD__ . ": skipped because storage uses sha1 paths\n" );
+			return Status::newGood();
+		}
+
 		$backend = $this->backend; // convenience
 		$root = $this->getZonePath( 'deleted' );
 		$dbw = $this->getMasterDB();
@@ -90,7 +109,7 @@ class LocalRepo extends FileRepo {
 		foreach ( $storageKeys as $key ) {
 			$hashPath = $this->getDeletedHashPath( $key );
 			$path = "$root/$hashPath$key";
-			$dbw->begin( __METHOD__ );
+			$dbw->startAtomic( __METHOD__ );
 			// Check for usage in deleted/hidden files and preemptively
 			// lock the key to avoid any future use until we are finished.
 			$deleted = $this->deletedFileHasKey( $key, 'lock' );
@@ -106,7 +125,7 @@ class LocalRepo extends FileRepo {
 				wfDebug( __METHOD__ . ": $key still in use\n" );
 				$status->successCount++;
 			}
-			$dbw->commit( __METHOD__ );
+			$dbw->endAtomic( __METHOD__ );
 		}
 
 		return $status;
@@ -170,8 +189,6 @@ class LocalRepo extends FileRepo {
 	 * @return bool|Title
 	 */
 	function checkRedirect( Title $title ) {
-		global $wgMemc;
-
 		$title = File::normalizeTitle( $title, 'exception' );
 
 		$memcKey = $this->getSharedCacheKey( 'image_redirect', md5( $title->getDBkey() ) );
@@ -181,63 +198,44 @@ class LocalRepo extends FileRepo {
 		} else {
 			$expiry = 86400; // has invalidation, 1 day
 		}
-		$cachedValue = $wgMemc->get( $memcKey );
-		if ( $cachedValue === ' ' || $cachedValue === '' ) {
-			// Does not exist
-			return false;
-		} elseif ( strval( $cachedValue ) !== '' && $cachedValue !== ' PURGED' ) {
-			return Title::newFromText( $cachedValue, NS_FILE );
-		} // else $cachedValue is false or null: cache miss
 
-		$id = $this->getArticleID( $title );
-		if ( !$id ) {
-			$wgMemc->add( $memcKey, " ", $expiry );
+		$that = $this;
+		$redirDbKey = ObjectCache::getMainWANInstance()->getWithSetCallback(
+			$memcKey,
+			$expiry,
+			function ( $oldValue, &$ttl, array &$setOpts ) use ( $that, $title ) {
+				$dbr = $that->getSlaveDB(); // possibly remote DB
 
-			return false;
-		}
-		$dbr = $this->getSlaveDB();
-		$row = $dbr->selectRow(
-			'redirect',
-			array( 'rd_title', 'rd_namespace' ),
-			array( 'rd_from' => $id ),
-			__METHOD__
+				$setOpts += Database::getCacheSetOptions( $dbr );
+
+				if ( $title instanceof Title ) {
+					$row = $dbr->selectRow(
+						array( 'page', 'redirect' ),
+						array( 'rd_namespace', 'rd_title' ),
+						array(
+							'page_namespace' => $title->getNamespace(),
+							'page_title' => $title->getDBkey(),
+							'rd_from = page_id'
+						),
+						__METHOD__
+					);
+				} else {
+					$row = false;
+				}
+
+				return ( $row && $row->rd_namespace == NS_FILE )
+					? Title::makeTitle( $row->rd_namespace, $row->rd_title )->getDBkey()
+					: ''; // negative cache
+			}
 		);
 
-		if ( $row && $row->rd_namespace == NS_FILE ) {
-			$targetTitle = Title::makeTitle( $row->rd_namespace, $row->rd_title );
-			$wgMemc->add( $memcKey, $targetTitle->getDBkey(), $expiry );
-
-			return $targetTitle;
-		} else {
-			$wgMemc->add( $memcKey, '', $expiry );
-
-			return false;
+		// @note: also checks " " for b/c
+		if ( $redirDbKey !== ' ' && strval( $redirDbKey ) !== '' ) {
+			// Page is a redirect to another file
+			return Title::newFromText( $redirDbKey, NS_FILE );
 		}
-	}
 
-	/**
-	 * Function link Title::getArticleID().
-	 * We can't say Title object, what database it should use, so we duplicate that function here.
-	 *
-	 * @param Title $title
-	 * @return bool|int|mixed
-	 */
-	protected function getArticleID( $title ) {
-		if ( !$title instanceof Title ) {
-			return 0;
-		}
-		$dbr = $this->getSlaveDB();
-		$id = $dbr->selectField(
-			'page', // Table
-			'page_id', //Field
-			array( //Conditions
-				'page_namespace' => $title->getNamespace(),
-				'page_title' => $title->getDBkey(),
-			),
-			__METHOD__ //Function name
-		);
-
-		return $id;
+		return false; // no redirect
 	}
 
 	public function findFiles( array $items, $flags = 0 ) {
@@ -275,17 +273,17 @@ class LocalRepo extends FileRepo {
 			);
 		};
 
-		$repo = $this;
+		$that = $this;
 		$applyMatchingFiles = function ( ResultWrapper $res, &$searchSet, &$finalFiles )
-			use ( $repo, $fileMatchesSearch, $flags )
+			use ( $that, $fileMatchesSearch, $flags )
 		{
 			global $wgContLang;
-			$info = $repo->getInfo();
+			$info = $that->getInfo();
 			foreach ( $res as $row ) {
-				$file = $repo->newFileFromRow( $row );
+				$file = $that->newFileFromRow( $row );
 				// There must have been a search for this DB key, but this has to handle the
 				// cases were title capitalization is different on the client and repo wikis.
-				$dbKeysLook = array( str_replace( ' ', '_', $file->getName() ) );
+				$dbKeysLook = array( strtr( $file->getName(), ' ', '_' ) );
 				if ( !empty( $info['initialCapital'] ) ) {
 					// Search keys for "hi.png" and "Hi.png" should use the "Hi.png file"
 					$dbKeysLook[] = $wgContLang->lcfirst( $file->getName() );
@@ -402,7 +400,7 @@ class LocalRepo extends FileRepo {
 	 */
 	function findBySha1s( array $hashes ) {
 		if ( !count( $hashes ) ) {
-			return array(); //empty parameter
+			return array(); // empty parameter
 		}
 
 		$dbr = $this->getSlaveDB();
@@ -470,6 +468,16 @@ class LocalRepo extends FileRepo {
 	}
 
 	/**
+	 * Get a callback to get a DB handle given an index (DB_SLAVE/DB_MASTER)
+	 * @return Closure
+	 */
+	protected function getDBFactory() {
+		return function( $index ) {
+			return wfGetDB( $index );
+		};
+	}
+
+	/**
 	 * Get a key on the primary cache for this repository.
 	 * Returns false if the repository's cache is not accessible at this site.
 	 * The parameters are the parts of the key, as for wfMemcKey().
@@ -489,14 +497,11 @@ class LocalRepo extends FileRepo {
 	 * @return void
 	 */
 	function invalidateImageRedirect( Title $title ) {
-		global $wgMemc;
-		$memcKey = $this->getSharedCacheKey( 'image_redirect', md5( $title->getDBkey() ) );
-		if ( $memcKey ) {
-			// Set a temporary value for the cache key, to ensure
-			// that this value stays purged long enough so that
-			// it isn't refreshed with a stale value due to a
-			// lagged slave.
-			$wgMemc->set( $memcKey, ' PURGED', 12 );
+		$key = $this->getSharedCacheKey( 'image_redirect', md5( $title->getDBkey() ) );
+		if ( $key ) {
+			$this->getMasterDB()->onTransactionPreCommitOrIdle( function() use ( $key ) {
+				ObjectCache::getMainWANInstance()->delete( $key );
+			} );
 		}
 	}
 
@@ -512,5 +517,57 @@ class LocalRepo extends FileRepo {
 		return array_merge( parent::getInfo(), array(
 			'favicon' => wfExpandUrl( $wgFavicon ),
 		) );
+	}
+
+	public function store( $srcPath, $dstZone, $dstRel, $flags = 0 ) {
+		return $this->skipWriteOperationIfSha1( __FUNCTION__, func_get_args() );
+	}
+
+	public function storeBatch( array $triplets, $flags = 0 ) {
+		return $this->skipWriteOperationIfSha1( __FUNCTION__, func_get_args() );
+	}
+
+	public function cleanupBatch( array $files, $flags = 0 ) {
+		return $this->skipWriteOperationIfSha1( __FUNCTION__, func_get_args() );
+	}
+
+	public function publish(
+		$srcPath,
+		$dstRel,
+		$archiveRel,
+		$flags = 0,
+		array $options = array()
+	) {
+		return $this->skipWriteOperationIfSha1( __FUNCTION__, func_get_args() );
+	}
+
+	public function publishBatch( array $ntuples, $flags = 0 ) {
+		return $this->skipWriteOperationIfSha1( __FUNCTION__, func_get_args() );
+	}
+
+	public function delete( $srcRel, $archiveRel ) {
+		return $this->skipWriteOperationIfSha1( __FUNCTION__, func_get_args() );
+	}
+
+	public function deleteBatch( array $sourceDestPairs ) {
+		return $this->skipWriteOperationIfSha1( __FUNCTION__, func_get_args() );
+	}
+
+	/**
+	 * Skips the write operation if storage is sha1-based, executes it normally otherwise
+	 *
+	 * @param string $function
+	 * @param array $args
+	 * @return FileRepoStatus
+	 */
+	protected function skipWriteOperationIfSha1( $function, array $args ) {
+		$this->assertWritableRepo(); // fail out if read-only
+
+		if ( $this->hasSha1Storage() ) {
+			wfDebug( __METHOD__ . ": skipped because storage uses sha1 paths\n" );
+			return Status::newGood();
+		} else {
+			return call_user_func_array( 'parent::' . $function, $args );
+		}
 	}
 }

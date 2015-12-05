@@ -64,21 +64,9 @@ class MovePage {
 			$status->fatal( 'spamprotectiontext' );
 		}
 
-		# The move is allowed only if (1) the target doesn't exist, or
-		# (2) the target is a redirect to the source, and has no history
-		# (so we can undo bad moves right after they're done).
-
-		if ( $this->newTitle->getArticleID() ) { # Target exists; check for validity
-			if ( !$this->isValidMoveTarget() ) {
-				$status->fatal( 'articleexists' );
-			}
-		} else {
-			$tp = $this->newTitle->getTitleProtection();
-			if ( $tp !== false ) {
-				if ( !$user->isAllowed( $tp['permission'] ) ) {
-					$status->fatal( 'cantmove-titleprotected' );
-				}
-			}
+		$tp = $this->newTitle->getTitleProtection();
+		if ( $tp !== false && !$user->isAllowed( $tp['permission'] ) ) {
+				$status->fatal( 'cantmove-titleprotected' );
 		}
 
 		Hooks::run( 'MovePageCheckPermissions',
@@ -125,6 +113,13 @@ class MovePage {
 			$status->fatal( 'badarticleerror' );
 		}
 
+		# The move is allowed only if (1) the target doesn't exist, or
+		# (2) the target is a redirect to the source, and has no history
+		# (so we can undo bad moves right after they're done).
+		if ( $this->newTitle->getArticleID() && !$this->isValidMoveTarget() ) {
+			$status->fatal( 'articleexists' );
+		}
+
 		// Content model checks
 		if ( !$wgContentHandlerUseDB &&
 			$this->oldTitle->getContentModel() !== $this->newTitle->getContentModel() ) {
@@ -159,6 +154,7 @@ class MovePage {
 	protected function isValidFileMove() {
 		$status = new Status();
 		$file = wfLocalFile( $this->oldTitle );
+		$file->load( File::READ_LATEST );
 		if ( $file->exists() ) {
 			if ( $this->newTitle->getText() != wfStripIllegalFilenameChars( $this->newTitle->getText() ) ) {
 				$status->fatal( 'imageinvalidfilename' );
@@ -186,6 +182,7 @@ class MovePage {
 		# Is it an existing file?
 		if ( $this->newTitle->inNamespace( NS_FILE ) ) {
 			$file = wfLocalFile( $this->newTitle );
+			$file->load( File::READ_LATEST );
 			if ( $file->exists() ) {
 				wfDebug( __METHOD__ . ": file exists\n" );
 				return false;
@@ -238,6 +235,7 @@ class MovePage {
 		$dbw = wfGetDB( DB_MASTER );
 		if ( $this->oldTitle->getNamespace() == NS_FILE ) {
 			$file = wfLocalFile( $this->oldTitle );
+			$file->load( File::READ_LATEST );
 			if ( $file->exists() ) {
 				$status = $file->move( $this->newTitle );
 				if ( !$status->isOk() ) {
@@ -249,7 +247,7 @@ class MovePage {
 			RepoGroup::singleton()->clearCache( $this->newTitle ); # clear false negative cache
 		}
 
-		$dbw->begin( __METHOD__ ); # If $file was a LocalFile, its transaction would have closed our own.
+		$dbw->startAtomic( __METHOD__ );
 		$pageid = $this->oldTitle->getArticleID( Title::GAID_FOR_UPDATE );
 		$protected = $this->oldTitle->isProtected();
 
@@ -307,8 +305,8 @@ class MovePage {
 				__METHOD__,
 				array( 'IGNORE' )
 			);
-			# Update the protection log
-			$log = new LogPage( 'protect' );
+
+			// Build comment for log
 			$comment = wfMessage(
 				'prot_1movedto2',
 				$this->oldTitle->getPrefixedText(),
@@ -317,14 +315,6 @@ class MovePage {
 			if ( $reason ) {
 				$comment .= wfMessage( 'colon-separator' )->inContentLanguage()->text() . $reason;
 			}
-			// @todo FIXME: $params?
-			$logId = $log->addEntry(
-				'move_prot',
-				$this->newTitle,
-				$comment,
-				array( $this->oldTitle->getPrefixedText() ),
-				$user
-			);
 
 			// reread inserted pr_ids for log relation
 			$insertedPrIds = $dbw->select(
@@ -337,7 +327,18 @@ class MovePage {
 			foreach ( $insertedPrIds as $prid ) {
 				$logRelationsValues[] = $prid->pr_id;
 			}
-			$log->addRelations( 'pr_id', $logRelationsValues, $logId );
+
+			// Update the protection log
+			$logEntry = new ManualLogEntry( 'protect', 'move_prot' );
+			$logEntry->setTarget( $this->newTitle );
+			$logEntry->setComment( $comment );
+			$logEntry->setPerformer( $user );
+			$logEntry->setParameters( array(
+				'4::oldtitle' => $this->oldTitle->getPrefixedText(),
+			) );
+			$logEntry->setRelations( array( 'pr_id' => $logRelationsValues ) );
+			$logId = $logEntry->insert();
+			$logEntry->publish( $logId );
 		}
 
 		// Update *_from_namespace fields as needed
@@ -368,9 +369,13 @@ class MovePage {
 			WatchedItem::duplicateEntries( $this->oldTitle, $this->newTitle );
 		}
 
-		$dbw->commit( __METHOD__ );
+		$dbw->endAtomic( __METHOD__ );
 
-		Hooks::run( 'TitleMoveComplete', array( &$this->oldTitle, &$this->newTitle, &$user, $pageid, $redirid, $reason ) );
+		$params = array( &$this->oldTitle, &$this->newTitle, &$user, $pageid, $redirid, $reason );
+		$dbw->onTransactionIdle( function () use ( $params ) {
+			Hooks::run( 'TitleMoveComplete', $params );
+		} );
+
 		return Status::newGood();
 	}
 
@@ -414,6 +419,13 @@ class MovePage {
 		} else {
 			$redirectContent = null;
 		}
+
+		// Figure out whether the content model is no longer the default
+		$oldDefault = ContentHandler::getDefaultModelFor( $this->oldTitle );
+		$contentModel = $this->oldTitle->getContentModel();
+		$newDefault = ContentHandler::getDefaultModelFor( $nt );
+		$defaultContentModelChanging = ( $oldDefault !== $newDefault
+			&& $oldDefault === $contentModel );
 
 		// bug 57084: log_page should be the ID of the *moved* page
 		$oldid = $this->oldTitle->getArticleID();
@@ -491,6 +503,16 @@ class MovePage {
 
 		$newpage->doEditUpdates( $nullRevision, $user,
 			array( 'changed' => false, 'moved' => true, 'oldcountable' => $oldcountable ) );
+
+		// If the default content model changes, we need to populate rev_content_model
+		if ( $defaultContentModelChanging ) {
+			$dbw->update(
+				'revision',
+				array( 'rev_content_model' => $contentModel ),
+				array( 'rev_page' => $nt->getArticleID(), 'rev_content_model IS NULL' ),
+				__METHOD__
+			);
+		}
 
 		if ( !$moveOverRedirect ) {
 			WikiPage::onArticleCreate( $nt );

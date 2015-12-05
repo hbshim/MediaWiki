@@ -10,8 +10,8 @@ class RecentChangeTest extends MediaWikiTestCase {
 	protected $user_comment;
 	protected $context;
 
-	public function __construct() {
-		parent::__construct();
+	public function setUp() {
+		parent::setUp();
 
 		$this->title = Title::newFromText( 'SomeTitle' );
 		$this->target = Title::newFromText( 'TestTarget' );
@@ -22,301 +22,116 @@ class RecentChangeTest extends MediaWikiTestCase {
 	}
 
 	/**
-	 * The testIrcMsgForAction* tests are supposed to cover the hacky
-	 * LogFormatter::getIRCActionText / bug 34508
-	 *
-	 * Third parties bots listen to those messages. They are clever enough
-	 * to fetch the i18n messages from the wiki and then analyze the IRC feed
-	 * to reverse engineer the $1, $2 messages.
-	 * One thing bots can not detect is when MediaWiki change the meaning of
-	 * a message like what happened when we deployed 1.19. $1 became the user
-	 * performing the action which broke basically all bots around.
-	 *
-	 * Should cover the following log actions (which are most commonly used by bots):
-	 * - block/block
-	 * - block/unblock
-	 * - block/reblock
-	 * - delete/delete
-	 * - delete/restore
-	 * - newusers/create
-	 * - newusers/create2
-	 * - newusers/autocreate
-	 * - move/move
-	 * - move/move_redir
-	 * - protect/protect
-	 * - protect/modifyprotect
-	 * - protect/unprotect
-	 * - upload/upload
-	 * - merge/merge
-	 *
-	 * As well as the following Auto Edit Summaries:
-	 * - blank
-	 * - replace
-	 * - rollback
-	 * - undo
+	 * @covers RecentChange::newFromRow
+	 * @covers RecentChange::loadFromRow
 	 */
+	public function testNewFromRow() {
+		$row = new stdClass();
+		$row->rc_foo = 'AAA';
+		$row->rc_timestamp = '20150921134808';
+		$row->rc_deleted = 'bar';
 
-	/**
-	 * @covers LogFormatter::getIRCActionText
-	 */
-	public function testIrcMsgForLogTypeBlock() {
-		$sep = $this->context->msg( 'colon-separator' )->text();
+		$rc = RecentChange::newFromRow( $row );
 
-		# block/block
-		$this->assertIRCComment(
-			$this->context->msg( 'blocklogentry', 'SomeTitle', 'duration', '(flags)' )->plain()
-				. $sep . $this->user_comment,
-			'block', 'block',
-			array(
-				'5::duration' => 'duration',
-				'6::flags' => 'flags',
-			),
-			$this->user_comment
+		$expected = array(
+			'rc_foo' => 'AAA',
+			'rc_timestamp' => '20150921134808',
+			'rc_deleted' => 'bar',
 		);
-		# block/unblock
-		$this->assertIRCComment(
-			$this->context->msg( 'unblocklogentry', 'SomeTitle' )->plain() . $sep . $this->user_comment,
-			'block', 'unblock',
-			array(),
-			$this->user_comment
-		);
-		# block/reblock
-		$this->assertIRCComment(
-			$this->context->msg( 'reblock-logentry', 'SomeTitle', 'duration', '(flags)' )->plain()
-				. $sep . $this->user_comment,
-			'block', 'reblock',
-			array(
-				'5::duration' => 'duration',
-				'6::flags' => 'flags',
-			),
-			$this->user_comment
-		);
+		$this->assertEquals( $expected, $rc->getAttributes() );
 	}
 
 	/**
-	 * @covers LogFormatter::getIRCActionText
+	 * @covers RecentChange::parseParams
 	 */
-	public function testIrcMsgForLogTypeDelete() {
-		$sep = $this->context->msg( 'colon-separator' )->text();
-
-		# delete/delete
-		$this->assertIRCComment(
-			$this->context->msg( 'deletedarticle', 'SomeTitle' )->plain() . $sep . $this->user_comment,
-			'delete', 'delete',
-			array(),
-			$this->user_comment
-		);
-
-		# delete/restore
-		$this->assertIRCComment(
-			$this->context->msg( 'undeletedarticle', 'SomeTitle' )->plain() . $sep . $this->user_comment,
-			'delete', 'restore',
-			array(),
-			$this->user_comment
-		);
-	}
-
-	/**
-	 * @covers LogFormatter::getIRCActionText
-	 */
-	public function testIrcMsgForLogTypeNewusers() {
-		$this->assertIRCComment(
-			'New user account',
-			'newusers', 'newusers',
-			array()
-		);
-		$this->assertIRCComment(
-			'New user account',
-			'newusers', 'create',
-			array()
-		);
-		$this->assertIRCComment(
-			'created new account SomeTitle',
-			'newusers', 'create2',
-			array()
-		);
-		$this->assertIRCComment(
-			'Account created automatically',
-			'newusers', 'autocreate',
-			array()
-		);
-	}
-
-	/**
-	 * @covers LogFormatter::getIRCActionText
-	 */
-	public function testIrcMsgForLogTypeMove() {
-		$move_params = array(
-			'4::target' => $this->target->getPrefixedText(),
-			'5::noredir' => 0,
-		);
-		$sep = $this->context->msg( 'colon-separator' )->text();
-
-		# move/move
-		$this->assertIRCComment(
-			$this->context->msg( '1movedto2', 'SomeTitle', 'TestTarget' )
-				->plain() . $sep . $this->user_comment,
-			'move', 'move',
-			$move_params,
-			$this->user_comment
-		);
-
-		# move/move_redir
-		$this->assertIRCComment(
-			$this->context->msg( '1movedto2_redir', 'SomeTitle', 'TestTarget' )
-				->plain() . $sep . $this->user_comment,
-			'move', 'move_redir',
-			$move_params,
-			$this->user_comment
-		);
-	}
-
-	/**
-	 * @covers LogFormatter::getIRCActionText
-	 */
-	public function testIrcMsgForLogTypePatrol() {
-		# patrol/patrol
-		$this->assertIRCComment(
-			$this->context->msg( 'patrol-log-line', 'revision 777', '[[SomeTitle]]', '' )->plain(),
-			'patrol', 'patrol',
-			array(
-				'4::curid' => '777',
-				'5::previd' => '666',
-				'6::auto' => 0,
+	public function testParseParams() {
+		$params = array(
+			'root' => array(
+				'A' => 1,
+				'B' => 'two'
 			)
 		);
-	}
 
-	/**
-	 * @covers LogFormatter::getIRCActionText
-	 */
-	public function testIrcMsgForLogTypeProtect() {
-		$protectParams = array(
-			'[edit=sysop] (indefinite) ‎[move=sysop] (indefinite)'
-		);
-		$sep = $this->context->msg( 'colon-separator' )->text();
-
-		# protect/protect
-		$this->assertIRCComment(
-			$this->context->msg( 'protectedarticle', 'SomeTitle ' . $protectParams[0] )
-				->plain() . $sep . $this->user_comment,
-			'protect', 'protect',
-			$protectParams,
-			$this->user_comment
+		$this->assertParseParams(
+			$params,
+			'a:1:{s:4:"root";a:2:{s:1:"A";i:1;s:1:"B";s:3:"two";}}'
 		);
 
-		# protect/unprotect
-		$this->assertIRCComment(
-			$this->context->msg( 'unprotectedarticle', 'SomeTitle' )->plain() . $sep . $this->user_comment,
-			'protect', 'unprotect',
-			array(),
-			$this->user_comment
+		$this->assertParseParams(
+			null,
+			null
 		);
 
-		# protect/modify
-		$this->assertIRCComment(
-			$this->context->msg( 'modifiedarticleprotection', 'SomeTitle ' . $protectParams[0] )
-				->plain() . $sep . $this->user_comment,
-			'protect', 'modify',
-			$protectParams,
-			$this->user_comment
+		$this->assertParseParams(
+			null,
+			serialize( false )
+		);
+
+		$this->assertParseParams(
+			null,
+			'not-an-array'
 		);
 	}
 
 	/**
-	 * @covers LogFormatter::getIRCActionText
+	 * @param array $expectedParseParams
+	 * @param string|null $rawRcParams
 	 */
-	public function testIrcMsgForLogTypeUpload() {
-		$sep = $this->context->msg( 'colon-separator' )->text();
+	protected function assertParseParams( $expectedParseParams, $rawRcParams ) {
+		$rc = new RecentChange;
+		$rc->setAttribs( array( 'rc_params' => $rawRcParams ) );
 
-		# upload/upload
-		$this->assertIRCComment(
-			$this->context->msg( 'uploadedimage', 'SomeTitle' )->plain() . $sep . $this->user_comment,
-			'upload', 'upload',
-			array(),
-			$this->user_comment
-		);
+		$actualParseParams = $rc->parseParams();
 
-		# upload/overwrite
-		$this->assertIRCComment(
-			$this->context->msg( 'overwroteimage', 'SomeTitle' )->plain() . $sep . $this->user_comment,
-			'upload', 'overwrite',
-			array(),
-			$this->user_comment
+		$this->assertEquals( $expectedParseParams, $actualParseParams );
+	}
+
+	/**
+	 * 50 mins and 100 mins are used here as the tests never take that long!
+	 * @return array
+	 */
+	public function provideIsInRCLifespan() {
+		return array(
+			array( 6000, time() - 3000, 0, true ),
+			array( 3000, time() - 6000, 0, false ),
+			array( 6000, time() - 3000, 6000, true ),
+			array( 3000, time() - 6000, 6000, true ),
 		);
 	}
 
 	/**
-	 * @covers LogFormatter::getIRCActionText
+	 * @covers RecentChange::isInRCLifespan
+	 * @dataProvider provideIsInRCLifespan
 	 */
-	public function testIrcMsgForLogTypeMerge() {
-		$sep = $this->context->msg( 'colon-separator' )->text();
+	public function testIsInRCLifespan( $maxAge, $timestamp, $tolerance, $expected ) {
+		$this->setMwGlobals( 'wgRCMaxAge', $maxAge );
+		$this->assertEquals( $expected, RecentChange::isInRCLifespan( $timestamp, $tolerance ) );
+	}
 
-		# merge/merge
-		$this->assertIRCComment(
-			$this->context->msg( 'pagemerge-logentry', 'SomeTitle', 'Dest', 'timestamp' )->plain()
-				. $sep . $this->user_comment,
-			'merge', 'merge',
-			array(
-				'4::dest' => 'Dest',
-				'5::mergepoint' => 'timestamp',
-			),
-			$this->user_comment
+	public function provideRCTypes() {
+		return array(
+			array( RC_EDIT, 'edit' ),
+			array( RC_NEW, 'new' ),
+			array( RC_LOG, 'log' ),
+			array( RC_EXTERNAL, 'external' ),
+			array( RC_CATEGORIZE, 'categorize' ),
 		);
 	}
 
 	/**
-	 * @todo Emulate these edits somehow and extract
-	 * raw edit summary from RecentChange object
-	 * --
+	 * @dataProvider provideRCTypes
+	 * @covers RecentChange::parseFromRCType
 	 */
-	/*
-	public function testIrcMsgForBlankingAES() {
-		// $this->context->msg( 'autosumm-blank', .. );
+	public function testParseFromRCType( $rcType, $type ) {
+		$this->assertEquals( $type, RecentChange::parseFromRCType( $rcType ) );
 	}
-
-	public function testIrcMsgForReplaceAES() {
-		// $this->context->msg( 'autosumm-replace', .. );
-	}
-
-	public function testIrcMsgForRollbackAES() {
-		// $this->context->msg( 'revertpage', .. );
-	}
-
-	public function testIrcMsgForUndoAES() {
-		// $this->context->msg( 'undo-summary', .. );
-	}
-	*/
 
 	/**
-	 * @param string $expected Expected IRC text without colors codes
-	 * @param string $type Log type (move, delete, suppress, patrol ...)
-	 * @param string $action A log type action
-	 * @param array $params
-	 * @param string $comment (optional) A comment for the log action
-	 * @param string $msg (optional) A message for PHPUnit :-)
+	 * @dataProvider provideRCTypes
+	 * @covers RecentChange::parseToRCType
 	 */
-	protected function assertIRCComment( $expected, $type, $action, $params,
-		$comment = null, $msg = ''
-	) {
-		$logEntry = new ManualLogEntry( $type, $action );
-		$logEntry->setPerformer( $this->user );
-		$logEntry->setTarget( $this->title );
-		if ( $comment !== null ) {
-			$logEntry->setComment( $comment );
-		}
-		$logEntry->setParameters( $params );
-
-		$formatter = LogFormatter::newFromEntry( $logEntry );
-		$formatter->setContext( $this->context );
-
-		// Apply the same transformation as done in IRCColourfulRCFeedFormatter::getLine for rc_comment
-		$ircRcComment = IRCColourfulRCFeedFormatter::cleanupForIRC( $formatter->getIRCActionComment() );
-
-		$this->assertEquals(
-			$expected,
-			$ircRcComment,
-			$msg
-		);
+	public function testParseToRCType( $rcType, $type ) {
+		$this->assertEquals( $rcType, RecentChange::parseToRCType( $type ) );
 	}
+
 }

@@ -140,7 +140,7 @@ class ImagePage extends Article {
 
 		if ( $wgShowEXIF && $this->displayImg->exists() ) {
 			// @todo FIXME: Bad interface, see note on MediaHandler::formatMetadata().
-			$formattedMetadata = $this->displayImg->formatMetadata();
+			$formattedMetadata = $this->displayImg->formatMetadata( $this->getContext() );
 			$showmeta = $formattedMetadata !== false;
 		} else {
 			$showmeta = false;
@@ -219,6 +219,9 @@ class ImagePage extends Article {
 		}
 		// always show the local local Filepage.css, bug 29277
 		$out->addModuleStyles( 'filepage' );
+
+		// Add MediaWiki styles for a file page
+		$out->addModuleStyles( 'mediawiki.action.view.filepage' );
 	}
 
 	/**
@@ -245,7 +248,9 @@ class ImagePage extends Article {
 		Hooks::run( 'ImagePageShowTOC', array( $this, &$r ) );
 
 		if ( $metadata ) {
-			$r[] = '<li><a href="#metadata">' . $this->getContext()->msg( 'metadata' )->escaped() . '</a></li>';
+			$r[] = '<li><a href="#metadata">' .
+				$this->getContext()->msg( 'metadata' )->escaped() .
+				'</a></li>';
 		}
 
 		return '<ul id="filetoc">' . implode( "\n", $r ) . '</ul>';
@@ -296,7 +301,7 @@ class ImagePage extends Article {
 	}
 
 	protected function openShowImage() {
-		global $wgEnableUploads, $wgSend404Code;
+		global $wgEnableUploads, $wgSend404Code, $wgSVGMaxSize;
 
 		$this->loadFile();
 		$out = $this->getContext()->getOutput();
@@ -351,7 +356,7 @@ class ImagePage extends Article {
 					);
 					$linktext = $this->getContext()->msg( 'show-big-image' )->escaped();
 
-					$thumbSizes = $this->getThumbSizes( $width, $height, $width_orig, $height_orig );
+					$thumbSizes = $this->getThumbSizes( $width_orig, $height_orig );
 					# Generate thumbnails or thumbnail links as needed...
 					$otherSizes = array();
 					foreach ( $thumbSizes as $size ) {
@@ -361,10 +366,12 @@ class ImagePage extends Article {
 						// the current thumbnail's size ($width/$height)
 						// since that is added to the message separately, so
 						// it can be denoted as the current size being shown.
-						// Vectorized images are "infinitely" big, so all thumb
-						// sizes are shown.
+						// Vectorized images are limited by $wgSVGMaxSize big,
+						// so all thumbs less than or equal that are shown.
 						if ( ( ( $size[0] <= $width_orig && $size[1] <= $height_orig )
-								|| $this->displayImg->isVectorized() )
+								|| ( $this->displayImg->isVectorized()
+									&& max( $size[0], $size[1] ) <= $wgSVGMaxSize )
+							)
 							&& $size[0] != $width && $size[1] != $height
 						) {
 							$sizeLink = $this->makeSizeLink( $params, $size[0], $size[1] );
@@ -375,18 +382,17 @@ class ImagePage extends Article {
 					}
 					$otherSizes = array_unique( $otherSizes );
 
-					$msgsmall = '';
 					$sizeLinkBigImagePreview = $this->makeSizeLink( $params, $width, $height );
-					if ( $sizeLinkBigImagePreview ) {
-						$msgsmall .= $this->getContext()->msg( 'show-big-image-preview' )->
-							rawParams( $sizeLinkBigImagePreview )->
-							parse();
-					}
+					$msgsmall = $this->getThumbPrevText( $params, $sizeLinkBigImagePreview );
 					if ( count( $otherSizes ) ) {
 						$msgsmall .= ' ' .
-						Html::rawElement( 'span', array( 'class' => 'mw-filepage-other-resolutions' ),
-							$this->getContext()->msg( 'show-big-image-other' )->rawParams( $lang->pipeList( $otherSizes ) )->
-							params( count( $otherSizes ) )->parse()
+						Html::rawElement(
+							'span',
+							array( 'class' => 'mw-filepage-other-resolutions' ),
+							$this->getContext()->msg( 'show-big-image-other' )
+								->rawParams( $lang->pipeList( $otherSizes ) )
+								->params( count( $otherSizes ) )
+								->parse()
 						);
 					}
 				} elseif ( $width == 0 && $height == 0 ) {
@@ -505,6 +511,22 @@ class ImagePage extends Article {
 
 			$longDesc = $this->getContext()->msg( 'parentheses', $this->displayImg->getLongDesc() )->text();
 
+			$handler = $this->displayImg->getHandler();
+
+			// If this is a filetype with potential issues, warn the user.
+			if ( $handler ) {
+				$warningConfig = $handler->getWarningConfig( $this->displayImg );
+
+				if ( $warningConfig !== null ) {
+					// The warning will be displayed via CSS and JavaScript.
+					// We just need to tell the client side what message to use.
+					$output = $this->getContext()->getOutput();
+					$output->addJsConfigVars( 'wgFileWarning', $warningConfig );
+					$output->addModules( $warningConfig['module'] );
+					$output->addModules( 'mediawiki.filewarning' );
+				}
+			}
+
 			$medialink = "[[Media:$filename|$linktext]]";
 
 			if ( !$this->displayImg->isSafeFile() ) {
@@ -598,11 +620,49 @@ EOT
 			$out->wrapWikiMsg( "<div id='mw-imagepage-nofile' class='plainlinks'>\n$1\n</div>", $nofile );
 			if ( !$this->getID() && $wgSend404Code ) {
 				// If there is no image, no shared image, and no description page,
-				// output a 404, to be consistent with articles.
-				$request->response()->header( 'HTTP/1.1 404 Not Found' );
+				// output a 404, to be consistent with Article::showMissingArticle.
+				$request->response()->statusHeader( 404 );
 			}
 		}
 		$out->setFileVersion( $this->displayImg );
+	}
+
+	/**
+	 * Make the text under the image to say what size preview
+	 *
+	 * @param $params Array parameters for thumbnail
+	 * @param $sizeLinkBigImagePreview HTML for the current size
+	 * @return string HTML output
+	 */
+	private function getThumbPrevText( $params, $sizeLinkBigImagePreview ) {
+		if ( $sizeLinkBigImagePreview ) {
+			// Show a different message of preview is different format from original.
+			$previewTypeDiffers = false;
+			$origExt = $thumbExt = $this->displayImg->getExtension();
+			if ( $this->displayImg->getHandler() ) {
+				$origMime = $this->displayImg->getMimeType();
+				$typeParams = $params;
+				$this->displayImg->getHandler()->normaliseParams( $this->displayImg, $typeParams );
+				list( $thumbExt, $thumbMime ) = $this->displayImg->getHandler()->getThumbType(
+					$origExt, $origMime, $typeParams );
+				if ( $thumbMime !== $origMime ) {
+					$previewTypeDiffers = true;
+				}
+			}
+			if ( $previewTypeDiffers ) {
+				return $this->getContext()->msg( 'show-big-image-preview-differ' )->
+					rawParams( $sizeLinkBigImagePreview )->
+					params( strtoupper( $origExt ) )->
+					params( strtoupper( $thumbExt ) )->
+					parse();
+			} else {
+				return $this->getContext()->msg( 'show-big-image-preview' )->
+					rawParams( $sizeLinkBigImagePreview )->
+				parse();
+			}
+		} else {
+			return '';
+		}
 	}
 
 	/**
@@ -646,9 +706,14 @@ EOT
 		$wrap = "<div class=\"sharedUploadNotice\">\n$1\n</div>\n";
 		$repo = $this->mPage->getFile()->getRepo()->getDisplayName();
 
-		if ( $descUrl && $descText && $this->getContext()->msg( 'sharedupload-desc-here' )->plain() !== '-' ) {
+		if ( $descUrl &&
+			$descText &&
+			$this->getContext()->msg( 'sharedupload-desc-here' )->plain() !== '-'
+		) {
 			$out->wrapWikiMsg( $wrap, array( 'sharedupload-desc-here', $repo, $descUrl ) );
-		} elseif ( $descUrl && $this->getContext()->msg( 'sharedupload-desc-there' )->plain() !== '-' ) {
+		} elseif ( $descUrl &&
+			$this->getContext()->msg( 'sharedupload-desc-there' )->plain() !== '-'
+		) {
 			$out->wrapWikiMsg( $wrap, array( 'sharedupload-desc-there', $repo, $descUrl ) );
 		} else {
 			$out->wrapWikiMsg( $wrap, array( 'sharedupload', $repo ), ''/*BACKCOMPAT*/ );
@@ -688,10 +753,10 @@ EOT
 		$out->addHTML( "<ul>\n" );
 
 		# "Upload a new version of this file" link
-		$canUpload = $this->getTitle()->userCan( 'upload', $this->getContext()->getUser() );
+		$canUpload = $this->getTitle()->quickUserCan( 'upload', $this->getContext()->getUser() );
 		if ( $canUpload && UploadBase::userCanReUpload(
 				$this->getContext()->getUser(),
-				$this->mPage->getFile()->name )
+				$this->mPage->getFile() )
 		) {
 			$ulink = Linker::makeExternalLink(
 				$this->getUploadUrl(),
@@ -833,7 +898,9 @@ EOT
 				$liContents = $link;
 			} elseif ( count( $redirects[$element->page_title] ) === 0 ) {
 				# Redirect without usages
-				$liContents = $this->getContext()->msg( 'linkstoimage-redirect' )->rawParams( $link, '' )->parse();
+				$liContents = $this->getContext()->msg( 'linkstoimage-redirect' )
+					->rawParams( $link, '' )
+					->parse();
 			} else {
 				# Redirect with usages
 				$li = '';
@@ -902,7 +969,10 @@ EOT
 			} else {
 				$link = Linker::makeExternalLink( $file->getDescriptionUrl(),
 					$file->getTitle()->getPrefixedText() );
-				$fromSrc = $this->getContext()->msg( 'shared-repo-from', $file->getRepo()->getDisplayName() )->text();
+				$fromSrc = $this->getContext()->msg(
+					'shared-repo-from',
+					$file->getRepo()->getDisplayName()
+				)->text();
 			}
 			$out->addHTML( "<li>{$link} {$fromSrc}</li>\n" );
 		}
@@ -1047,8 +1117,10 @@ EOT
 		);
 		$submit = Xml::submitButton( $this->getContext()->msg( 'img-lang-go' )->text() );
 
-		$formContents = $this->getContext()->msg( 'img-lang-info' )->rawParams( $select, $submit )->parse()
-			. Html::hidden( 'title', $this->getTitle()->getPrefixedDBkey() );
+		$formContents = $this->getContext()->msg( 'img-lang-info' )
+			->rawParams( $select, $submit )
+			->parse();
+		$formContents .= Html::hidden( 'title', $this->getTitle()->getPrefixedDBkey() );
 
 		$langSelectLine = Html::rawElement( 'div', array( 'id' => 'mw-imglangselector-line' ),
 			Html::rawElement( 'form', array( 'action' => $wgScript ), $formContents )
@@ -1120,7 +1192,9 @@ EOT
 		} else {
 			# Creating thumb links triggers thumbnail generation.
 			# Just generate the thumb for the current users prefs.
-			$thumbSizes = array( $this->getImageLimitsFromOption( $this->getContext()->getUser(), 'thumbsize' ) );
+			$thumbSizes = array(
+				$this->getImageLimitsFromOption( $this->getContext()->getUser(), 'thumbsize' )
+			);
 			if ( !$this->displayImg->mustRender() ) {
 				// We can safely include a link to the "full-size" preview,
 				// without actually rendering.
@@ -1459,7 +1533,7 @@ class ImageHistoryPseudoPager extends ReverseChronologicalPager {
 	function __construct( $imagePage ) {
 		parent::__construct( $imagePage->getContext() );
 		$this->mImagePage = $imagePage;
-		$this->mTitle = clone ( $imagePage->getTitle() );
+		$this->mTitle = clone $imagePage->getTitle();
 		$this->mTitle->setFragment( '#filehistory' );
 		$this->mImg = null;
 		$this->mHist = array();
@@ -1499,6 +1573,18 @@ class ImageHistoryPseudoPager extends ReverseChronologicalPager {
 		$s = '';
 		$this->doQuery();
 		if ( count( $this->mHist ) ) {
+			if ( $this->mImg->isLocal() ) {
+				// Do a batch existence check for user pages and talkpages
+				$linkBatch = new LinkBatch();
+				for ( $i = $this->mRange[0]; $i <= $this->mRange[1]; $i++ ) {
+					$file = $this->mHist[$i];
+					$user = $file->getUser( 'text' );
+					$linkBatch->add( NS_USER, $user );
+					$linkBatch->add( NS_USER_TALK, $user );
+				}
+				$linkBatch->execute();
+			}
+
 			$list = new ImageHistoryList( $this->mImagePage );
 			# Generate prev/next links
 			$navLink = $this->getNavigationBar();

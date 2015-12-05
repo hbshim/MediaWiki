@@ -48,6 +48,10 @@ class BlockLogFormatter extends LogFormatter {
 
 		$subtype = $this->entry->getSubtype();
 		if ( $subtype === 'block' || $subtype === 'reblock' ) {
+			if ( !isset( $params[4] ) ) {
+				// Very old log entry without duration: means infinite
+				$params[4] = 'infinite';
+			}
 			// Localize the duration, and add a tooltip
 			// in English to help visitors from other wikis.
 			// The lrm is needed to make sure that the number
@@ -121,7 +125,7 @@ class BlockLogFormatter extends LogFormatter {
 	public static function formatBlockFlags( $flags, $lang ) {
 		$flags = trim( $flags );
 		if ( $flags === '' ) {
-			return ''; //nothing to do
+			return ''; // nothing to do
 		}
 		$flags = explode( ',', $flags );
 		$flagsCount = count( $flags );
@@ -164,4 +168,57 @@ class BlockLogFormatter extends LogFormatter {
 
 		return $messages[$flag];
 	}
+
+	protected function getParametersForApi() {
+		$entry = $this->entry;
+		$params = $entry->getParameters();
+
+		static $map = array(
+			// While this looks wrong to be starting at 5 rather than 4, it's
+			// because getMessageParameters uses $4 for its own purposes.
+			'5::duration',
+			'6:array:flags',
+			'6::flags' => '6:array:flags',
+		);
+		foreach ( $map as $index => $key ) {
+			if ( isset( $params[$index] ) ) {
+				$params[$key] = $params[$index];
+				unset( $params[$index] );
+			}
+		}
+
+		$subtype = $entry->getSubtype();
+		if ( $subtype === 'block' || $subtype === 'reblock' ) {
+			// Defaults for old log entries missing some fields
+			$params += array(
+				'5::duration' => 'infinite',
+				'6:array:flags' => array(),
+			);
+
+			if ( !is_array( $params['6:array:flags'] ) ) {
+				$params['6:array:flags'] = $params['6:array:flags'] === ''
+					? array()
+					: explode( ',', $params['6:array:flags'] );
+			}
+
+			if ( !wfIsInfinity( $params['5::duration'] ) ) {
+				$ts = wfTimestamp( TS_UNIX, $entry->getTimestamp() );
+				$expiry = strtotime( $params['5::duration'], $ts );
+				if ( $expiry !== false && $expiry > 0 ) {
+					$params[':timestamp:expiry'] = $expiry;
+				}
+			}
+		}
+
+		return $params;
+	}
+
+	public function formatParametersForApi() {
+		$ret = parent::formatParametersForApi();
+		if ( isset( $ret['flags'] ) ) {
+			ApiResult::setIndexedTagName( $ret['flags'], 'f' );
+		}
+		return $ret;
+	}
+
 }

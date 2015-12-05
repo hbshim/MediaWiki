@@ -54,9 +54,9 @@ class SearchMySQL extends SearchDatabase {
 		if ( preg_match_all( '/([-+<>~]?)(([' . $lc . ']+)(\*?)|"[^"]*")/',
 				$filteredText, $m, PREG_SET_ORDER ) ) {
 			foreach ( $m as $bits ) {
-				wfSuppressWarnings();
+				MediaWiki\suppressWarnings();
 				list( /* all */, $modifier, $term, $nonQuoted, $wildcard ) = $bits;
-				wfRestoreWarnings();
+				MediaWiki\restoreWarnings();
 
 				if ( $nonQuoted != '' ) {
 					$term = $nonQuoted;
@@ -406,7 +406,6 @@ class SearchMySQL extends SearchDatabase {
 		// Periods within things like hostnames and IP addresses
 		// are also important -- we want a search for "example.com"
 		// or "192.168.1.1" to work sanely.
-		//
 		// MySQL's search seems to ignore them, so you'd match on
 		// "example.wikipedia.com" and "192.168.83.1" as well.
 		$out = preg_replace(
@@ -439,7 +438,7 @@ class SearchMySQL extends SearchDatabase {
 			$sql = "SHOW GLOBAL VARIABLES LIKE 'ft\\_min\\_word\\_len'";
 
 			$dbr = wfGetDB( DB_SLAVE );
-			$result = $dbr->query( $sql );
+			$result = $dbr->query( $sql, __METHOD__ );
 			$row = $result->fetchObject();
 			$result->free();
 

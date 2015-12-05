@@ -54,6 +54,9 @@
 		// we hide the input element as instead we will style the label that follows
 		// we use opacity so that VoiceOver software can still identify it
 		opacity: 0;
+		// Render "on top of" the label, so that it's still clickable (T98905)
+		z-index: 1;
+		position: relative;
 		// ensure the invisible checkbox takes up the required width
 		width: @checkboxSize;
 		height: @checkboxSize;
@@ -69,7 +72,6 @@
 
 		// the pseudo before element of the label after the checkbox now looks like a checkbox
 		& + label::before {
-			.transition( 0.2s cubic-bezier(0.175, 0.885, 0.32, 1.275) );
 			content: '';
 			cursor: pointer;
 			.box-sizing(border-box);

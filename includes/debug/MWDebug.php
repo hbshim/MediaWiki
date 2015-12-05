@@ -309,12 +309,25 @@ class MWDebug {
 	 *
 	 * @since 1.19
 	 * @param string $str
+	 * @param array $context
 	 */
-	public static function debugMsg( $str ) {
+	public static function debugMsg( $str, $context = array() ) {
 		global $wgDebugComments, $wgShowDebug;
 
 		if ( self::$enabled || $wgDebugComments || $wgShowDebug ) {
-			self::$debug[] = rtrim( UtfNormal::cleanUp( $str ) );
+			if ( $context ) {
+				$prefix = '';
+				if ( isset( $context['prefix'] ) ) {
+					$prefix = $context['prefix'];
+				} elseif ( isset( $context['channel'] ) && $context['channel'] !== 'wfDebug' ) {
+					$prefix = "[{$context['channel']}] ";
+				}
+				if ( isset( $context['seconds_elapsed'] ) && isset( $context['memory_used'] ) ) {
+					$prefix .= "{$context['seconds_elapsed']} {$context['memory_used']}  ";
+				}
+				$str = $prefix . $str;
+			}
+			self::$debug[] = rtrim( UtfNormal\Validator::cleanUp( $str ) );
 		}
 	}
 
@@ -419,10 +432,8 @@ class MWDebug {
 
 			// Cannot use OutputPage::addJsConfigVars because those are already outputted
 			// by the time this method is called.
-			$html = Html::inlineScript(
-				ResourceLoader::makeLoaderConditionalScript(
-					ResourceLoader::makeConfigSetScript( array( 'debugInfo' => $debugInfo ) )
-				)
+			$html = ResourceLoader::makeInlineScript(
+				ResourceLoader::makeConfigSetScript( array( 'debugInfo' => $debugInfo ) )
 			);
 		}
 
@@ -444,59 +455,21 @@ class MWDebug {
 	 * @return string HTML fragment
 	 */
 	public static function getHTMLDebugLog() {
-		global $wgDebugTimestamps, $wgShowDebug;
+		global $wgShowDebug;
 
 		if ( !$wgShowDebug ) {
 			return '';
 		}
 
-		$curIdent = 0;
-		$ret = "\n<hr />\n<strong>Debug data:</strong><ul id=\"mw-debug-html\">\n<li>";
+		$ret = "\n<hr />\n<strong>Debug data:</strong><ul id=\"mw-debug-html\">\n";
 
 		foreach ( self::$debug as $line ) {
-			$pre = '';
-			if ( $wgDebugTimestamps ) {
-				$matches = array();
-				if ( preg_match( '/^(\d+\.\d+ {1,3}\d+.\dM\s{2})/', $line, $matches ) ) {
-					$pre = $matches[1];
-					$line = substr( $line, strlen( $pre ) );
-				}
-			}
-			$display = ltrim( $line );
-			$ident = strlen( $line ) - strlen( $display );
-			$diff = $ident - $curIdent;
+			$display = nl2br( htmlspecialchars( trim( $line ) ) );
 
-			$display = $pre . $display;
-			if ( $display == '' ) {
-				$display = "\xc2\xa0";
-			}
-
-			if ( !$ident
-				&& $diff < 0
-				&& substr( $display, 0, 9 ) != 'Entering '
-				&& substr( $display, 0, 8 ) != 'Exiting '
-			) {
-				$ident = $curIdent;
-				$diff = 0;
-				$display = '<span style="background:yellow;">' .
-					nl2br( htmlspecialchars( $display ) ) . '</span>';
-			} else {
-				$display = nl2br( htmlspecialchars( $display ) );
-			}
-
-			if ( $diff < 0 ) {
-				$ret .= str_repeat( "</li></ul>\n", -$diff ) . "</li><li>\n";
-			} elseif ( $diff == 0 ) {
-				$ret .= "</li><li>\n";
-			} else {
-				$ret .= str_repeat( "<ul><li>\n", $diff );
-			}
-			$ret .= "<code>$display</code>\n";
-
-			$curIdent = $ident;
+			$ret .= "<li><code>$display</code></li>\n";
 		}
 
-		$ret .= str_repeat( '</li></ul>', $curIdent ) . "</li>\n</ul>\n";
+		$ret .= '</ul>' . "\n";
 
 		return $ret;
 	}
@@ -527,11 +500,11 @@ class MWDebug {
 		MWDebug::log( 'MWDebug output complete' );
 		$debugInfo = self::getDebugInfo( $context );
 
-		$result->setIndexedTagName( $debugInfo, 'debuginfo' );
-		$result->setIndexedTagName( $debugInfo['log'], 'line' );
-		$result->setIndexedTagName( $debugInfo['debugLog'], 'msg' );
-		$result->setIndexedTagName( $debugInfo['queries'], 'query' );
-		$result->setIndexedTagName( $debugInfo['includes'], 'queries' );
+		ApiResult::setIndexedTagName( $debugInfo, 'debuginfo' );
+		ApiResult::setIndexedTagName( $debugInfo['log'], 'line' );
+		ApiResult::setIndexedTagName( $debugInfo['debugLog'], 'msg' );
+		ApiResult::setIndexedTagName( $debugInfo['queries'], 'query' );
+		ApiResult::setIndexedTagName( $debugInfo['includes'], 'queries' );
 		$result->addValue( null, 'debuginfo', $debugInfo );
 	}
 

@@ -103,7 +103,7 @@ class HtmlTest extends MediaWikiTestCase {
 	 */
 	public function testExpandAttributesSkipsNullAndFalse() {
 
-		### EMPTY ########
+		# ## EMPTY ########
 		$this->assertEmpty(
 			Html::expandAttributes( array( 'foo' => null ) ),
 			'skip keys with null value'
@@ -187,7 +187,7 @@ class HtmlTest extends MediaWikiTestCase {
 	 * @covers Html::expandAttributes
 	 */
 	public function testExpandAttributesVariousExpansions() {
-		### NOT EMPTY ####
+		# ## NOT EMPTY ####
 		$this->assertEquals(
 			' empty_string=""',
 			Html::expandAttributes( array( 'empty_string' => '' ) ),
@@ -240,7 +240,7 @@ class HtmlTest extends MediaWikiTestCase {
 	 * @covers Html::expandAttributes
 	 */
 	public function testExpandAttributesListValueAttributes() {
-		### STRING VALUES
+		# ## STRING VALUES
 		$this->assertEquals(
 			' class="redundant spaces here"',
 			Html::expandAttributes( array( 'class' => ' redundant  spaces  here  ' ) ),
@@ -251,7 +251,7 @@ class HtmlTest extends MediaWikiTestCase {
 			Html::expandAttributes( array( 'class' => 'foo bar foo bar bar' ) ),
 			'Normalization should remove duplicates in string-lists'
 		);
-		### "EMPTY" ARRAY VALUES
+		# ## "EMPTY" ARRAY VALUES
 		$this->assertEquals(
 			' class=""',
 			Html::expandAttributes( array( 'class' => array() ) ),
@@ -262,7 +262,7 @@ class HtmlTest extends MediaWikiTestCase {
 			Html::expandAttributes( array( 'class' => array( null, '', ' ', '  ' ) ) ),
 			'Array with null, empty string and spaces'
 		);
-		### NON-EMPTY ARRAY VALUES
+		# ## NON-EMPTY ARRAY VALUES
 		$this->assertEquals(
 			' class="foo bar"',
 			Html::expandAttributes( array( 'class' => array(
@@ -528,7 +528,7 @@ class HtmlTest extends MediaWikiTestCase {
 		# Will be mapped to Html::element()
 		$cases = array();
 
-		### Generic cases, match $attribDefault static array
+		# ## Generic cases, match $attribDefault static array
 		$cases[] = array( '<area>',
 			'area', array( 'shape' => 'rect' )
 		);
@@ -602,7 +602,7 @@ class HtmlTest extends MediaWikiTestCase {
 			'textarea', array( 'wrap' => 'soft' )
 		);
 
-		### SPECIFIC CASES
+		# ## SPECIFIC CASES
 
 		# <link type="text/css">
 		$cases[] = array( '<link>',
@@ -715,7 +715,7 @@ class HtmlTest extends MediaWikiTestCase {
 			'Input wrapper with type and value.'
 		);
 		$this->assertEquals(
-			'<input name=testname class=mw-ui-input>',
+			'<input name=testname>',
 			Html::input( 'testname' ),
 			'Input wrapper with all default values.'
 		);
@@ -763,6 +763,30 @@ class HtmlTest extends MediaWikiTestCase {
 			Html::label( 'testlabel', 'testid' ),
 			'Label wrapper'
 		);
+	}
+
+	public static function provideSrcSetImages() {
+		return array(
+			array( array(), '', 'when there are no images, return empty string' ),
+			array(
+				array( '1x' => '1x.png', '1.5x' => '1_5x.png', '2x' => '2x.png' ),
+				'1x.png 1x, 1_5x.png 1.5x, 2x.png 2x',
+				'pixel depth keys may include a trailing "x"'
+			),
+			array(
+				array( '1'  => '1x.png', '1.5' => '1_5x.png', '2'  => '2x.png' ),
+				'1x.png 1x, 1_5x.png 1.5x, 2x.png 2x',
+				'pixel depth keys may omit a trailing "x"'
+			),
+		);
+	}
+
+	/**
+	 * @dataProvider provideSrcSetImages
+	 * @covers Html::srcSet
+	 */
+	public function testSrcSet( $images, $expected, $message ) {
+		$this->assertEquals( Html::srcSet( $images ), $expected, $message );
 	}
 }
 

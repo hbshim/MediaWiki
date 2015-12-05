@@ -200,7 +200,9 @@ class ApiQueryAllLinks extends ApiQueryGeneratorBase {
 			}
 
 			if ( is_null( $resultPageSet ) ) {
-				$vals = array();
+				$vals = array(
+					ApiResult::META_TYPE => 'assoc',
+				);
 				if ( $fld_ids ) {
 					$vals['fromid'] = intval( $row->pl_from );
 				}
@@ -230,7 +232,7 @@ class ApiQueryAllLinks extends ApiQueryGeneratorBase {
 		}
 
 		if ( is_null( $resultPageSet ) ) {
-			$result->setIndexedTagName_internal( array( 'query', $this->getModuleName() ), $this->indexTag );
+			$result->addIndexedTagName( array( 'query', $this->getModuleName() ), $this->indexTag );
 		} elseif ( $params['unique'] ) {
 			$resultPageSet->populateFromTitles( $titles );
 		} else {
@@ -253,6 +255,7 @@ class ApiQueryAllLinks extends ApiQueryGeneratorBase {
 				ApiBase::PARAM_TYPE => array_merge(
 					array( 'ids', 'title' ), array_keys( $this->props )
 				),
+				ApiBase::PARAM_HELP_MSG_PER_VALUE => array(),
 			),
 			'namespace' => array(
 				ApiBase::PARAM_DFLT => $this->dfltNamespace,

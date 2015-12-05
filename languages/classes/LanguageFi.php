@@ -42,8 +42,8 @@ class LanguageFi extends Language {
 			return $wgGrammarForms['fi'][$case][$word];
 		}
 
-		# These rules are not perfect, but they are currently only used for site names so it doesn't
-		# matter if they are wrong sometimes. Just add a special case for your site name if necessary.
+		# These rules don't cover the whole language.
+		# They are used only for site names.
 
 		# wovel harmony flag
 		$aou = preg_match( '/[aou][^äöy]*$/i', $word );
@@ -149,10 +149,10 @@ class LanguageFi extends Language {
 		);
 
 		$final = '';
-		$tokens = explode ( ' ', $str );
+		$tokens = explode( ' ', $str );
 		foreach ( $tokens as $item ) {
 			if ( !is_numeric( $item ) ) {
-				if ( count ( explode( '-', $item ) ) == 3 && strlen( $item ) == 10 ) {
+				if ( count( explode( '-', $item ) ) == 3 && strlen( $item ) == 10 ) {
 					list( $yyyy, $mm, $dd ) = explode( '-', $item );
 					$final .= ' ' . $this->date( "{$yyyy}{$mm}{$dd}000000" );
 					continue;

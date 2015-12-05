@@ -1,6 +1,6 @@
 <?php
 /**
- * This file is the entry point for the resource loader.
+ * This file is the entry point for ResourceLoader.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -22,12 +22,7 @@
  * @author Trevor Parscal
  */
 
-// Bail if PHP is too low
-if ( !function_exists( 'version_compare' ) || version_compare( PHP_VERSION, '5.3.3' ) < 0 ) {
-	// We need to use dirname( __FILE__ ) here cause __DIR__ is PHP5.3+
-	require dirname( __FILE__ ) . '/includes/PHPVersionError.php';
-	wfPHPVersionError( 'load.php' );
-}
+use MediaWiki\Logger\LoggerFactory;
 
 require __DIR__ . '/includes/WebStart.php';
 
@@ -40,11 +35,13 @@ if ( !$wgRequest->checkUrlExtension() ) {
 // Respond to resource loading request.
 // foo()->bar() syntax is not supported in PHP4, and this file needs to *parse* in PHP4.
 $configFactory = ConfigFactory::getDefaultInstance();
-$resourceLoader = new ResourceLoader( $configFactory->makeConfig( 'main' ) );
+$resourceLoader = new ResourceLoader(
+	$configFactory->makeConfig( 'main' ),
+	LoggerFactory::getInstance( 'resourceloader' )
+);
 $resourceLoader->respond( new ResourceLoaderContext( $resourceLoader, $wgRequest ) );
 
-wfLogProfilingData();
+Profiler::instance()->setTemplated( true );
 
-// Shut down the database.
-$lb = wfGetLBFactory();
-$lb->shutdown();
+$mediawiki = new MediaWiki();
+$mediawiki->doPostOutputShutdown( 'fast' );

@@ -128,15 +128,15 @@ class ApiQueryAllCategories extends ApiQueryGeneratorBase {
 				$pages[] = $titleObj;
 			} else {
 				$item = array();
-				ApiResult::setContent( $item, $titleObj->getText() );
+				ApiResult::setContentValue( $item, 'category', $titleObj->getText() );
 				if ( isset( $prop['size'] ) ) {
 					$item['size'] = intval( $row->cat_pages );
 					$item['pages'] = $row->cat_pages - $row->cat_subcats - $row->cat_files;
 					$item['files'] = intval( $row->cat_files );
 					$item['subcats'] = intval( $row->cat_subcats );
 				}
-				if ( isset( $prop['hidden'] ) && $row->cat_hidden ) {
-					$item['hidden'] = '';
+				if ( isset( $prop['hidden'] ) ) {
+					$item['hidden'] = (bool)$row->cat_hidden;
 				}
 				$fit = $result->addValue( array( 'query', $this->getModuleName() ), null, $item );
 				if ( !$fit ) {
@@ -147,7 +147,7 @@ class ApiQueryAllCategories extends ApiQueryGeneratorBase {
 		}
 
 		if ( is_null( $resultPageSet ) ) {
-			$result->setIndexedTagName_internal( array( 'query', $this->getModuleName() ), 'c' );
+			$result->addIndexedTagName( array( 'query', $this->getModuleName() ), 'c' );
 		} else {
 			$resultPageSet->populateFromTitles( $pages );
 		}
@@ -169,11 +169,9 @@ class ApiQueryAllCategories extends ApiQueryGeneratorBase {
 				),
 			),
 			'min' => array(
-				ApiBase::PARAM_DFLT => null,
 				ApiBase::PARAM_TYPE => 'integer'
 			),
 			'max' => array(
-				ApiBase::PARAM_DFLT => null,
 				ApiBase::PARAM_TYPE => 'integer'
 			),
 			'limit' => array(
@@ -186,7 +184,8 @@ class ApiQueryAllCategories extends ApiQueryGeneratorBase {
 			'prop' => array(
 				ApiBase::PARAM_TYPE => array( 'size', 'hidden' ),
 				ApiBase::PARAM_DFLT => '',
-				ApiBase::PARAM_ISMULTI => true
+				ApiBase::PARAM_ISMULTI => true,
+				ApiBase::PARAM_HELP_MSG_PER_VALUE => array(),
 			),
 		);
 	}

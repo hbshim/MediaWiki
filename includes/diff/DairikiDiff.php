@@ -296,9 +296,9 @@ class DiffEngine {
 			$this->xchanged = $this->ychanged = array();
 			$this->xv = $this->yv = array();
 			$this->xind = $this->yind = array();
-			unset( $this->seq );
-			unset( $this->in_seq );
-			unset( $this->lcs );
+			$this->seq = array();
+			$this->in_seq = array();
+			$this->lcs = 0;
 
 			// Skip leading common lines.
 			for ( $skip = 0; $skip < $n_from && $skip < $n_to; $skip++ ) {
@@ -324,7 +324,8 @@ class DiffEngine {
 
 			for ( $yi = $skip; $yi < $n_to - $endskip; $yi++ ) {
 				$line = $to_lines[$yi];
-				if ( ( $this->ychanged[$yi] = empty( $xhash[$this->lineHash( $line )] ) ) ) {
+				$this->ychanged[$yi] = empty( $xhash[$this->lineHash( $line )] );
+				if ( $this->ychanged[$yi] ) {
 					continue;
 				}
 				$yhash[$this->lineHash( $line )] = 1;
@@ -333,7 +334,8 @@ class DiffEngine {
 			}
 			for ( $xi = $skip; $xi < $n_from - $endskip; $xi++ ) {
 				$line = $from_lines[$xi];
-				if ( ( $this->xchanged[$xi] = empty( $yhash[$this->lineHash( $line )] ) ) ) {
+				$this->xchanged[$xi] = empty( $yhash[$this->lineHash( $line )] );
+				if ( $this->xchanged[$xi] ) {
 					continue;
 				}
 				$this->xv[] = $line;
@@ -420,7 +422,7 @@ class DiffEngine {
 			}
 
 			$x1 = $xoff + (int)( ( $numer + ( $xlim - $xoff ) * $chunk ) / $nchunks );
-			// @codingStandardsIgnoreFile Ignore Squiz.WhiteSpace.SemicolonSpacing.Incorrect
+			// @codingStandardsIgnoreStart Ignore Squiz.WhiteSpace.SemicolonSpacing.Incorrect
 			for ( ; $x < $x1; $x++ ) {
 				// @codingStandardsIgnoreEnd
 				$line = $flip ? $this->yv[$x] : $this->xv[$x];
@@ -444,7 +446,7 @@ class DiffEngine {
 					if ( $y > $this->seq[$k - 1] ) {
 						assert( '$y < $this->seq[$k]' );
 						// Optimization: this is a common case:
-						//	next match is just replacing previous match.
+						// next match is just replacing previous match.
 						$this->in_seq[$this->seq[$k]] = false;
 						$this->seq[$k] = $y;
 						$this->in_seq[$y] = 1;

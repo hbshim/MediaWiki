@@ -20,6 +20,7 @@
  * @file
  * @author Aaron Schulz
  */
+use Wikimedia\Assert\Assert;
 
 /**
  * Class for getting statistically unique IDs
@@ -51,7 +52,7 @@ class UIDGenerator {
 		}
 		// Try to get some ID that uniquely identifies this machine (RFC 4122)...
 		if ( !preg_match( '/^[0-9a-f]{12}$/i', $nodeId ) ) {
-			wfSuppressWarnings();
+			MediaWiki\suppressWarnings();
 			if ( wfIsWindows() ) {
 				// http://technet.microsoft.com/en-us/library/bb490913.aspx
 				$csv = trim( wfShellExec( 'getmac /NH /FO CSV' ) );
@@ -65,15 +66,15 @@ class UIDGenerator {
 					wfShellExec( '/sbin/ifconfig -a' ), $m );
 				$nodeId = isset( $m[1] ) ? str_replace( ':', '', $m[1] ) : '';
 			}
-			wfRestoreWarnings();
+			MediaWiki\restoreWarnings();
 			if ( !preg_match( '/^[0-9a-f]{12}$/i', $nodeId ) ) {
 				$nodeId = MWCryptRand::generateHex( 12, true );
 				$nodeId[1] = dechex( hexdec( $nodeId[1] ) | 0x1 ); // set multicast bit
 			}
 			file_put_contents( $this->nodeIdFile, $nodeId ); // cache
 		}
-		$this->nodeId32 = wfBaseConvert( substr( sha1( $nodeId ), 0, 8 ), 16, 2, 32 );
-		$this->nodeId48 = wfBaseConvert( $nodeId, 16, 2, 48 );
+		$this->nodeId32 = Wikimedia\base_convert( substr( sha1( $nodeId ), 0, 8 ), 16, 2, 32 );
+		$this->nodeId48 = Wikimedia\base_convert( $nodeId, 16, 2, 48 );
 		// If different processes run as different users, they may have different temp dirs.
 		// This is dealt with by initializing the clock sequence number and counters randomly.
 		$this->lockFile88 = wfTempDir() . '/mw-' . __CLASS__ . '-UID-88';
@@ -81,6 +82,7 @@ class UIDGenerator {
 	}
 
 	/**
+	 * @todo: move to MW-specific factory class and inject temp dir
 	 * @return UIDGenerator
 	 */
 	protected static function singleton() {
@@ -104,22 +106,23 @@ class UIDGenerator {
 	 *
 	 * @param int $base Specifies a base other than 10
 	 * @return string Number
-	 * @throws MWException
+	 * @throws RuntimeException
 	 */
 	public static function newTimestampedUID88( $base = 10 ) {
-		if ( !is_integer( $base ) || $base > 36 || $base < 2 ) {
-			throw new MWException( "Base must an integer be between 2 and 36" );
-		}
+		Assert::parameterType( 'integer', $base, '$base' );
+		Assert::parameter( $base <= 36, '$base', 'must be <= 36' );
+		Assert::parameter( $base >= 2, '$base', 'must be >= 2' );
+
 		$gen = self::singleton();
 		$time = $gen->getTimestampAndDelay( 'lockFile88', 1, 1024 );
 
-		return wfBaseConvert( $gen->getTimestampedID88( $time ), 2, $base );
+		return Wikimedia\base_convert( $gen->getTimestampedID88( $time ), 2, $base );
 	}
 
 	/**
 	 * @param array $info (UIDGenerator::millitime(), counter, clock sequence)
 	 * @return string 88 bits
-	 * @throws MWException
+	 * @throws RuntimeException
 	 */
 	protected function getTimestampedID88( array $info ) {
 		list( $time, $counter ) = $info;
@@ -131,7 +134,7 @@ class UIDGenerator {
 		$id_bin .= $this->nodeId32;
 		// Convert to a 1-27 digit integer string
 		if ( strlen( $id_bin ) !== 88 ) {
-			throw new MWException( "Detected overflow for millisecond timestamp." );
+			throw new RuntimeException( "Detected overflow for millisecond timestamp." );
 		}
 
 		return $id_bin;
@@ -149,22 +152,23 @@ class UIDGenerator {
 	 *
 	 * @param int $base Specifies a base other than 10
 	 * @return string Number
-	 * @throws MWException
+	 * @throws RuntimeException
 	 */
 	public static function newTimestampedUID128( $base = 10 ) {
-		if ( !is_integer( $base ) || $base > 36 || $base < 2 ) {
-			throw new MWException( "Base must be an integer between 2 and 36" );
-		}
+		Assert::parameterType( 'integer', $base, '$base' );
+		Assert::parameter( $base <= 36, '$base', 'must be <= 36' );
+		Assert::parameter( $base >= 2, '$base', 'must be >= 2' );
+
 		$gen = self::singleton();
 		$time = $gen->getTimestampAndDelay( 'lockFile128', 16384, 1048576 );
 
-		return wfBaseConvert( $gen->getTimestampedID128( $time ), 2, $base );
+		return Wikimedia\base_convert( $gen->getTimestampedID128( $time ), 2, $base );
 	}
 
 	/**
 	 * @param array $info (UIDGenerator::millitime(), counter, clock sequence)
 	 * @return string 128 bits
-	 * @throws MWException
+	 * @throws RuntimeException
 	 */
 	protected function getTimestampedID128( array $info ) {
 		list( $time, $counter, $clkSeq ) = $info;
@@ -178,7 +182,7 @@ class UIDGenerator {
 		$id_bin .= $this->nodeId48;
 		// Convert to a 1-39 digit integer string
 		if ( strlen( $id_bin ) !== 128 ) {
-			throw new MWException( "Detected overflow for millisecond timestamp." );
+			throw new RuntimeException( "Detected overflow for millisecond timestamp." );
 		}
 
 		return $id_bin;
@@ -189,7 +193,7 @@ class UIDGenerator {
 	 *
 	 * @param int $flags Bitfield (supports UIDGenerator::QUICK_RAND)
 	 * @return string
-	 * @throws MWException
+	 * @throws RuntimeException
 	 */
 	public static function newUUIDv4( $flags = 0 ) {
 		$hex = ( $flags & self::QUICK_RAND )
@@ -215,7 +219,7 @@ class UIDGenerator {
 	 *
 	 * @param int $flags Bitfield (supports UIDGenerator::QUICK_RAND)
 	 * @return string 32 hex characters with no hyphens
-	 * @throws MWException
+	 * @throws RuntimeException
 	 */
 	public static function newRawUUIDv4( $flags = 0 ) {
 		return str_replace( '-', '', self::newUUIDv4( $flags ) );
@@ -262,15 +266,15 @@ class UIDGenerator {
 	 * @param int $count Number of IDs to return (1 to 10000)
 	 * @param int $flags (supports UIDGenerator::QUICK_VOLATILE)
 	 * @return array Ordered list of float integer values
-	 * @throws MWException
+	 * @throws RuntimeException
 	 */
 	protected function getSequentialPerNodeIDs( $bucket, $bits, $count, $flags ) {
 		if ( $count <= 0 ) {
 			return array(); // nothing to do
 		} elseif ( $count > 10000 ) {
-			throw new MWException( "Number of requested IDs ($count) is too high." );
+			throw new RuntimeException( "Number of requested IDs ($count) is too high." );
 		} elseif ( $bits < 16 || $bits > 48 ) {
-			throw new MWException( "Requested bit size ($bits) is out of range." );
+			throw new RuntimeException( "Requested bit size ($bits) is out of range." );
 		}
 
 		$counter = null; // post-increment persistent counter value
@@ -279,17 +283,13 @@ class UIDGenerator {
 		// Counter values would not survive accross script instances in CLI mode.
 		$cache = null;
 		if ( ( $flags & self::QUICK_VOLATILE ) && PHP_SAPI !== 'cli' ) {
-			try {
-				$cache = ObjectCache::newAccelerator( array() );
-			} catch ( Exception $e ) {
-				// not supported
-			}
+			$cache = ObjectCache::getLocalServerInstance();
 		}
 		if ( $cache ) {
 			$counter = $cache->incr( $bucket, $count );
 			if ( $counter === false ) {
 				if ( !$cache->add( $bucket, (int)$count ) ) {
-					throw new MWException( 'Unable to set value to ' . get_class( $cache ) );
+					throw new RuntimeException( 'Unable to set value to ' . get_class( $cache ) );
 				}
 				$counter = $count;
 			}
@@ -307,10 +307,10 @@ class UIDGenerator {
 			}
 			// Acquire the UID lock file
 			if ( $handle === false ) {
-				throw new MWException( "Could not open '{$path}'." );
+				throw new RuntimeException( "Could not open '{$path}'." );
 			} elseif ( !flock( $handle, LOCK_EX ) ) {
 				fclose( $handle );
-				throw new MWException( "Could not acquire '{$path}'." );
+				throw new RuntimeException( "Could not acquire '{$path}'." );
 			}
 			// Fetch the counter value and increment it...
 			rewind( $handle );
@@ -343,7 +343,7 @@ class UIDGenerator {
 	 * @param int $clockSeqSize The number of possible clock sequence values
 	 * @param int $counterSize The number of possible counter values
 	 * @return array (result of UIDGenerator::millitime(), counter, clock sequence)
-	 * @throws MWException
+	 * @throws RuntimeException
 	 */
 	protected function getTimestampAndDelay( $lockFile, $clockSeqSize, $counterSize ) {
 		// Get the UID lock file handle
@@ -356,10 +356,10 @@ class UIDGenerator {
 		}
 		// Acquire the UID lock file
 		if ( $handle === false ) {
-			throw new MWException( "Could not open '{$this->$lockFile}'." );
+			throw new RuntimeException( "Could not open '{$this->$lockFile}'." );
 		} elseif ( !flock( $handle, LOCK_EX ) ) {
 			fclose( $handle );
-			throw new MWException( "Could not acquire '{$this->$lockFile}'." );
+			throw new RuntimeException( "Could not acquire '{$this->$lockFile}'." );
 		}
 		// Get the current timestamp, clock sequence number, last time, and counter
 		rewind( $handle );
@@ -381,7 +381,7 @@ class UIDGenerator {
 				$counter = (int)$data[3] % $counterSize;
 				if ( ++$counter >= $counterSize ) { // sanity (starts at 0)
 					flock( $handle, LOCK_UN ); // abort
-					throw new MWException( "Counter overflow for timestamp value." );
+					throw new RuntimeException( "Counter overflow for timestamp value." );
 				}
 			}
 		} else { // last UID info not initialized
@@ -397,7 +397,7 @@ class UIDGenerator {
 			// We don't want processes using too high or low timestamps to avoid duplicate
 			// UIDs and clock sequence number churn. This process should just be restarted.
 			flock( $handle, LOCK_UN ); // abort
-			throw new MWException( "Process clock is outdated or drifted." );
+			throw new RuntimeException( "Process clock is outdated or drifted." );
 		}
 		// If microtime() is synced and a clock change was detected, then the clock went back
 		if ( $clockChanged ) {
@@ -439,17 +439,17 @@ class UIDGenerator {
 	/**
 	 * @param array $time Result of UIDGenerator::millitime()
 	 * @return string 46 MSBs of "milliseconds since epoch" in binary (rolls over in 4201)
-	 * @throws MWException
+	 * @throws RuntimeException
 	 */
 	protected function millisecondsSinceEpochBinary( array $time ) {
 		list( $sec, $msec ) = $time;
 		$ts = 1000 * $sec + $msec;
 		if ( $ts > pow( 2, 52 ) ) {
-			throw new MWException( __METHOD__ .
+			throw new RuntimeException( __METHOD__ .
 				': sorry, this function doesn\'t work after the year 144680' );
 		}
 
-		return substr( wfBaseConvert( $ts, 10, 2, 46 ), -46 );
+		return substr( Wikimedia\base_convert( $ts, 10, 2, 46 ), -46 );
 	}
 
 	/**

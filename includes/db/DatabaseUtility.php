@@ -22,29 +22,6 @@
  */
 
 /**
- * Utility class.
- * @ingroup Database
- */
-class DBObject {
-	public $mData;
-
-	function __construct( $data ) {
-		$this->mData = $data;
-	}
-
-	/**
-	 * @return bool
-	 */
-	function isLOB() {
-		return false;
-	}
-
-	function data() {
-		return $this->mData;
-	}
-}
-
-/**
  * Utility class
  * @ingroup Database
  *
@@ -244,6 +221,9 @@ class FakeResultWrapper extends ResultWrapper {
 	/** @var array|stdClass|bool */
 	protected $currentRow = null;
 
+	/**
+	 * @param array $array
+	 */
 	function __construct( $array ) {
 		$this->result = $array;
 	}
@@ -341,6 +321,20 @@ class LikeMatch {
 interface DBMasterPos {
 	/**
 	 * @return float UNIX timestamp
+	 * @since 1.25
 	 */
 	public function asOfTime();
+
+	/**
+	 * @param DBMasterPos $pos
+	 * @return bool Whether this position is at or higher than $pos
+	 * @since 1.27
+	 */
+	public function hasReached( DBMasterPos $pos );
+
+	/**
+	 * @return string
+	 * @since 1.27
+	 */
+	public function __toString();
 }

@@ -9,13 +9,8 @@
  */
 class ImportTest extends MediaWikiLangTestCase {
 
-	private function getInputStreamSource( $xml ) {
-		$file = 'data:application/xml,' . $xml;
-		$status = ImportStreamSource::newFromFile( $file );
-		if ( !$status->isGood() ) {
-			throw new MWException( "Cannot create InputStreamSource." );
-		}
-		return $status->value;
+	private function getDataSource( $xml ) {
+		return new ImportStringSource( $xml );
 	}
 
 	/**
@@ -25,7 +20,7 @@ class ImportTest extends MediaWikiLangTestCase {
 	 * @param string|null $redirectTitle
 	 */
 	public function testHandlePageContainsRedirect( $xml, $redirectTitle ) {
-		$source = $this->getInputStreamSource( $xml );
+		$source = $this->getDataSource( $xml );
 
 		$redirect = null;
 		$callback = function ( Title $title, ForeignTitle $foreignTitle, $revCount,
@@ -35,7 +30,10 @@ class ImportTest extends MediaWikiLangTestCase {
 			}
 		};
 
-		$importer = new WikiImporter( $source, ConfigFactory::getDefaultInstance()->makeConfig( 'main' ) );
+		$importer = new WikiImporter(
+			$source,
+			ConfigFactory::getDefaultInstance()->makeConfig( 'main' )
+		);
 		$importer->setPageOutCallback( $callback );
 		$importer->doImport();
 
@@ -43,6 +41,7 @@ class ImportTest extends MediaWikiLangTestCase {
 	}
 
 	public function getRedirectXML() {
+		// @codingStandardsIgnoreStart Generic.Files.LineLength
 		return array(
 			array(
 				<<< EOF
@@ -97,6 +96,7 @@ EOF
 				null
 			),
 		);
+		// @codingStandardsIgnoreEnd
 	}
 
 	/**
@@ -106,14 +106,17 @@ EOF
 	 * @param array|null $namespaces
 	 */
 	public function testSiteInfoContainsNamespaces( $xml, $namespaces ) {
-		$source = $this->getInputStreamSource( $xml );
+		$source = $this->getDataSource( $xml );
 
 		$importNamespaces = null;
 		$callback = function ( array $siteinfo, $innerImporter ) use ( &$importNamespaces ) {
 			$importNamespaces = $siteinfo['_namespaces'];
 		};
 
-		$importer = new WikiImporter( $source, ConfigFactory::getDefaultInstance()->makeConfig( 'main' ) );
+		$importer = new WikiImporter(
+			$source,
+			ConfigFactory::getDefaultInstance()->makeConfig( 'main' )
+		);
 		$importer->setSiteInfoCallback( $callback );
 		$importer->doImport();
 
@@ -121,6 +124,7 @@ EOF
 	}
 
 	public function getSiteInfoXML() {
+		// @codingStandardsIgnoreStart Generic.Files.LineLength
 		return array(
 			array(
 				<<< EOF
@@ -152,6 +156,7 @@ EOF
 				)
 			),
 		);
+		// @codingStandardsIgnoreEnd
 	}
 
 }

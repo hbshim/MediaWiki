@@ -31,6 +31,8 @@
 class ApiMove extends ApiBase {
 
 	public function execute() {
+		$this->useTransactionalTimeLimit();
+
 		$user = $this->getUser();
 		$params = $this->extractRequestParams();
 
@@ -83,18 +85,14 @@ class ApiMove extends ApiBase {
 			'reason' => $params['reason']
 		);
 
-		if ( $fromTitle->exists() ) {
-			//NOTE: we assume that if the old title exists, it's because it was re-created as
-			// a redirect to the new title. This is not safe, but what we did before was
-			// even worse: we just determined whether a redirect should have been created,
-			// and reported that it was created if it should have, without any checks.
-			// Also note that isRedirect() is unreliable because of bug 37209.
-			$r['redirectcreated'] = '';
-		}
+		// NOTE: we assume that if the old title exists, it's because it was re-created as
+		// a redirect to the new title. This is not safe, but what we did before was
+		// even worse: we just determined whether a redirect should have been created,
+		// and reported that it was created if it should have, without any checks.
+		// Also note that isRedirect() is unreliable because of bug 37209.
+		$r['redirectcreated'] = $fromTitle->exists();
 
-		if ( $toTitleExists ) {
-			$r['moveoverredirect'] = '';
-		}
+		$r['moveoverredirect'] = $toTitleExists;
 
 		// Move the talk page
 		if ( $params['movetalk'] && $fromTalk->exists() && !$fromTitle->isTalkPage() ) {
@@ -103,9 +101,7 @@ class ApiMove extends ApiBase {
 			if ( $status->isOK() ) {
 				$r['talkfrom'] = $fromTalk->getPrefixedText();
 				$r['talkto'] = $toTalk->getPrefixedText();
-				if ( $toTalkExists ) {
-					$r['talkmoveoverredirect'] = '';
-				}
+				$r['talkmoveoverredirect'] = $toTalkExists;
 			} else {
 				// We're not gonna dieUsage() on failure, since we already changed something
 				$error = $this->getErrorFromStatus( $status );
@@ -120,12 +116,12 @@ class ApiMove extends ApiBase {
 		if ( $params['movesubpages'] ) {
 			$r['subpages'] = $this->moveSubpages( $fromTitle, $toTitle,
 				$params['reason'], $params['noredirect'] );
-			$result->setIndexedTagName( $r['subpages'], 'subpage' );
+			ApiResult::setIndexedTagName( $r['subpages'], 'subpage' );
 
 			if ( $params['movetalk'] ) {
 				$r['subpages-talk'] = $this->moveSubpages( $fromTalk, $toTalk,
 					$params['reason'], $params['noredirect'] );
-				$result->setIndexedTagName( $r['subpages-talk'], 'subpage' );
+				ApiResult::setIndexedTagName( $r['subpages-talk'], 'subpage' );
 			}
 		}
 
@@ -134,10 +130,8 @@ class ApiMove extends ApiBase {
 			$watch = $params['watchlist'];
 		} elseif ( $params['watch'] ) {
 			$watch = 'watch';
-			$this->logFeatureUsage( 'action=move&watch' );
 		} elseif ( $params['unwatch'] ) {
 			$watch = 'unwatch';
-			$this->logFeatureUsage( 'action=move&unwatch' );
 		}
 
 		// Watch pages

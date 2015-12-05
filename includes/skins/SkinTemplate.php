@@ -51,12 +51,22 @@ class SkinTemplate extends Skin {
 	 * @param OutputPage $out
 	 */
 	function setupSkinUserCss( OutputPage $out ) {
-		$out->addModuleStyles( array(
+		$moduleStyles = array(
 			'mediawiki.legacy.shared',
 			'mediawiki.legacy.commonPrint',
-			'mediawiki.ui.button',
 			'mediawiki.sectionAnchor'
-		) );
+		);
+		if ( $out->isSyndicated() ) {
+			$moduleStyles[] = 'mediawiki.feedlink';
+		}
+
+		// Deprecated since 1.26: Unconditional loading of mediawiki.ui.button
+		// on every page is deprecated. Express a dependency instead.
+		if ( strpos( $out->getHTML(), 'mw-ui-button' ) !== false ) {
+			$moduleStyles[] = 'mediawiki.ui.button';
+		}
+
+		$out->addModuleStyles( $moduleStyles );
 	}
 
 	/**
@@ -197,7 +207,7 @@ class SkinTemplate extends Skin {
 		$this->loggedin = $user->isLoggedIn();
 		$this->username = $user->getName();
 
-		if ( $this->loggedin || $this->showIPinHeader() ) {
+		if ( $this->loggedin ) {
 			$this->userpageUrlDetails = self::makeUrlDetails( $this->userpage );
 		} else {
 			# This won't be used in the standard skins, but we define it to preserve the interface
@@ -422,11 +432,9 @@ class SkinTemplate extends Skin {
 
 		# Add a mw-content-ltr/rtl class to be able to style based on text direction
 		# when the content is different from the UI language, i.e.:
-		# not for special pages or file pages AND only when viewing AND if the page exists
-		# (or is in MW namespace, because that has default content)
+		# not for special pages or file pages AND only when viewing
 		if ( !in_array( $title->getNamespace(), array( NS_SPECIAL, NS_FILE ) ) &&
-			Action::getActionName( $this ) === 'view' &&
-			( $title->exists() || $title->getNamespace() == NS_MEDIAWIKI ) ) {
+			Action::getActionName( $this ) === 'view' ) {
 			$pageLang = $title->getPageViewLanguage();
 			$realBodyAttribs['lang'] = $pageLang->getHtmlCode();
 			$realBodyAttribs['dir'] = $pageLang->getDir();
@@ -652,21 +660,28 @@ class SkinTemplate extends Skin {
 				'active' => $title->isSpecial( 'Userlogin' ) && $is_signup,
 			);
 
-			if ( $this->showIPinHeader() ) {
-				$href = &$this->userpageUrlDetails['href'];
+			// No need to show Talk and Contributions to anons if they can't contribute!
+			if ( User::groupHasPermission( '*', 'edit' ) ) {
+				// Show the text "Not logged in"
 				$personal_urls['anonuserpage'] = array(
-					'text' => $this->username,
-					'href' => $href,
-					'class' => $this->userpageUrlDetails['exists'] ? false : 'new',
-					'active' => ( $pageurl == $href )
+					'text' => $this->msg( 'notloggedin' )->text()
 				);
-				$usertalkUrlDetails = $this->makeTalkUrlDetails( $this->userpage );
-				$href = &$usertalkUrlDetails['href'];
+
+				// Because of caching, we can't link directly to the IP talk and
+				// contributions pages. Instead we use the special page shortcuts
+				// (which work correctly regardless of caching). This means we can't
+				// determine whether these links are active or not, but since major
+				// skins (MonoBook, Vector) don't use this information, it's not a
+				// huge loss.
 				$personal_urls['anontalk'] = array(
 					'text' => $this->msg( 'anontalk' )->text(),
-					'href' => $href,
-					'class' => $usertalkUrlDetails['exists'] ? false : 'new',
-					'active' => ( $pageurl == $href )
+					'href' => self::makeSpecialUrlSubpage( 'Mytalk', false ),
+					'active' => false
+				);
+				$personal_urls['anoncontribs'] = array(
+					'text' => $this->msg( 'anoncontribs' )->text(),
+					'href' => self::makeSpecialUrlSubpage( 'Mycontributions', false ),
+					'active' => false
 				);
 			}
 
@@ -717,7 +732,7 @@ class SkinTemplate extends Skin {
 			$text = $msg->text();
 		} else {
 			global $wgContLang;
-			$text = $wgContLang->getFormattedNsText(
+			$text = $wgContLang->getConverter()->convertNamespace(
 				MWNamespace::getSubject( $title->getNamespace() ) );
 		}
 
@@ -920,7 +935,7 @@ class SkinTemplate extends Skin {
 					// section link
 					if ( $showNewSection ) {
 						// Adds new section link
-						//$content_navigation['actions']['addsection']
+						// $content_navigation['actions']['addsection']
 						$content_navigation['views']['addsection'] = array(
 							'class' => ( $isEditing && $section == 'new' ) ? 'selected' : false,
 							'text' => wfMessageFallback( "$skname-action-addsection", 'addsection' )
@@ -948,7 +963,6 @@ class SkinTemplate extends Skin {
 						'text' => wfMessageFallback( "$skname-view-history", 'history_short' )
 							->setContext( $this->getContext() )->text(),
 						'href' => $title->getLocalURL( 'action=history' ),
-						'rel' => 'archives',
 					);
 
 					if ( $title->quickUserCan( 'delete', $user ) ) {
@@ -1012,12 +1026,11 @@ class SkinTemplate extends Skin {
 					 * the global versions.
 					 */
 					$mode = $user->isWatched( $title ) ? 'unwatch' : 'watch';
-					$token = WatchAction::getWatchToken( $title, $user, $mode );
 					$content_navigation['actions'][$mode] = array(
 						'class' => $onPage && ( $action == 'watch' || $action == 'unwatch' ) ? 'selected' : false,
 						// uses 'watch' or 'unwatch' message
 						'text' => $this->msg( $mode )->text(),
-						'href' => $title->getLocalURL( array( 'action' => $mode, 'token' => $token ) )
+						'href' => $title->getLocalURL( array( 'action' => $mode ) )
 					);
 				}
 			}
@@ -1079,6 +1092,7 @@ class SkinTemplate extends Skin {
 					$xmlID = 'ca-nstab-' . $xmlID;
 				} elseif ( isset( $link['context'] ) && $link['context'] == 'talk' ) {
 					$xmlID = 'ca-talk';
+					$link['rel'] = 'discussion';
 				} elseif ( $section == 'variants' ) {
 					$xmlID = 'ca-varlang-' . $xmlID;
 				} else {

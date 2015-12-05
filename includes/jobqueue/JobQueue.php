@@ -44,11 +44,10 @@ abstract class JobQueue {
 	/** @var int Maximum number of times to try a job */
 	protected $maxTries;
 
-	/** @var bool Allow delayed jobs */
-	protected $checkDelay;
-
 	/** @var BagOStuff */
 	protected $dupCache;
+	/** @var JobQueueAggregator */
+	protected $aggr;
 
 	const QOS_ATOMIC = 1; // integer; "all-or-nothing" job insertions
 
@@ -71,11 +70,10 @@ abstract class JobQueue {
 		if ( !in_array( $this->order, $this->supportedOrders() ) ) {
 			throw new MWException( __CLASS__ . " does not support '{$this->order}' order." );
 		}
-		$this->checkDelay = !empty( $params['checkDelay'] );
-		if ( $this->checkDelay && !$this->supportsDelayedJobs() ) {
-			throw new MWException( __CLASS__ . " does not support delayed jobs." );
-		}
 		$this->dupCache = wfGetCache( CACHE_ANYTHING );
+		$this->aggr = isset( $params['aggregator'] )
+			? $params['aggregator']
+			: new JobQueueAggregatorNull( array() );
 	}
 
 	/**
@@ -96,12 +94,8 @@ abstract class JobQueue {
 	 *                  This might be useful for improving concurrency for job acquisition.
 	 *   - claimTTL   : If supported, the queue will recycle jobs that have been popped
 	 *                  but not acknowledged as completed after this many seconds. Recycling
-	 *                  of jobs simple means re-inserting them into the queue. Jobs can be
+	 *                  of jobs simply means re-inserting them into the queue. Jobs can be
 	 *                  attempted up to three times before being discarded.
-	 *   - checkDelay : If supported, respect Job::getReleaseTimestamp() in the push functions.
-	 *                  This lets delayed jobs wait in a staging area until a given timestamp is
-	 *                  reached, at which point they will enter the queue. If this is not enabled
-	 *                  or not supported, an exception will be thrown on delayed job insertion.
 	 *
 	 * Queue classes should throw an exception if they do not support the options given.
 	 *
@@ -144,14 +138,6 @@ abstract class JobQueue {
 	}
 
 	/**
-	 * @return bool Whether delayed jobs are enabled
-	 * @since 1.22
-	 */
-	final public function delayedJobsEnabled() {
-		return $this->checkDelay;
-	}
-
-	/**
 	 * Get the allowed queue orders for configuration validation
 	 *
 	 * @return array Subset of (random, timestamp, fifo, undefined)
@@ -172,6 +158,14 @@ abstract class JobQueue {
 	 */
 	protected function supportsDelayedJobs() {
 		return false; // not implemented
+	}
+
+	/**
+	 * @return bool Whether delayed jobs are enabled
+	 * @since 1.22
+	 */
+	final public function delayedJobsEnabled() {
+		return $this->supportsDelayedJobs();
 	}
 
 	/**
@@ -292,13 +286,14 @@ abstract class JobQueue {
 	 * This does not require $wgJobClasses to be set for the given job type.
 	 * Outside callers should use JobQueueGroup::push() instead of this function.
 	 *
-	 * @param Job|array $jobs A single job or an array of Jobs
+	 * @param JobSpecification|JobSpecification[] $jobs
 	 * @param int $flags Bitfield (supports JobQueue::QOS_ATOMIC)
 	 * @return void
 	 * @throws JobQueueError
 	 */
 	final public function push( $jobs, $flags = 0 ) {
-		$this->batchPush( is_array( $jobs ) ? $jobs : array( $jobs ), $flags );
+		$jobs = is_array( $jobs ) ? $jobs : array( $jobs );
+		$this->batchPush( $jobs, $flags );
 	}
 
 	/**
@@ -306,7 +301,7 @@ abstract class JobQueue {
 	 * This does not require $wgJobClasses to be set for the given job type.
 	 * Outside callers should use JobQueueGroup::push() instead of this function.
 	 *
-	 * @param array $jobs List of Jobs
+	 * @param JobSpecification[] $jobs
 	 * @param int $flags Bitfield (supports JobQueue::QOS_ATOMIC)
 	 * @return void
 	 * @throws MWException
@@ -320,18 +315,25 @@ abstract class JobQueue {
 			if ( $job->getType() !== $this->type ) {
 				throw new MWException(
 					"Got '{$job->getType()}' job; expected a '{$this->type}' job." );
-			} elseif ( $job->getReleaseTimestamp() && !$this->checkDelay ) {
+			} elseif ( $job->getReleaseTimestamp() && !$this->supportsDelayedJobs() ) {
 				throw new MWException(
 					"Got delayed '{$job->getType()}' job; delays are not supported." );
 			}
 		}
 
 		$this->doBatchPush( $jobs, $flags );
+		$this->aggr->notifyQueueNonEmpty( $this->wiki, $this->type );
+
+		foreach ( $jobs as $job ) {
+			if ( $job->isRootJob() ) {
+				$this->deduplicateRootJob( $job );
+			}
+		}
 	}
 
 	/**
 	 * @see JobQueue::batchPush()
-	 * @param array $jobs
+	 * @param JobSpecification[] $jobs
 	 * @param int $flags
 	 */
 	abstract protected function doBatchPush( array $jobs, $flags );
@@ -356,10 +358,14 @@ abstract class JobQueue {
 
 		$job = $this->doPop();
 
+		if ( !$job ) {
+			$this->aggr->notifyQueueEmpty( $this->wiki, $this->type );
+		}
+
 		// Flag this job as an old duplicate based on its "root" job...
 		try {
 			if ( $job && $this->isRootJobOldDuplicate( $job ) ) {
-				JobQueue::incrStats( 'job-pop-duplicate', $this->type, 1, $this->wiki );
+				JobQueue::incrStats( 'dupe_pops', $this->type );
 				$job = DuplicateJob::newFromJob( $job ); // convert to a no-op
 			}
 		} catch ( Exception $e ) {
@@ -425,11 +431,11 @@ abstract class JobQueue {
 	 *
 	 * This does nothing for certain queue classes.
 	 *
-	 * @param Job $job
+	 * @param IJobSpecification $job
 	 * @throws MWException
 	 * @return bool
 	 */
-	final public function deduplicateRootJob( Job $job ) {
+	final public function deduplicateRootJob( IJobSpecification $job ) {
 		if ( $job->getType() !== $this->type ) {
 			throw new MWException( "Got '{$job->getType()}' job; expected '{$this->type}'." );
 		}
@@ -440,11 +446,11 @@ abstract class JobQueue {
 
 	/**
 	 * @see JobQueue::deduplicateRootJob()
-	 * @param Job $job
+	 * @param IJobSpecification $job
 	 * @throws MWException
 	 * @return bool
 	 */
-	protected function doDeduplicateRootJob( Job $job ) {
+	protected function doDeduplicateRootJob( IJobSpecification $job ) {
 		if ( !$job->hasRootJobParams() ) {
 			throw new MWException( "Cannot register root job; missing parameters." );
 		}
@@ -549,35 +555,6 @@ abstract class JobQueue {
 	}
 
 	/**
-	 * Return a map of task names to task definition maps.
-	 * A "task" is a fast periodic queue maintenance action.
-	 * Mutually exclusive tasks must implement their own locking in the callback.
-	 *
-	 * Each task value is an associative array with:
-	 *   - name     : the name of the task
-	 *   - callback : a PHP callable that performs the task
-	 *   - period   : the period in seconds corresponding to the task frequency
-	 *
-	 * @return array
-	 */
-	final public function getPeriodicTasks() {
-		$tasks = $this->doGetPeriodicTasks();
-		foreach ( $tasks as $name => &$def ) {
-			$def['name'] = $name;
-		}
-
-		return $tasks;
-	}
-
-	/**
-	 * @see JobQueue::getPeriodicTasks()
-	 * @return array
-	 */
-	protected function doGetPeriodicTasks() {
-		return array();
-	}
-
-	/**
 	 * Clear any process and persistent caches
 	 *
 	 * @return void
@@ -616,6 +593,31 @@ abstract class JobQueue {
 	}
 
 	/**
+	 * Get an iterator to traverse over all claimed jobs in this queue
+	 *
+	 * Callers should be quick to iterator over it or few results
+	 * will be returned due to jobs being acknowledged and deleted
+	 *
+	 * @return Iterator
+	 * @throws JobQueueError
+	 * @since 1.26
+	 */
+	public function getAllAcquiredJobs() {
+		return new ArrayIterator( array() ); // not implemented
+	}
+
+	/**
+	 * Get an iterator to traverse over all abandoned jobs in this queue
+	 *
+	 * @return Iterator
+	 * @throws JobQueueError
+	 * @since 1.25
+	 */
+	public function getAllAbandonedJobs() {
+		return new ArrayIterator( array() ); // not implemented
+	}
+
+	/**
 	 * Do not use this function outside of JobQueue/JobQueueGroup
 	 *
 	 * @return string
@@ -635,7 +637,6 @@ abstract class JobQueue {
 	 * @since 1.22
 	 */
 	final public function getSiblingQueuesWithJobs( array $types ) {
-
 		return $this->doGetSiblingQueuesWithJobs( $types );
 	}
 
@@ -659,7 +660,6 @@ abstract class JobQueue {
 	 * @since 1.22
 	 */
 	final public function getSiblingQueueSizes( array $types ) {
-
 		return $this->doGetSiblingQueueSizes( $types );
 	}
 
@@ -678,15 +678,15 @@ abstract class JobQueue {
 	 * @param string $key Event type
 	 * @param string $type Job type
 	 * @param int $delta
-	 * @param string $wiki Wiki ID (added in 1.23)
 	 * @since 1.22
 	 */
-	public static function incrStats( $key, $type, $delta = 1, $wiki = null ) {
-		wfIncrStats( $key, $delta );
-		wfIncrStats( "{$key}-{$type}", $delta );
-		if ( $wiki !== null ) {
-			wfIncrStats( "{$key}-{$type}-{$wiki}", $delta );
+	public static function incrStats( $key, $type, $delta = 1 ) {
+		static $stats;
+		if ( !$stats ) {
+			$stats = RequestContext::getMain()->getStats();
 		}
+		$stats->updateCount( "jobqueue.{$key}.all", $delta );
+		$stats->updateCount( "jobqueue.{$key}.{$type}", $delta );
 	}
 
 	/**

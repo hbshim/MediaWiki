@@ -41,7 +41,12 @@ class ImportSiteScripts extends Maintenance {
 	public function execute() {
 		global $wgUser;
 
-		$user = User::newFromName( $this->getOption( 'username', 'ScriptImporter' ) );
+		$username = $this->getOption( 'username', false );
+		if ( $username === false ) {
+			$user = User::newSystemUser( 'ScriptImporter', array( 'steal' => true ) );
+		} else {
+			$user = User::newFromName( $username );
+		}
 		$wgUser = $user;
 
 		$baseUrl = $this->getArg( 1 );
@@ -59,7 +64,7 @@ class ImportSiteScripts extends Maintenance {
 			$url = wfAppendQuery( $baseUrl, array(
 				'action' => 'raw',
 				'title' => "MediaWiki:{$page}" ) );
-			$text = Http::get( $url );
+			$text = Http::get( $url, array(), __METHOD__ );
 
 			$wikiPage = WikiPage::factory( $title );
 			$content = ContentHandler::makeContent( $text, $wikiPage->getTitle() );
@@ -81,7 +86,7 @@ class ImportSiteScripts extends Maintenance {
 
 		while ( true ) {
 			$url = wfAppendQuery( $baseUrl, $data );
-			$strResult = Http::get( $url );
+			$strResult = Http::get( $url, array(), __METHOD__ );
 			$result = FormatJson::decode( $strResult, true );
 
 			$page = null;

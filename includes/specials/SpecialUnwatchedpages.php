@@ -35,7 +35,7 @@ class UnwatchedpagesPage extends QueryPage {
 		parent::__construct( $name, 'unwatchedpages' );
 	}
 
-	function isExpensive() {
+	public function isExpensive() {
 		return true;
 	}
 
@@ -43,7 +43,7 @@ class UnwatchedpagesPage extends QueryPage {
 		return false;
 	}
 
-	function getQueryInfo() {
+	public function getQueryInfo() {
 		return array(
 			'tables' => array( 'page', 'watchlist' ),
 			'fields' => array(
@@ -96,12 +96,11 @@ class UnwatchedpagesPage extends QueryPage {
 		$text = $wgContLang->convert( $nt->getPrefixedText() );
 
 		$plink = Linker::linkKnown( $nt, htmlspecialchars( $text ) );
-		$token = WatchAction::getWatchToken( $nt, $this->getUser() );
 		$wlink = Linker::linkKnown(
 			$nt,
 			$this->msg( 'watch' )->escaped(),
 			array( 'class' => 'mw-watch-link' ),
-			array( 'action' => 'watch', 'token' => $token )
+			array( 'action' => 'watch' )
 		);
 
 		return $this->getLanguage()->specialList( $plink, $wlink );

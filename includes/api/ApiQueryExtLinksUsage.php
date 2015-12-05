@@ -112,7 +112,9 @@ class ApiQueryExtLinksUsage extends ApiQueryGeneratorBase {
 			}
 
 			if ( is_null( $resultPageSet ) ) {
-				$vals = array();
+				$vals = array(
+					ApiResult::META_TYPE => 'assoc',
+				);
 				if ( $fld_ids ) {
 					$vals['pageid'] = intval( $row->page_id );
 				}
@@ -139,7 +141,7 @@ class ApiQueryExtLinksUsage extends ApiQueryGeneratorBase {
 		}
 
 		if ( is_null( $resultPageSet ) ) {
-			$result->setIndexedTagName_internal( array( 'query', $this->getModuleName() ),
+			$result->addIndexedTagName( array( 'query', $this->getModuleName() ),
 				$this->getModulePrefix() );
 		}
 	}
@@ -153,7 +155,8 @@ class ApiQueryExtLinksUsage extends ApiQueryGeneratorBase {
 					'ids',
 					'title',
 					'url'
-				)
+				),
+				ApiBase::PARAM_HELP_MSG_PER_VALUE => array(),
 			),
 			'offset' => array(
 				ApiBase::PARAM_TYPE => 'integer',

@@ -144,26 +144,19 @@ class Xml {
 	public static function monthSelector( $selected = '', $allmonths = null, $id = 'month' ) {
 		global $wgLang;
 		$options = array();
+		$data = new XmlSelect( 'month', $id, $selected );
 		if ( is_null( $selected ) ) {
 			$selected = '';
 		}
 		if ( !is_null( $allmonths ) ) {
-			$options[] = self::option(
-				wfMessage( 'monthsall' )->text(),
-				$allmonths,
-				$selected === $allmonths
-			);
+			$options[wfMessage( 'monthsall' )->text()] = $allmonths;
 		}
 		for ( $i = 1; $i < 13; $i++ ) {
-			$options[] = self::option( $wgLang->getMonthName( $i ), $i, $selected === $i );
+			$options[$wgLang->getMonthName( $i )] = $i;
 		}
-		return self::openElement( 'select', array(
-			'id' => $id,
-			'name' => 'month',
-			'class' => 'mw-month-selector'
-		) )
-			. implode( "\n", $options )
-			. self::closeElement( 'select' );
+		$data->addOptions( $options );
+		$data->setAttribute( 'class', 'mw-month-selector' );
+		return $data->getHTML();
 	}
 
 	/**
@@ -703,23 +696,25 @@ class Xml {
 	/**
 	 * Check if a string is well-formed XML.
 	 * Must include the surrounding tag.
+	 * This function is a DoS vector if an attacker can define
+	 * entities in $text.
 	 *
 	 * @param string $text String to test.
 	 * @return bool
 	 *
 	 * @todo Error position reporting return
 	 */
-	public static function isWellFormed( $text ) {
+	private static function isWellFormed( $text ) {
 		$parser = xml_parser_create( "UTF-8" );
 
 		# case folding violates XML standard, turn it off
 		xml_parser_set_option( $parser, XML_OPTION_CASE_FOLDING, false );
 
 		if ( !xml_parse( $parser, $text, true ) ) {
-			//$err = xml_error_string( xml_get_error_code( $parser ) );
-			//$position = xml_get_current_byte_index( $parser );
-			//$fragment = $this->extractFragment( $html, $position );
-			//$this->mXmlError = "$err at byte $position:\n$fragment";
+			// $err = xml_error_string( xml_get_error_code( $parser ) );
+			// $position = xml_get_current_byte_index( $parser );
+			// $fragment = $this->extractFragment( $html, $position );
+			// $this->mXmlError = "$err at byte $position:\n$fragment";
 			xml_parser_free( $parser );
 			return false;
 		}
@@ -866,112 +861,6 @@ class Xml {
 		$s .= Xml::closeElement( 'tr' );
 
 		return $s;
-	}
-}
-
-class XmlSelect {
-	protected $options = array();
-	protected $default = false;
-	protected $attributes = array();
-
-	public function __construct( $name = false, $id = false, $default = false ) {
-		if ( $name ) {
-			$this->setAttribute( 'name', $name );
-		}
-
-		if ( $id ) {
-			$this->setAttribute( 'id', $id );
-		}
-
-		if ( $default !== false ) {
-			$this->default = $default;
-		}
-	}
-
-	/**
-	 * @param string $default
-	 */
-	public function setDefault( $default ) {
-		$this->default = $default;
-	}
-
-	/**
-	 * @param string $name
-	 * @param array $value
-	 */
-	public function setAttribute( $name, $value ) {
-		$this->attributes[$name] = $value;
-	}
-
-	/**
-	 * @param string $name
-	 * @return array|null
-	 */
-	public function getAttribute( $name ) {
-		if ( isset( $this->attributes[$name] ) ) {
-			return $this->attributes[$name];
-		} else {
-			return null;
-		}
-	}
-
-	/**
-	 * @param string $name
-	 * @param bool $value
-	 */
-	public function addOption( $name, $value = false ) {
-		// Stab stab stab
-		$value = $value !== false ? $value : $name;
-
-		$this->options[] = array( $name => $value );
-	}
-
-	/**
-	 * This accepts an array of form
-	 * label => value
-	 * label => ( label => value, label => value )
-	 *
-	 * @param array $options
-	 */
-	public function addOptions( $options ) {
-		$this->options[] = $options;
-	}
-
-	/**
-	 * This accepts an array of form
-	 * label => value
-	 * label => ( label => value, label => value )
-	 *
-	 * @param array $options
-	 * @param bool $default
-	 * @return string
-	 */
-	static function formatOptions( $options, $default = false ) {
-		$data = '';
-
-		foreach ( $options as $label => $value ) {
-			if ( is_array( $value ) ) {
-				$contents = self::formatOptions( $value, $default );
-				$data .= Html::rawElement( 'optgroup', array( 'label' => $label ), $contents ) . "\n";
-			} else {
-				$data .= Xml::option( $label, $value, $value === $default ) . "\n";
-			}
-		}
-
-		return $data;
-	}
-
-	/**
-	 * @return string
-	 */
-	public function getHTML() {
-		$contents = '';
-
-		foreach ( $this->options as $options ) {
-			$contents .= self::formatOptions( $options, $this->default );
-		}
-
-		return Html::rawElement( 'select', $this->attributes, rtrim( $contents ) );
 	}
 }
 

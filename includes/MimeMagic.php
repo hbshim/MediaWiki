@@ -323,7 +323,7 @@ class MimeMagic {
 				continue;
 			}
 
-			#print "processing MIME INFO line $s<br>";
+			# print "processing MIME INFO line $s<br>";
 
 			$match = array();
 			if ( preg_match( '!\[\s*(\w+)\s*\]!', $s, $match ) ) {
@@ -617,16 +617,18 @@ class MimeMagic {
 	/**
 	 * Guess the MIME type from the file contents.
 	 *
+	 * @todo Remove $ext param
+	 *
 	 * @param string $file
 	 * @param mixed $ext
 	 * @return bool|string
 	 * @throws MWException
 	 */
-	private function doGuessMimeType( $file, $ext ) { // TODO: remove $ext param
+	private function doGuessMimeType( $file, $ext ) {
 		// Read a chunk of the file
-		wfSuppressWarnings();
+		MediaWiki\suppressWarnings();
 		$f = fopen( $file, 'rb' );
-		wfRestoreWarnings();
+		MediaWiki\restoreWarnings();
 
 		if ( !$f ) {
 			return 'unknown/unknown';
@@ -693,7 +695,7 @@ class MimeMagic {
 		}
 
 		/* Look for WebP */
-		if ( strncmp( $head, "RIFF", 4 ) == 0 && strncmp( substr( $head, 8, 8 ), "WEBPVP8 ", 8 ) == 0 ) {
+		if ( strncmp( $head, "RIFF", 4 ) == 0 && strncmp( substr( $head, 8, 7 ), "WEBPVP8", 7 ) == 0 ) {
 			wfDebug( __METHOD__ . ": recognized file as image/webp\n" );
 			return "image/webp";
 		}
@@ -780,9 +782,9 @@ class MimeMagic {
 			return $this->detectZipType( $head, $tail, $ext );
 		}
 
-		wfSuppressWarnings();
+		MediaWiki\suppressWarnings();
 		$gis = getimagesize( $file );
-		wfRestoreWarnings();
+		MediaWiki\restoreWarnings();
 
 		if ( $gis && isset( $gis['mime'] ) ) {
 			$mime = $gis['mime'];
@@ -955,7 +957,7 @@ class MimeMagic {
 
 		if ( $m ) {
 			# normalize
-			$m = preg_replace( '![;, ].*$!', '', $m ); #strip charset, etc
+			$m = preg_replace( '![;, ].*$!', '', $m ); # strip charset, etc
 			$m = trim( $m );
 			$m = strtolower( $m );
 

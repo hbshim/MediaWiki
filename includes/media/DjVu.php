@@ -27,6 +27,8 @@
  * @ingroup Media
  */
 class DjVuHandler extends ImageHandler {
+	const EXPENSIVE_SIZE_LIMIT = 10485760; // 10MiB
+
 	/**
 	 * @return bool
 	 */
@@ -47,6 +49,15 @@ class DjVuHandler extends ImageHandler {
 	 */
 	function mustRender( $file ) {
 		return true;
+	}
+
+	/**
+	 * True if creating thumbnails from the file is large or otherwise resource-intensive.
+	 * @param File $file
+	 * @return bool
+	 */
+	public function isExpensiveToThumbnail( $file ) {
+		return $file->getSize() > static::EXPENSIVE_SIZE_LIMIT;
 	}
 
 	/**
@@ -137,31 +148,12 @@ class DjVuHandler extends ImageHandler {
 	function doTransform( $image, $dstPath, $dstUrl, $params, $flags = 0 ) {
 		global $wgDjvuRenderer, $wgDjvuPostProcessor;
 
-		// Fetch XML and check it, to give a more informative error message than the one which
-		// normaliseParams will inevitably give.
-		$xml = $image->getMetadata();
-		if ( !$xml ) {
-			$width = isset( $params['width'] ) ? $params['width'] : 0;
-			$height = isset( $params['height'] ) ? $params['height'] : 0;
-
-			return new MediaTransformError( 'thumbnail_error', $width, $height,
-				wfMessage( 'djvu_no_xml' )->text() );
-		}
-
 		if ( !$this->normaliseParams( $image, $params ) ) {
 			return new TransformParameterError( $params );
 		}
 		$width = $params['width'];
 		$height = $params['height'];
 		$page = $params['page'];
-		if ( $page > $this->pageCount( $image ) ) {
-			return new MediaTransformError(
-				'thumbnail_error',
-				$width,
-				$height,
-				wfMessage( 'djvu_page_error' )->text()
-			);
-		}
 
 		if ( $flags & self::TRANSFORM_LATER ) {
 			$params = array(
@@ -273,9 +265,9 @@ class DjVuHandler extends ImageHandler {
 			return $metadata;
 		}
 
-		wfSuppressWarnings();
+		MediaWiki\suppressWarnings();
 		$unser = unserialize( $metadata );
-		wfRestoreWarnings();
+		MediaWiki\restoreWarnings();
 		if ( is_array( $unser ) ) {
 			if ( isset( $unser['error'] ) ) {
 				return false;
@@ -297,7 +289,7 @@ class DjVuHandler extends ImageHandler {
 	 * @param bool $gettext DOCUMENT (Default: false)
 	 * @return bool|SimpleXMLElement
 	 */
-	function getMetaTree( $image, $gettext = false ) {
+	public function getMetaTree( $image, $gettext = false ) {
 		if ( $gettext && isset( $image->djvuTextTree ) ) {
 			return $image->djvuTextTree;
 		}
@@ -312,12 +304,12 @@ class DjVuHandler extends ImageHandler {
 			return false;
 		}
 
-		wfSuppressWarnings();
+		MediaWiki\suppressWarnings();
 		try {
 			// Set to false rather than null to avoid further attempts
 			$image->dejaMetaTree = false;
 			$image->djvuTextTree = false;
-			$tree = new SimpleXMLElement( $metadata );
+			$tree = new SimpleXMLElement( $metadata, LIBXML_PARSEHUGE );
 			if ( $tree->getName() == 'mw-djvu' ) {
 				/** @var SimpleXMLElement $b */
 				foreach ( $tree->children() as $b ) {
@@ -335,7 +327,7 @@ class DjVuHandler extends ImageHandler {
 		} catch ( Exception $e ) {
 			wfDebug( "Bogus multipage XML metadata on '{$image->getName()}'\n" );
 		}
-		wfRestoreWarnings();
+		MediaWiki\restoreWarnings();
 		if ( $gettext ) {
 			return $image->djvuTextTree;
 		} else {
@@ -383,30 +375,52 @@ class DjVuHandler extends ImageHandler {
 		return !empty( $metadata ) && $metadata != serialize( array() );
 	}
 
-	function pageCount( $image ) {
-		$tree = $this->getMetaTree( $image );
-		if ( !$tree ) {
-			return false;
-		}
+	function pageCount( File $image ) {
+		$info = $this->getDimensionInfo( $image );
 
-		return count( $tree->xpath( '//OBJECT' ) );
+		return $info ? $info['pageCount'] : false;
 	}
 
-	function getPageDimensions( $image, $page ) {
-		$tree = $this->getMetaTree( $image );
-		if ( !$tree ) {
-			return false;
+	function getPageDimensions( File $image, $page ) {
+		$index = $page - 1; // MW starts pages at 1
+
+		$info = $this->getDimensionInfo( $image );
+		if ( $info && isset( $info['dimensionsByPage'][$index] ) ) {
+			return $info['dimensionsByPage'][$index];
 		}
 
-		$o = $tree->BODY[0]->OBJECT[$page - 1];
-		if ( $o ) {
-			return array(
-				'width' => intval( $o['width'] ),
-				'height' => intval( $o['height'] )
-			);
-		} else {
-			return false;
-		}
+		return false;
+	}
+
+	protected function getDimensionInfo( File $file ) {
+		$that = $this;
+
+		return ObjectCache::getMainWANInstance()->getWithSetCallback(
+			wfMemcKey( 'file-djvu', 'dimensions', $file->getSha1() ),
+			WANObjectCache::TTL_INDEFINITE,
+			function () use ( $that, $file ) {
+				$tree = $that->getMetaTree( $file );
+				if ( !$tree ) {
+					return false;
+				}
+
+				$dimsByPage = array();
+				$count = count( $tree->xpath( '//OBJECT' ) );
+				for ( $i = 0; $i < $count; ++$i ) {
+					$o = $tree->BODY[0]->OBJECT[$i];
+					if ( $o ) {
+						$dimsByPage[$i] = array(
+							'width' => (int)$o['width'],
+							'height' => (int)$o['height']
+						);
+					} else {
+						$dimsByPage[$i] = false;
+					}
+				}
+
+				return array( 'pageCount' => $count, 'dimensionsByPage' => $dimsByPage );
+			}
+		);
 	}
 
 	/**
@@ -414,7 +428,7 @@ class DjVuHandler extends ImageHandler {
 	 * @param int $page Page number to get information for
 	 * @return bool|string Page text or false when no text found.
 	 */
-	function getPageText( $image, $page ) {
+	function getPageText( File $image, $page ) {
 		$tree = $this->getMetaTree( $image, true );
 		if ( !$tree ) {
 			return false;

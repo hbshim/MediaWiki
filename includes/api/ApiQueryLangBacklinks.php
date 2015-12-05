@@ -131,7 +131,7 @@ class ApiQueryLangBacklinks extends ApiQueryGeneratorBase {
 				ApiQueryBase::addTitleInfo( $entry, $title );
 
 				if ( $row->page_is_redirect ) {
-					$entry['redirect'] = '';
+					$entry['redirect'] = true;
 				}
 
 				if ( $lllang ) {
@@ -154,7 +154,7 @@ class ApiQueryLangBacklinks extends ApiQueryGeneratorBase {
 		}
 
 		if ( is_null( $resultPageSet ) ) {
-			$result->setIndexedTagName_internal( array( 'query', $this->getModuleName() ), 'll' );
+			$result->addIndexedTagName( array( 'query', $this->getModuleName() ), 'll' );
 		} else {
 			$resultPageSet->populateFromTitles( $pages );
 		}
@@ -185,6 +185,7 @@ class ApiQueryLangBacklinks extends ApiQueryGeneratorBase {
 					'lllang',
 					'lltitle',
 				),
+				ApiBase::PARAM_HELP_MSG_PER_VALUE => array(),
 			),
 			'dir' => array(
 				ApiBase::PARAM_DFLT => 'ascending',

@@ -315,15 +315,18 @@ class LinkHolderArray {
 					$colours[$pdbk] = '';
 				} elseif ( $ns == NS_SPECIAL ) {
 					$colours[$pdbk] = 'new';
-				} elseif ( ( $id = $linkCache->getGoodLinkID( $pdbk ) ) != 0 ) {
-					$colours[$pdbk] = Linker::getLinkColour( $title, $threshold );
-					$output->addLink( $title, $id );
-					$linkcolour_ids[$id] = $pdbk;
-				} elseif ( $linkCache->isBadLink( $pdbk ) ) {
-					$colours[$pdbk] = 'new';
 				} else {
-					# Not in the link cache, add it to the query
-					$queries[$ns][] = $title->getDBkey();
+					$id = $linkCache->getGoodLinkID( $pdbk );
+					if ( $id != 0 ) {
+						$colours[$pdbk] = Linker::getLinkColour( $title, $threshold );
+						$output->addLink( $title, $id );
+						$linkcolour_ids[$id] = $pdbk;
+					} elseif ( $linkCache->isBadLink( $pdbk ) ) {
+						$colours[$pdbk] = 'new';
+					} else {
+						# Not in the link cache, add it to the query
+						$queries[$ns][] = $title->getDBkey();
+					}
 				}
 			}
 		}
@@ -364,13 +367,13 @@ class LinkHolderArray {
 				# The redirect status and length is passed to getLinkColour via the LinkCache
 				# Use formal parameters instead
 				$colours[$pdbk] = Linker::getLinkColour( $title, $threshold );
-				//add id to the extension todolist
+				// add id to the extension todolist
 				$linkcolour_ids[$s->page_id] = $pdbk;
 			}
 			unset( $res );
 		}
 		if ( count( $linkcolour_ids ) ) {
-			//pass an array of page_ids to an extension
+			// pass an array of page_ids to an extension
 			Hooks::run( 'GetLinkColours', array( $linkcolour_ids, &$colours ) );
 		}
 
@@ -560,7 +563,6 @@ class LinkHolderArray {
 
 			// for each found variants, figure out link holders and replace
 			foreach ( $varRes as $s ) {
-
 				$variantTitle = Title::makeTitle( $s->page_namespace, $s->page_title );
 				$varPdbk = $variantTitle->getPrefixedDBkey();
 				$vardbk = $variantTitle->getDBkey();

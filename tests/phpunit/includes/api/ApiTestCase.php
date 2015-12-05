@@ -105,6 +105,7 @@ abstract class ApiTestCase extends MediaWikiLangTestCase {
 
 		$wgRequest = new FauxRequest( $params, true, $session );
 		RequestContext::getMain()->setRequest( $wgRequest );
+		RequestContext::getMain()->setUser( $wgUser );
 
 		// set up local environment
 		$context = $this->apiContext->newTestContext( $wgRequest, $wgUser );
@@ -116,7 +117,7 @@ abstract class ApiTestCase extends MediaWikiLangTestCase {
 
 		// construct result
 		$results = array(
-			$module->getResultData(),
+			$module->getResult()->getResultData( null, array( 'Strip' => 'all' ) ),
 			$context->getRequest(),
 			$context->getRequest()->getSessionArray()
 		);

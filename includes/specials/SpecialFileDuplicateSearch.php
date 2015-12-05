@@ -48,7 +48,7 @@ class FileDuplicateSearchPage extends QueryPage {
 		return false;
 	}
 
-	function isCached() {
+	public function isCached() {
 		return false;
 	}
 
@@ -82,7 +82,7 @@ class FileDuplicateSearchPage extends QueryPage {
 		$this->getOutput()->addHtml( implode( "\n", $html ) );
 	}
 
-	function getQueryInfo() {
+	public function getQueryInfo() {
 		return array(
 			'tables' => array( 'image' ),
 			'fields' => array(
@@ -95,7 +95,7 @@ class FileDuplicateSearchPage extends QueryPage {
 		);
 	}
 
-	function execute( $par ) {
+	public function execute( $par ) {
 		$this->setHeaders();
 		$this->outputHeader();
 
@@ -110,25 +110,31 @@ class FileDuplicateSearchPage extends QueryPage {
 		$out = $this->getOutput();
 
 		# Create the input form
-		$out->addHTML(
-			Html::openElement(
-				'form',
-				array( 'id' => 'fileduplicatesearch', 'method' => 'get', 'action' => wfScript() )
-			) . "\n" .
-				Html::hidden( 'title', $this->getPageTitle()->getPrefixedDBkey() ) . "\n" .
-				Html::openElement( 'fieldset' ) . "\n" .
-				Html::element( 'legend', null, $this->msg( 'fileduplicatesearch-legend' )->text() ) . "\n" .
-				Xml::inputLabel(
-					$this->msg( 'fileduplicatesearch-filename' )->text(),
-					'filename',
-					'filename',
-					50,
-					$this->filename
-				) . "\n" .
-				Xml::submitButton( $this->msg( 'fileduplicatesearch-submit' )->text() ) . "\n" .
-				Html::closeElement( 'fieldset' ) . "\n" .
-				Html::closeElement( 'form' )
+		$formFields = array(
+			'filename' => array(
+				'type' => 'text',
+				'name' => 'filename',
+				'label-message' => 'fileduplicatesearch-filename',
+				'id' => 'filename',
+				'size' => 50,
+				'value' => $this->filename,
+				'cssclass' => 'mw-ui-input-inline'
+			),
 		);
+		$hiddenFields = array(
+			'title' => $this->getPageTitle()->getPrefixedDBKey(),
+		);
+		$htmlForm = HTMLForm::factory( 'inline', $formFields, $this->getContext() );
+		$htmlForm->addHiddenFields( $hiddenFields );
+		$htmlForm->setAction( wfScript() );
+		$htmlForm->setMethod( 'get' );
+		$htmlForm->setSubmitProgressive();
+		$htmlForm->setSubmitTextMsg( $this->msg( 'fileduplicatesearch-submit' ) );
+		$htmlForm->setWrapperLegendMsg( 'fileduplicatesearch-legend' );
+
+		// The form should be visible always, even if it was submitted (e.g. to perform another action).
+		// To bypass the callback validation of HTMLForm, use prepareForm() and displayForm().
+		$htmlForm->prepareForm()->displayForm( false );
 
 		if ( $this->file ) {
 			$this->hash = $this->file->getSha1();
@@ -145,6 +151,7 @@ class FileDuplicateSearchPage extends QueryPage {
 			if ( $img ) {
 				$thumb = $img->transform( array( 'width' => 120, 'height' => 120 ) );
 				if ( $thumb ) {
+					$out->addModuleStyles( 'mediawiki.special' );
 					$out->addHTML( '<div id="mw-fileduplicatesearch-icon">' .
 						$thumb->toHtml( array( 'desc-link' => false ) ) . '<br />' .
 						$this->msg( 'fileduplicatesearch-info' )->numParams(

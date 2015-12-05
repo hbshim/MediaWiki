@@ -13,7 +13,7 @@ abstract class ResourceLoaderTestCase extends MediaWikiTestCase {
 				'modules' => 'startup',
 				'only' => 'scripts',
 				'skin' => 'vector',
-				'target' => 'test',
+				'target' => 'phpunit',
 		) );
 		$ctx = $this->getMockBuilder( 'ResourceLoaderContext' )
 			->setConstructorArgs( array( $resourceLoader, $request ) )
@@ -25,33 +25,42 @@ abstract class ResourceLoaderTestCase extends MediaWikiTestCase {
 		return $ctx;
 	}
 
+	public static function getSettings() {
+		return array(
+			// For ResourceLoader::inDebugMode since it doesn't have context
+			'ResourceLoaderDebug' => true,
+
+			// Avoid influence from wgInvalidateCacheOnLocalSettingsChange
+			'CacheEpoch' => '20140101000000',
+
+			// For ResourceLoader::__construct()
+			'ResourceLoaderSources' => array(),
+
+			// For wfScript()
+			'ScriptPath' => '/w',
+			'ScriptExtension' => '.php',
+			'Script' => '/w/index.php',
+			'LoadScript' => '/w/load.php',
+		);
+	}
+
 	protected function setUp() {
 		parent::setUp();
 
 		ResourceLoader::clearCache();
 
-		$this->setMwGlobals( array(
-			// For ResourceLoader::inDebugMode since it doesn't have context
-			'wgResourceLoaderDebug' => true,
-
-			// Avoid influence from wgInvalidateCacheOnLocalSettingsChange
-			'wgCacheEpoch' => '20140101000000',
-
-			// For ResourceLoader::__construct()
-			'wgResourceLoaderSources' => array(),
-
-			// For wfScript()
-			'wgScriptPath' => '/w',
-			'wgScriptExtension' => '.php',
-			'wgScript' => '/w/index.php',
-			'wgLoadScript' => '/w/load.php',
-		) );
+		$globals = array();
+		foreach ( self::getSettings() as $key => $value ) {
+			$globals['wg' . $key] = $value;
+		}
+		$this->setMwGlobals( $globals );
 	}
 }
 
 /* Stubs */
 
 class ResourceLoaderTestModule extends ResourceLoaderModule {
+	protected $messages = array();
 	protected $dependencies = array();
 	protected $group = null;
 	protected $source = 'local';
@@ -59,7 +68,7 @@ class ResourceLoaderTestModule extends ResourceLoaderModule {
 	protected $styles = '';
 	protected $skipFunction = null;
 	protected $isRaw = false;
-	protected $targets = array( 'test' );
+	protected $targets = array( 'phpunit' );
 
 	public function __construct( $options = array() ) {
 		foreach ( $options as $key => $value ) {
@@ -68,14 +77,18 @@ class ResourceLoaderTestModule extends ResourceLoaderModule {
 	}
 
 	public function getScript( ResourceLoaderContext $context ) {
-		return $this->script;
+		return $this->validateScriptFile( 'input', $this->script );
 	}
 
 	public function getStyles( ResourceLoaderContext $context ) {
 		return array( '' => $this->styles );
 	}
 
-	public function getDependencies() {
+	public function getMessages() {
+		return $this->messages;
+	}
+
+	public function getDependencies( ResourceLoaderContext $context = null ) {
 		return $this->dependencies;
 	}
 
@@ -94,14 +107,11 @@ class ResourceLoaderTestModule extends ResourceLoaderModule {
 	public function isRaw() {
 		return $this->isRaw;
 	}
+
+	public function enableModuleContentVersion() {
+		return true;
+	}
 }
 
 class ResourceLoaderFileModuleTestModule extends ResourceLoaderFileModule {
-}
-
-class ResourceLoaderWikiModuleTestModule extends ResourceLoaderWikiModule {
-	// Override expected via PHPUnit mocks and stubs
-	protected function getPages( ResourceLoaderContext $context ) {
-		return array();
-	}
 }

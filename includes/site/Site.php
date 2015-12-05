@@ -172,7 +172,7 @@ class Site implements Serializable {
 	}
 
 	/**
-	 * Gets the type of the site (ie wikipedia).
+	 * Gets the group of the site (ie wikipedia).
 	 *
 	 * @since 1.21
 	 *
@@ -183,7 +183,7 @@ class Site implements Serializable {
 	}
 
 	/**
-	 * Sets the type of the site (ie wikipedia).
+	 * Sets the group of the site (ie wikipedia).
 	 *
 	 * @since 1.21
 	 *
@@ -697,10 +697,4 @@ class Site implements Serializable {
 		$this->setForward( $fields['forward'] );
 		$this->setInternalId( $fields['internalid'] );
 	}
-}
-
-/**
- * @deprecated since 1.21
- */
-class SiteObject extends Site {
 }

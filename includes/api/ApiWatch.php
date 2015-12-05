@@ -44,7 +44,8 @@ class ApiWatch extends ApiBase {
 
 		$params = $this->extractRequestParams();
 
-		$this->getResult()->beginContinuation( $params['continue'], array(), array() );
+		$continuationManager = new ApiContinuationManager( $this, array(), array() );
+		$this->setContinuationManager( $continuationManager );
 
 		$pageSet = $this->getPageSet();
 		// by default we use pageset to extract the page to work on.
@@ -69,7 +70,7 @@ class ApiWatch extends ApiBase {
 				$r = $this->watchTitle( $title, $user, $params );
 				$res[] = $r;
 			}
-			$this->getResult()->setIndexedTagName( $res, 'w' );
+			ApiResult::setIndexedTagName( $res, 'w' );
 		} else {
 			// dont allow use of old title parameter with new pageset parameters.
 			$extraParams = array_keys( array_filter( $pageSet->extractRequestParams(), function ( $x ) {
@@ -84,7 +85,6 @@ class ApiWatch extends ApiBase {
 				);
 			}
 
-			$this->logFeatureUsage( 'action=watch&title' );
 			$title = Title::newFromText( $params['title'] );
 			if ( !$title || !$title->isWatchable() ) {
 				$this->dieUsageMsg( array( 'invalidtitle', $params['title'] ) );
@@ -92,7 +92,9 @@ class ApiWatch extends ApiBase {
 			$res = $this->watchTitle( $title, $user, $params, true );
 		}
 		$this->getResult()->addValue( null, $this->getModuleName(), $res );
-		$this->getResult()->endContinuation();
+
+		$this->setContinuationManager( null );
+		$continuationManager->setContinuationIntoResult( $this->getResult() );
 	}
 
 	private function watchTitle( Title $title, User $user, array $params,
@@ -106,15 +108,15 @@ class ApiWatch extends ApiBase {
 
 		if ( $params['unwatch'] ) {
 			$status = UnwatchAction::doUnwatch( $title, $user );
+			$res['unwatched'] = $status->isOK();
 			if ( $status->isOK() ) {
-				$res['unwatched'] = '';
 				$res['message'] = $this->msg( 'removedwatchtext', $title->getPrefixedText() )
 					->title( $title )->parseAsBlock();
 			}
 		} else {
 			$status = WatchAction::doWatch( $title, $user );
+			$res['watched'] = $status->isOK();
 			if ( $status->isOK() ) {
-				$res['watched'] = '';
 				$res['message'] = $this->msg( 'addedwatchtext', $title->getPrefixedText() )
 					->title( $title )->parseAsBlock();
 			}

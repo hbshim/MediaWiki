@@ -1,21 +1,24 @@
 {
-  "name": "mediawiki",
-  "version": "0.0.0",
+  "private": true,
   "scripts": {
-    "test": "grunt test"
+    "test": "grunt test",
+    "doc": "jsduck",
+    "postdoc": "grunt copy:jsduck"
   },
   "devDependencies": {
     "grunt": "0.4.5",
-    "grunt-banana-checker": "0.2.0",
-    "grunt-contrib-jshint": "0.11.0",
+    "grunt-cli": "0.1.13",
+    "grunt-banana-checker": "0.4.0",
+    "grunt-contrib-copy": "0.8.1",
+    "grunt-contrib-jshint": "0.11.3",
     "grunt-contrib-watch": "0.6.1",
-    "grunt-jscs": "1.5.0",
-    "grunt-jsonlint": "1.0.4",
-    "grunt-karma": "0.10.1",
-    "karma": "0.12.31",
-    "karma-chrome-launcher": "0.1.7",
-    "karma-firefox-launcher": "0.1.4",
-    "karma-qunit": "0.1.4",
-    "qunitjs": "1.17.1"
+    "grunt-jscs": "2.1.0",
+    "grunt-jsonlint": "1.0.5",
+    "grunt-karma": "0.12.1",
+    "karma": "0.13.10",
+    "karma-chrome-launcher": "0.2.0",
+    "karma-firefox-launcher": "0.1.6",
+    "karma-qunit": "0.1.5",
+    "qunitjs": "1.18.0"
   }
 }

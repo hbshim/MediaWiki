@@ -34,6 +34,7 @@ class LocalSettingsGenerator {
 	protected $groupPermissions = array();
 	protected $dbSettings = '';
 	protected $safeMode = false;
+	protected $IP;
 
 	/**
 	 * @var Installer
@@ -50,20 +51,21 @@ class LocalSettingsGenerator {
 
 		$this->extensions = $installer->getVar( '_Extensions' );
 		$this->skins = $installer->getVar( '_Skins' );
+		$this->IP = $installer->getVar( 'IP' );
 
 		$db = $installer->getDBInstaller( $installer->getVar( 'wgDBtype' ) );
 
 		$confItems = array_merge(
 			array(
-				'wgServer', 'wgScriptPath', 'wgScriptExtension',
+				'wgServer', 'wgScriptPath',
 				'wgPasswordSender', 'wgImageMagickConvertCommand', 'wgShellLocale',
 				'wgLanguageCode', 'wgEnableEmail', 'wgEnableUserEmail', 'wgDiff3',
 				'wgEnotifUserTalk', 'wgEnotifWatchlist', 'wgEmailAuthentication',
 				'wgDBtype', 'wgSecretKey', 'wgRightsUrl', 'wgSitename', 'wgRightsIcon',
-				'wgRightsText', 'wgMainCacheType', 'wgEnableUploads',
-				'wgMainCacheType', '_MemCachedServers', 'wgDBserver', 'wgDBuser',
+				'wgRightsText', '_MainCacheType', 'wgEnableUploads',
+				'_MemCachedServers', 'wgDBserver', 'wgDBuser',
 				'wgDBpassword', 'wgUseInstantCommons', 'wgUpgradeKey', 'wgDefaultSkin',
-				'wgMetaNamespace', 'wgResourceLoaderMaxQueryLength', 'wgLogo',
+				'wgMetaNamespace', 'wgLogo',
 			),
 			$db->getGlobalNames()
 		);
@@ -143,8 +145,7 @@ class LocalSettingsGenerator {
 # The following skins were automatically enabled:\n";
 
 			foreach ( $this->skins as $skinName ) {
-				$encSkinName = self::escapePhpString( $skinName );
-				$localSettings .= "require_once \"\$IP/skins/$encSkinName/$encSkinName.php\";\n";
+				$localSettings .= $this->generateExtEnableLine( 'skins', $skinName );
 			}
 
 			$localSettings .= "\n";
@@ -152,13 +153,13 @@ class LocalSettingsGenerator {
 
 		if ( count( $this->extensions ) ) {
 			$localSettings .= "
-# Enabled Extensions. Most extensions are enabled by including the base extension file here
-# but check specific extension documentation for more details
+# Enabled extensions. Most of the extensions are enabled by adding
+# wfLoadExtensions('ExtensionName');
+# to LocalSettings.php. Check specific extension documentation for more details.
 # The following extensions were automatically enabled:\n";
 
 			foreach ( $this->extensions as $extName ) {
-				$encExtName = self::escapePhpString( $extName );
-				$localSettings .= "require_once \"\$IP/extensions/$encExtName/$encExtName.php\";\n";
+				$localSettings .= $this->generateExtEnableLine( 'extensions', $extName );
 			}
 
 			$localSettings .= "\n";
@@ -169,6 +170,34 @@ class LocalSettingsGenerator {
 # Add more configuration options below.\n\n";
 
 		return $localSettings;
+	}
+
+	/**
+	 * Generate the appropriate line to enable the given extension or skin
+	 *
+	 * @param string $dir Either "extensions" or "skins"
+	 * @param string $name Name of extension/skin
+	 * @throws InvalidArgumentException
+	 * @return string
+	 */
+	private function generateExtEnableLine( $dir, $name ) {
+		if ( $dir === 'extensions' ) {
+			$jsonFile = 'extension.json';
+			$function = 'wfLoadExtension';
+		} elseif ( $dir === 'skins' ) {
+			$jsonFile = 'skin.json';
+			$function = 'wfLoadSkin';
+		} else {
+			throw new InvalidArgumentException( '$dir was not "extensions" or "skins' );
+		}
+
+		$encName = self::escapePhpString( $name );
+
+		if ( file_exists( "{$this->IP}/$dir/$encName/$jsonFile" ) ) {
+			return "$function( '$encName' );\n";
+		} else {
+			return "require_once \"\$IP/$dir/$encName/$encName.php\";\n";
+		}
 	}
 
 	/**
@@ -258,15 +287,15 @@ class LocalSettingsGenerator {
 		$serverSetting = "";
 		if ( array_key_exists( 'wgServer', $this->values ) && $this->values['wgServer'] !== null ) {
 			$serverSetting = "\n## The protocol and server name to use in fully-qualified URLs\n";
-			$serverSetting .= "\$wgServer = \"{$this->values['wgServer']}\";\n";
+			$serverSetting .= "\$wgServer = \"{$this->values['wgServer']}\";";
 		}
 
-		switch ( $this->values['wgMainCacheType'] ) {
+		switch ( $this->values['_MainCacheType'] ) {
 			case 'anything':
 			case 'db':
 			case 'memcached':
 			case 'accel':
-				$cacheType = 'CACHE_' . strtoupper( $this->values['wgMainCacheType'] );
+				$cacheType = 'CACHE_' . strtoupper( $this->values['_MainCacheType'] );
 				break;
 			case 'none':
 			default:
@@ -303,12 +332,12 @@ if ( !defined( 'MEDIAWIKI' ) ) {
 ## (like /w/index.php/Page_title to /wiki/Page_title) please see:
 ## https://www.mediawiki.org/wiki/Manual:Short_URL
 \$wgScriptPath = \"{$this->values['wgScriptPath']}\";
-\$wgScriptExtension = \"{$this->values['wgScriptExtension']}\";
 ${serverSetting}
-## The relative URL path to the skins directory
-\$wgStylePath = \"\$wgScriptPath/skins\";
 
-## The relative URL path to the logo.  Make sure you change this from the default,
+## The URL path to static resources (images, scripts, etc.)
+\$wgResourceBasePath = \$wgScriptPath;
+
+## The URL path to the logo.  Make sure you change this from the default,
 ## or else you'll overwrite your logo when you upgrade!
 \$wgLogo = \"{$this->values['wgLogo']}\";
 
@@ -343,7 +372,7 @@ ${serverSetting}
 {$magic}\$wgUseImageMagick = true;
 {$magic}\$wgImageMagickConvertCommand = \"{$this->values['wgImageMagickConvertCommand']}\";
 
-# InstantCommons allows wiki to use images from http://commons.wikimedia.org
+# InstantCommons allows wiki to use images from https://commons.wikimedia.org
 \$wgUseInstantCommons = {$this->values['wgUseInstantCommons']};
 
 ## If you use ImageMagick (or any other shell command) on a

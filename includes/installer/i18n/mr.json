@@ -1,16 +1,18 @@
 {
 	"@metadata": {
 		"authors": [
-			"V.narsikar"
+			"V.narsikar",
+			"Suyog"
 		]
 	},
 	"config-information": "माहिती",
 	"config-localsettings-key": "दर्जोन्नती कळ:",
 	"config-localsettings-badkey": "आपण दिलेली कळ चुकीची आहे.",
-	"config-session-error": "सत्र सुरू करण्यात त्रूटी:$1",
+	"config-session-error": "सत्र सुरू करण्यात त्रुटी:$1",
 	"config-your-language": "आपली भाषा:",
 	"config-your-language-help": "उभारणी प्रक्रियेत वापरावयाची भाषा निवडा.",
 	"config-wiki-language": "विकी भाषा:",
+	"config-wiki-language-help": "तुमची लेखन भाषा निवडा",
 	"config-back": "← परत",
 	"config-continue": "चालू ठेवा →",
 	"config-page-language": "भाषा",
@@ -18,18 +20,19 @@
 	"config-page-upgrade": "सध्याच्या उभारणीची(इन्स्टॉलेशन) दर्जोन्नती करा",
 	"config-page-name": "नाव",
 	"config-page-options": "पर्याय",
-	"config-page-install": "उभारा(इन्स्टॉल)",
+	"config-page-install": "स्थापित करा(इन्स्टॉल)",
 	"config-page-complete": "पूर्ण!",
 	"config-page-readme": "हे वाचा",
 	"config-page-releasenotes": "विमोचन टिप्पण्या",
 	"config-page-existingwiki": "साध्याचा विकि",
+	"config-restart": "हो, परत चालू करा",
 	"config-pg-test-error": "विदागाराशी अनुबंधन करता येत नाही <strong>$1</strong>: $2",
 	"config-type-mssql": "मायक्रोसॉफ्ट एसक्युएल सर्व्हर",
 	"config-header-mssql": "मायक्रोसॉफ्ट एसक्युएल सर्व्हर मांडणावळ",
 	"config-mssql-old": "मायक्रोसॉफ्ट एसक्युएल सर्व्हर $1 किंवा त्यानंतरची आवृत्ती हवी. आपणापाशी $2 आहे.",
 	"config-mssql-auth": "अधिप्रमाणन प्रकार:",
-	"config-mssql-install-auth": "उभारणीच्या(इन्स्टॉलेशन) प्रक्रियेदरम्यान,'अधिप्रमाणन प्रकार'( ऑथेंटीकेशन टाईप) निवडा, ज्याचा वापर डाटाबेसशी अनुबंधनात करण्यात येईल.जर आपण \"विंडोज ऑथेंटीकेशन\" निवडले तर,ज्याकोणत्याही सदस्याची अधिकारपत्रे(क्रेडेंटियल्स) वेबसर्व्हरवर सुरू असतील,तशीच वापरल्या जातील.",
-	"config-mssql-web-auth": "या विकिचे सामन्य चालनादरम्यान,'अधिप्रमाणन प्रकार'( ऑथेंटीकेशन टाईप) निवडा, ज्याचा वापर डाटाबेसशी अनुबंधनात करण्यात येईल.जर आपण \"विंडोज ऑथेंटीकेशन\" निवडले तर,ज्याकोणत्याही सदस्याची अधिकारपत्रे(क्रेडेंटियल्स) वेबसर्व्हरवर सुरू असतील,तशीच वापरल्या जातील.",
+	"config-mssql-install-auth": "उभारणीच्या(इन्स्टॉलेशन) प्रक्रियेदरम्यान,'अधिप्रमाणन प्रकार'( ऑथेंटीकेशन टाईप) निवडा, ज्याचा वापर डाटाबेसशी अनुबंधनात करण्यात येईल.जर आपण \"{{int:config-mssql-windowsauth}} निवडले तर,ज्याकोणत्याही सदस्याची अधिकारपत्रे(क्रेडेंटियल्स) वेबसर्व्हरवर सुरू असतील,तशीच वापरल्या जातील.",
+	"config-mssql-web-auth": "'अधिप्रमाणन प्रकार'( ऑथेंटीकेशन टाईप) निवडा, ज्यास,या विकिचे सामान्य चालनादरम्यान, वेब सर्व्हर हा डाटाबेसशी अनुबंधन करण्यास वापरेल.जर आपण\"{{int:config-mssql-windowsauth}}\" निवडले तर,ज्याकोणत्याही सदस्याची अधिकारपत्रे(क्रेडेंटियल्स) वेबसर्व्हरवर सुरू असतील,तशीच वापरल्या जातील.",
 	"config-mssql-sqlauth": "एसक्युएल सर्व्हर अधिप्रमाणन",
 	"config-mssql-windowsauth": "विंडोजचे अधिप्रमाणन",
 	"config-site-name": "विकिचे नाव:",
@@ -55,8 +58,8 @@
 	"config-install-step-done": "झाले",
 	"config-install-extensions": "विस्तारके अंतर्भूत करून",
 	"config-install-tables": "सारण्या बनवित आहे",
-	"config-install-tables-failed": "<strong>त्रूटी:</strong>खालील त्रूटीमुळे सारणी बनविणे अयशस्वी:$1",
+	"config-install-tables-failed": "<strong>त्रुटी:</strong>खालील त्रुटीमुळे सारणी बनविणे अयशस्वी:$1",
 	"config-help": "साहाय्य",
 	"mainpagetext": "'''मीडियाविकीचे इन्स्टॉलेशन पूर्ण.'''",
-	"mainpagedocfooter": "विकी सॉफ्टवेअर वापरण्याकरिता [//meta.wikimedia.org/wiki/Help:Contents यूजर गाईड] पहा.\n\n== सुरुवात ==\n\n* [//www.mediawiki.org/wiki/Special:MyLanguage/Manual:Configuration_settings कॉन्फिगरेशन सेटींगची यादी]\n* [//www.mediawiki.org/wiki/Special:MyLanguage/Manual:FAQ मीडियाविकी नेहमी विचारले जाणारे प्रश्न]\n* [https://lists.wikimedia.org/mailman/listinfo/mediawiki-announce मीडियाविकि मेलिंग लिस्ट]"
+	"mainpagedocfooter": "विकी सॉफ्टवेअर वापरण्याकरिता [//meta.wikimedia.org/wiki/Help:Contents यूजर गाईड] पहा.\n\n== सुरुवात करा ==\n\n* [//www.mediawiki.org/wiki/Special:MyLanguage/Manual:Configuration_settings रचित मांडण्याची यादी]\n* [//www.mediawiki.org/wiki/Special:MyLanguage/Manual:FAQ मिडियाविकि FAQ]\n* [https://lists.wikimedia.org/mailman/listinfo/mediawiki-मिडियाविकिची मेलिंग यादीचे विमोचनाची उद्घोषणाannounce MediaWiki release mailing list]\n* [//www.mediawiki.org/wiki/Special:MyLanguage/Localisation#Translation_resources आपल्या भाषेसाठी मिडियाविकिचे स्थानिकिकरण करा]\n* [//www.mediawiki.org/wiki/Special:MyLanguage/Manual:Combating_spam आपल्या विकिवर स्पॅमशी दोन हात कशे करावे ते शिका]"
 }

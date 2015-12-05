@@ -79,6 +79,10 @@ class FakeDatabaseMysqlBase extends DatabaseMysqlBase {
 	protected function mysqlPing() {
 	}
 
+	protected function mysqlRealEscapeString( $s ) {
+
+	}
+
 	// From interface DatabaseType
 	function insertId() {
 	}
@@ -181,7 +185,7 @@ class DatabaseMysqlBaseTest extends MediaWikiTestCase {
 				array( 'Tables_in_' => 'view2' ),
 				array( 'Tables_in_' => 'myview' ),
 				false  # no more rows
-			));
+			) );
 		return $db;
 	}
 	/**
@@ -243,4 +247,13 @@ class DatabaseMysqlBaseTest extends MediaWikiTestCase {
 		);
 	}
 
+	function testMasterPos() {
+		$pos1 = new MySQLMasterPos( 'db1034-bin.000976', '843431247' );
+		$pos2 = new MySQLMasterPos( 'db1034-bin.000976', '843431248' );
+
+		$this->assertTrue( $pos1->hasReached( $pos1 ) );
+		$this->assertTrue( $pos2->hasReached( $pos2 ) );
+		$this->assertTrue( $pos2->hasReached( $pos1 ) );
+		$this->assertFalse( $pos1->hasReached( $pos2 ) );
+	}
 }

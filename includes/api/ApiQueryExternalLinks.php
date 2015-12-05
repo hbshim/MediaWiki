@@ -91,7 +91,7 @@ class ApiQueryExternalLinks extends ApiQueryBase {
 			if ( $params['expandurl'] ) {
 				$to = wfExpandUrl( $to, PROTO_CANONICAL );
 			}
-			ApiResult::setContent( $entry, $to );
+			ApiResult::setContentValue( $entry, 'url', $to );
 			$fit = $this->addPageSubItem( $row->el_from, $entry );
 			if ( !$fit ) {
 				$this->setContinueEnumParameter( 'offset', $offset + $count - 1 );
@@ -134,6 +134,6 @@ class ApiQueryExternalLinks extends ApiQueryBase {
 	}
 
 	public function getHelpUrls() {
-		return 'https://www.mediawiki.org/wiki/API:Properties#extlinks_.2F_el';
+		return 'https://www.mediawiki.org/wiki/API:Extlinks';
 	}
 }

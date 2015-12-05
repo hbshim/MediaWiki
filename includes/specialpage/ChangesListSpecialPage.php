@@ -136,6 +136,7 @@ abstract class ChangesListSpecialPage extends SpecialPage {
 	 * @return FormOptions
 	 */
 	public function getDefaultOptions() {
+		$config = $this->getConfig();
 		$opts = new FormOptions();
 
 		$opts->add( 'hideminor', false );
@@ -144,6 +145,10 @@ abstract class ChangesListSpecialPage extends SpecialPage {
 		$opts->add( 'hideliu', false );
 		$opts->add( 'hidepatrolled', false );
 		$opts->add( 'hidemyself', false );
+
+		if ( $config->get( 'RCWatchCategoryMembership' ) ) {
+			$opts->add( 'hidecategorization', false );
+		}
 
 		$opts->add( 'namespace', '', FormOptions::INTNULL );
 		$opts->add( 'invert', false );
@@ -249,6 +254,11 @@ abstract class ChangesListSpecialPage extends SpecialPage {
 				$conds[] = 'rc_user_text != ' . $dbr->addQuotes( $user->getName() );
 			}
 		}
+		if ( $this->getConfig()->get( 'RCWatchCategoryMembership' )
+			&& $opts['hidecategorization'] === true
+		) {
+			$conds[] = 'rc_type != ' . $dbr->addQuotes( RC_CATEGORIZE );
+		}
 
 		// Namespace filtering
 		if ( $opts['namespace'] !== '' ) {
@@ -315,7 +325,9 @@ abstract class ChangesListSpecialPage extends SpecialPage {
 		);
 	}
 
-	protected function runMainQueryHook( &$tables, &$fields, &$conds, &$query_options, &$join_conds, $opts ) {
+	protected function runMainQueryHook( &$tables, &$fields, &$conds,
+		&$query_options, &$join_conds, $opts
+	) {
 		return Hooks::run(
 			'ChangesListSpecialPageQuery',
 			array( $this->getName(), &$tables, &$fields, &$conds, &$query_options, &$join_conds, $opts )
@@ -381,7 +393,7 @@ abstract class ChangesListSpecialPage extends SpecialPage {
 	 *
 	 * @param FormOptions $opts
 	 */
-	function setTopText( FormOptions $opts ) {
+	public function setTopText( FormOptions $opts ) {
 		// nothing by default
 	}
 
@@ -391,7 +403,7 @@ abstract class ChangesListSpecialPage extends SpecialPage {
 	 *
 	 * @param FormOptions $opts
 	 */
-	function setBottomText( FormOptions $opts ) {
+	public function setBottomText( FormOptions $opts ) {
 		// nothing by default
 	}
 
@@ -403,7 +415,7 @@ abstract class ChangesListSpecialPage extends SpecialPage {
 	 * @param FormOptions $opts
 	 * @return array
 	 */
-	function getExtraOptions( $opts ) {
+	public function getExtraOptions( $opts ) {
 		return array();
 	}
 
@@ -432,7 +444,8 @@ abstract class ChangesListSpecialPage extends SpecialPage {
 			$legend .= Html::element( 'dt',
 				array( 'class' => $cssClass ), $context->msg( $letter )->text()
 			) . "\n" .
-			Html::rawElement( 'dd', array(),
+			Html::rawElement( 'dd',
+				array( 'class' => Sanitizer::escapeClass( 'mw-changeslist-legend-' . $key ) ),
 				$context->msg( $label )->parse()
 			) . "\n";
 		}

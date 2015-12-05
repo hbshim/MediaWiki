@@ -28,7 +28,7 @@
 /**
  * @ingroup Database
  */
-class DatabaseMssql extends DatabaseBase {
+class DatabaseMssql extends Database {
 	protected $mInsertId = null;
 	protected $mLastResult = null;
 	protected $mAffectedRows = null;
@@ -119,9 +119,9 @@ class DatabaseMssql extends DatabaseBase {
 			$connectionInfo['PWD'] = $password;
 		}
 
-		wfSuppressWarnings();
+		MediaWiki\suppressWarnings();
 		$this->mConn = sqlsrv_connect( $server, $connectionInfo );
-		wfRestoreWarnings();
+		MediaWiki\restoreWarnings();
 
 		if ( $this->mConn === false ) {
 			throw new DBConnectionError( $this, $this->lastError() );
@@ -145,8 +145,8 @@ class DatabaseMssql extends DatabaseBase {
 	 * @param bool|MssqlResultWrapper|resource $result
 	 * @return bool|MssqlResultWrapper
 	 */
-	public function resultObject( $result ) {
-		if ( empty( $result ) ) {
+	protected function resultObject( $result ) {
+		if ( !$result ) {
 			return false;
 		} elseif ( $result instanceof MssqlResultWrapper ) {
 			return $result;
@@ -1089,7 +1089,9 @@ class DatabaseMssql extends DatabaseBase {
 	 * @param string $s
 	 * @return string
 	 */
-	public function strencode( $s ) { # Should not be called by us
+	public function strencode( $s ) {
+		// Should not be called by us
+
 		return str_replace( "'", "''", $s );
 	}
 

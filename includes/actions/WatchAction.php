@@ -35,46 +35,17 @@ class WatchAction extends FormAction {
 		return false;
 	}
 
+	/**
+	 * @return string HTML
+	 */
 	protected function getDescription() {
 		return $this->msg( 'addwatch' )->escaped();
-	}
-
-	/**
-	 * Just get an empty form with a single submit button
-	 * @return array
-	 */
-	protected function getFormFields() {
-		return array();
 	}
 
 	public function onSubmit( $data ) {
 		self::doWatch( $this->getTitle(), $this->getUser() );
 
 		return true;
-	}
-
-	/**
-	 * This can be either formed or formless depending on the session token given
-	 */
-	public function show() {
-		$this->setHeaders();
-
-		$user = $this->getUser();
-		// This will throw exceptions if there's a problem
-		$this->checkCanExecute( $user );
-
-		// Must have valid token for this action/title
-		$salt = array( $this->getName(), $this->getTitle()->getDBkey() );
-
-		if ( $user->matchEditToken( $this->getRequest()->getVal( 'token' ), $salt ) ) {
-			$this->onSubmit( array() );
-			$this->onSuccess();
-		} else {
-			$form = $this->getForm();
-			if ( $form->show() ) {
-				$this->onSuccess();
-			}
-		}
 	}
 
 	protected function checkCanExecute( User $user ) {
@@ -85,6 +56,21 @@ class WatchAction extends FormAction {
 
 		parent::checkCanExecute( $user );
 	}
+
+	protected function alterForm( HTMLForm $form ) {
+		$form->setSubmitTextMsg( 'confirm-watch-button' );
+		$form->setTokenSalt( 'watch' );
+	}
+
+	protected function preText() {
+		return $this->msg( 'confirm-watch-top' )->parse();
+	}
+
+	public function onSuccess() {
+		$this->getOutput()->addWikiMsg( 'addedwatchtext', $this->getTitle()->getPrefixedText() );
+	}
+
+	/* Static utility methods */
 
 	/**
 	 * Watch or unwatch a page
@@ -176,11 +162,8 @@ class WatchAction extends FormAction {
 		if ( $action != 'unwatch' ) {
 			$action = 'watch';
 		}
-		$salt = array( $action, $title->getPrefixedDBkey() );
-
-		// This token stronger salted and not compatible with ApiWatch
-		// It's title/action specific because index.php is GET and API is POST
-		return $user->getEditToken( $salt );
+		// Match ApiWatch and ResourceLoaderUserTokensModule
+		return $user->getEditToken( $action );
 	}
 
 	/**
@@ -194,17 +177,5 @@ class WatchAction extends FormAction {
 	 */
 	public static function getUnwatchToken( Title $title, User $user, $action = 'unwatch' ) {
 		return self::getWatchToken( $title, $user, $action );
-	}
-
-	protected function alterForm( HTMLForm $form ) {
-		$form->setSubmitTextMsg( 'confirm-watch-button' );
-	}
-
-	protected function preText() {
-		return $this->msg( 'confirm-watch-top' )->parse();
-	}
-
-	public function onSuccess() {
-		$this->getOutput()->addWikiMsg( 'addedwatchtext', $this->getTitle()->getPrefixedText() );
 	}
 }

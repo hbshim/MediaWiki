@@ -48,6 +48,8 @@ class TextPassDumper extends BackupDumper {
 	protected $maxConsecutiveFailedTextRetrievals = 200;
 	protected $failureTimeout = 5; // Seconds to sleep after db failure
 
+	protected $bufferSize = 524288; // In bytes. Maximum size to read from the stub in on go.
+
 	protected $php = "php";
 	protected $spawn = false;
 
@@ -186,6 +188,10 @@ class TextPassDumper extends BackupDumper {
 		$url = $this->processFileOpt( $val, $param );
 
 		switch ( $opt ) {
+			case 'buffersize':
+				// Lower bound for xml reading buffer size is 4 KB
+				$this->bufferSize = max( intval( $val ), 4 * 1024 );
+				break;
 			case 'prefetch':
 				require_once "$IP/maintenance/backupPrefetch.inc";
 				$this->prefetch = new BaseDump( $url );
@@ -368,12 +374,11 @@ class TextPassDumper extends BackupDumper {
 		xml_set_character_data_handler( $parser, array( &$this, 'characterData' ) );
 
 		$offset = 0; // for context extraction on error reporting
-		$bufferSize = 512 * 1024;
 		do {
 			if ( $this->checkIfTimeExceeded() ) {
 				$this->setTimeExceeded();
 			}
-			$chunk = fread( $input, $bufferSize );
+			$chunk = fread( $input, $this->bufferSize );
 			if ( !xml_parse( $parser, $chunk, feof( $input ) ) ) {
 				wfDebug( "TextDumpPass::readDump encountered XML parsing error\n" );
 
@@ -459,8 +464,9 @@ class TextPassDumper extends BackupDumper {
 	 * is thrown.
 	 *
 	 * @param string $id The revision id to get the text for
-	 * @param string|bool|null $model The content model used to determine applicable export transformations.
-	 *      If $model is null, it will be determined from the database.
+	 * @param string|bool|null $model The content model used to determine
+	 *  applicable export transformations.
+	 *  If $model is null, it will be determined from the database.
 	 * @param string|null $format The content format used when applying export transformations.
 	 *
 	 * @throws MWException
@@ -654,13 +660,13 @@ class TextPassDumper extends BackupDumper {
 	}
 
 	private function getTextSpawned( $id ) {
-		wfSuppressWarnings();
+		MediaWiki\suppressWarnings();
 		if ( !$this->spawnProc ) {
 			// First time?
 			$this->openSpawn();
 		}
 		$text = $this->getTextSpawnedOnce( $id );
-		wfRestoreWarnings();
+		MediaWiki\restoreWarnings();
 
 		return $text;
 	}
@@ -693,7 +699,6 @@ class TextPassDumper extends BackupDumper {
 		$this->progress( "Spawning database subprocess: $cmd" );
 		$this->spawnProc = proc_open( $cmd, $spec, $pipes );
 		if ( !$this->spawnProc ) {
-			// shit
 			$this->progress( "Subprocess spawn failed." );
 
 			return false;
@@ -707,7 +712,7 @@ class TextPassDumper extends BackupDumper {
 	}
 
 	private function closeSpawn() {
-		wfSuppressWarnings();
+		MediaWiki\suppressWarnings();
 		if ( $this->spawnRead ) {
 			fclose( $this->spawnRead );
 		}
@@ -724,7 +729,7 @@ class TextPassDumper extends BackupDumper {
 			pclose( $this->spawnProc );
 		}
 		$this->spawnProc = false;
-		wfRestoreWarnings();
+		MediaWiki\restoreWarnings();
 	}
 
 	private function getTextSpawnedOnce( $id ) {
@@ -894,11 +899,9 @@ class TextPassDumper extends BackupDumper {
 			} elseif ( $this->state == "page" ) {
 				$this->thisPage .= $data;
 			}
-		}
-		elseif ( $this->lastName == "model" ) {
+		} elseif ( $this->lastName == "model" ) {
 			$this->thisRevModel .= $data;
-		}
-		elseif ( $this->lastName == "format" ) {
+		} elseif ( $this->lastName == "format" ) {
 			$this->thisRevFormat .= $data;
 		}
 

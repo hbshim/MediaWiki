@@ -50,7 +50,6 @@ class ApiQueryLangLinks extends ApiQueryBase {
 		// Handle deprecated param
 		$this->requireMaxOneParameter( $params, 'url', 'prop' );
 		if ( $params['url'] ) {
-			$this->logFeatureUsage( 'prop=langlinks&llurl' );
 			$prop = array( 'url' => 1 );
 		}
 
@@ -75,7 +74,7 @@ class ApiQueryLangLinks extends ApiQueryBase {
 			);
 		}
 
-		//FIXME: (follow-up) To allow extensions to add to the language links, we need
+		// FIXME: (follow-up) To allow extensions to add to the language links, we need
 		//       to load them all, add the extra links, then apply paging.
 		//       Should not be terrible, it's not going to be more than a few hundred links.
 
@@ -124,7 +123,7 @@ class ApiQueryLangLinks extends ApiQueryBase {
 			if ( isset( $prop['autonym'] ) ) {
 				$entry['autonym'] = Language::fetchLanguageName( $row->ll_lang );
 			}
-			ApiResult::setContent( $entry, $row->ll_title );
+			ApiResult::setContentValue( $entry, 'title', $row->ll_title );
 			$fit = $this->addPageSubItem( $row->ll_from, $entry );
 			if ( !$fit ) {
 				$this->setContinueEnumParameter( 'continue', "{$row->ll_from}|{$row->ll_lang}" );
@@ -146,7 +145,8 @@ class ApiQueryLangLinks extends ApiQueryBase {
 					'url',
 					'langname',
 					'autonym',
-				)
+				),
+				ApiBase::PARAM_HELP_MSG_PER_VALUE => array(),
 			),
 			'lang' => null,
 			'title' => null,
@@ -183,6 +183,6 @@ class ApiQueryLangLinks extends ApiQueryBase {
 	}
 
 	public function getHelpUrls() {
-		return 'https://www.mediawiki.org/wiki/API:Properties#langlinks_.2F_ll';
+		return 'https://www.mediawiki.org/wiki/API:Langlinks';
 	}
 }

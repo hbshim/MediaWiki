@@ -21,23 +21,112 @@
  * @ingroup Parser
  */
 
+use MediaWiki\Logger\LoggerFactory;
+
 /**
  * @ingroup Parser
  */
-interface Preprocessor {
+abstract class Preprocessor {
+
+	const CACHE_VERSION = 1;
+
 	/**
-	 * Create a new preprocessor object based on an initialised Parser object
-	 *
-	 * @param Parser $parser
+	 * @var array Brace matching rules.
 	 */
-	public function __construct( $parser );
+	protected $rules = array(
+		'{' => array(
+			'end' => '}',
+			'names' => array(
+				2 => 'template',
+				3 => 'tplarg',
+			),
+			'min' => 2,
+			'max' => 3,
+		),
+		'[' => array(
+			'end' => ']',
+			'names' => array( 2 => null ),
+			'min' => 2,
+			'max' => 2,
+		)
+	);
+
+	/**
+	 * Store a document tree in the cache.
+	 *
+	 * @param string $text
+	 * @param int $flags
+	 */
+	protected function cacheSetTree( $text, $flags, $tree ) {
+		$config = RequestContext::getMain()->getConfig();
+
+		$length = strlen( $text );
+		$threshold = $config->get( 'PreprocessorCacheThreshold' );
+		if ( $threshold === false || $length < $threshold || $length > 1e6 ) {
+			return false;
+		}
+
+		$key = wfMemcKey(
+			// TODO: Once we require PHP 5.5, use static::class instead of
+			// get_called_class() or get_class( $this ).
+			defined( 'static::CACHE_PREFIX' ) ? static::CACHE_PREFIX : get_called_class(),
+			md5( $text ), $flags );
+		$value = sprintf( "%08d", static::CACHE_VERSION ) . $tree;
+
+		$cache = ObjectCache::getInstance( $config->get( 'MainCacheType' ) );
+		$cache->set( $key, $value, 86400 );
+
+		LoggerFactory::getInstance( 'Preprocessor' )
+			->info( "Cached preprocessor output (key: $key)" );
+	}
+
+	/**
+	 * Attempt to load a precomputed document tree for some given wikitext
+	 * from the cache.
+	 *
+	 * @param string $text
+	 * @param int $flags
+	 * @return PPNode_Hash_Tree|bool
+	 */
+	protected function cacheGetTree( $text, $flags ) {
+		$config = RequestContext::getMain()->getConfig();
+
+		$length = strlen( $text );
+		$threshold = $config->get( 'PreprocessorCacheThreshold' );
+		if ( $threshold === false || $length < $threshold || $length > 1e6 ) {
+			return false;
+		}
+
+		$cache = ObjectCache::getInstance( $config->get( 'MainCacheType' ) );
+
+		$key = wfMemcKey(
+			// TODO: Once we require PHP 5.5, use static::class instead of
+			// get_called_class() or get_class( $this ).
+			defined( 'static::CACHE_PREFIX' ) ? static::CACHE_PREFIX : get_called_class(),
+			md5( $text ), $flags );
+
+		$value = $cache->get( $key );
+		if ( !$value ) {
+			return false;
+		}
+
+		$version = intval( substr( $value, 0, 8 ) );
+		if ( $version !== static::CACHE_VERSION ) {
+			return false;
+		}
+
+		LoggerFactory::getInstance( 'Preprocessor' )
+			->info( "Loaded preprocessor output from cache (key: $key)" );
+
+		return substr( $value, 8 );
+	}
 
 	/**
 	 * Create a new top-level frame for expansion of a page
 	 *
 	 * @return PPFrame
 	 */
-	public function newFrame();
+	abstract public function newFrame();
 
 	/**
 	 * Create a new custom frame for programmatic use of parameter replacement
@@ -47,7 +136,7 @@ interface Preprocessor {
 	 *
 	 * @return PPFrame
 	 */
-	public function newCustomFrame( $args );
+	abstract public function newCustomFrame( $args );
 
 	/**
 	 * Create a new custom node for programmatic use of parameter replacement
@@ -55,7 +144,7 @@ interface Preprocessor {
 	 *
 	 * @param array $values
 	 */
-	public function newPartNodeArray( $values );
+	abstract public function newPartNodeArray( $values );
 
 	/**
 	 * Preprocess text to a PPNode
@@ -65,7 +154,7 @@ interface Preprocessor {
 	 *
 	 * @return PPNode
 	 */
-	public function preprocessToObj( $text, $flags = 0 );
+	abstract public function preprocessToObj( $text, $flags = 0 );
 }
 
 /**

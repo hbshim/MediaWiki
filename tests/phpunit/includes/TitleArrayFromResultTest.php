@@ -4,7 +4,7 @@
  * @author Adam Shorland
  * @covers TitleArrayFromResult
  */
-class TitleArrayFromResultTest extends MediaWikiTestCase {
+class TitleArrayFromResultTest extends PHPUnit_Framework_TestCase {
 
 	private function getMockResultWrapper( $row = null, $numRows = 1 ) {
 		$resultWrapper = $this->getMockBuilder( 'ResultWrapper' )
@@ -113,7 +113,7 @@ class TitleArrayFromResultTest extends MediaWikiTestCase {
 		$this->assertEquals( $expected, $object->valid() );
 	}
 
-	//@todo unit test for key()
-	//@todo unit test for next()
-	//@todo unit test for rewind()
+	// @todo unit test for key()
+	// @todo unit test for next()
+	// @todo unit test for rewind()
 }
